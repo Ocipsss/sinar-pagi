@@ -1,0 +1,33 @@
+const db = new Dexie('SinarPagiDB'); // Contoh nama database
+
+db.version(1).stores({
+    // Produk
+    products: 'id, name, code, category, price_modal, price_sell, qty, unit',
+    
+    // Paket Produk
+    product_packages: 'id, productId, name, qty_pcs, price_sell', 
+    
+    // Kategori
+    categories: '++id, name', 
+    
+    // Transaksi Utama
+    transactions: 'id, date, total, memberId, paymentMethod, amountPaid, change, status',
+    
+    // Detail Item Transaksi
+    transaction_items: '++id, transactionId, productId, qty, price, subtotal',
+    
+    // Member / Pelanggan
+    members: 'id, name, phone, address, total_spending, points', 
+    
+    // Pengeluaran
+    expenses: 'id, date, category, amount, note, paymentMethod, cashPart, qrisPart',
+    
+    // Transaksi Digital
+    digital_transactions: 'id, date, type, provider, nominal, adminFee, adminPaymentMethod, totalReceived, profit',
+    
+    // Pengaturan Toko
+    settings: 'id, storeName',
+    
+    // Layanan Jasa
+    services: '++id, name, price' 
+});
