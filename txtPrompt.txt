@@ -1,0 +1,9 @@
+find src -type f -exec sh -c 'echo "===== {} ====="; cat "{}"; echo ""' \; > semua_src.txt
+
+find src -type f > daftar_file_src.txt
+
+apk add tree
+tree src -L 4 > semua_src.txt
+echo -e "\n\n--- ISI FILE ---\n" >> semua_src.txt
+find src -type f -exec sh -c 'echo "--- {} ---"; cat "{}"; echo ""' \; >> semua_src.txt
+

@@ -1,24 +1,5 @@
 ===== src/App.vue =====
 <template><router-view/></template>
-===== src/main.js =====
-import { createApp } from 'vue'
-import './style.css'
-import App from './App.vue'
-import { router } from './router/index.js'
-import { syncRealtime as syncService } from './services/syncService.js'
-
-const app = createApp(App)
-app.use(router)
-app.mount('#app')
-
-// bungkus try-catch biar kalau firebase error gak bikin blank
-try {
-  syncService.init()
-} catch (e) {
-  console.error('Sync gagal init, jalan offline dulu:', e)
-}
-===== src/style.css =====
-@import "tailwindcss";
 ===== src/db/index.js =====
 import Dexie from 'dexie'
 
@@ -56,6 +37,200 @@ db.version(1).stores({
 })
 
 export default db
+===== src/layouts/MainLayout.vue =====
+<template>
+  <div class="min-h-screen bg-[#f7f6f1] text-zinc-900 overflow-x-hidden relative">
+
+    <!-- DRAWER MENU - FIX z-50 biar di atas -->
+    <aside
+      class="fixed left-0 top-0 h-full w-[75%] max-w-[280px] bg-white p-5 border-r border-zinc-200 z-[50] flex flex-col justify-between transition-opacity duration-300"
+      :class="drawer? 'opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'"
+    >
+      <div>
+        <div class="flex items-center justify-between mb-6 pb-3 border-b border-zinc-100">
+          <div class="font-black text-lg tracking-tight text-zinc-900">SINAR PAGI</div>
+          <button @click="drawer = false" class="p-1 text-zinc-400 hover:text-zinc-900 text-sm">✕</button>
+        </div>
+
+        <nav class="space-y-1">
+          <router-link
+            v-for="m in menus"
+            :key="m.to"
+            :to="m.to"
+            @click="drawer = false"
+            class="flex items-center gap-3 rounded-xl px-3.5 py-2.5 text-sm font-medium transition-colors"
+            :class="isActive(m.to)? 'bg-zinc-900 text-white font-bold' : 'text-zinc-600 hover:bg-zinc-100'"
+          >
+            <span class="text-base">{{ m.icon }}</span>
+            <span>{{ m.label }}</span>
+          </router-link>
+        </nav>
+      </div>
+
+      <div class="text-[11px] text-zinc-400 text-center font-medium">
+        Sinar Pagi POS v1.0
+      </div>
+    </aside>
+
+    <!-- OVERLAY - FIX z-[40] di bawah drawer di atas main -->
+    <div
+      v-if="drawer"
+      @click="drawer = false"
+      class="fixed inset-0 z-[40] bg-black/20 transition-opacity duration-300"
+    ></div>
+
+    <!-- MAIN CARD - FIX hapus pointer-events-none biar gak ngunci semua -->
+    <div
+      class="min-h-screen bg-[#f7f6f1] transition-transform duration-300 ease-in-out relative z-10 shadow-2xl"
+      :class="drawer? 'translate-x-[75%] sm:translate-x-[280px] rounded-2xl overflow-hidden' : 'translate-x-0'"
+    >
+      <header class="sticky top-0 z-20 flex h-14 items-center justify-between bg-white px-4 shadow-sm border-b border-zinc-100">
+        <button
+          @click="drawer =!drawer"
+          class="p-2 -ml-2 text-xl text-zinc-800 hover:bg-zinc-100 rounded-xl transition-colors cursor-pointer"
+        >
+          ☰
+        </button>
+        <h1 class="font-bold text-sm tracking-tight truncate text-zinc-900">
+          {{ $route.meta.title || 'Sinar Pagi' }}
+        </h1>
+        <router-link to="/kasir" class="h-9 w-9 grid place-items-center rounded-xl bg-zinc-900 text-white text-sm shadow-sm active:scale-95 transition-all">
+          🧾
+        </router-link>
+      </header>
+
+      <main class="p-4 sm:p-6">
+        <router-view />
+      </main>
+    </div>
+
+  </div>
+</template>
+
+<script setup>
+import { ref } from 'vue'
+import { useRoute } from 'vue-router'
+
+const drawer = ref(false)
+const route = useRoute()
+
+const menus = [
+  { to: '/', label: 'Dashboard', icon: '📊' },
+  { to: '/kasir', label: 'Kasir', icon: '🧾' },
+  { to: '/products', label: 'Produk', icon: '📦' },
+  { to: '/add-products', label: 'Tambah Produk', icon: '➕' },
+  { to: '/products-digital', label: 'Produk Digital', icon: '💳' },
+  { to: '/shopping', label: 'List Belanja', icon: '🛒' },
+  { to: '/members', label: 'Member & Utang', icon: '👥' },
+  { to: '/expenses', label: 'Pengeluaran', icon: '💸' },
+  { to: '/operators', label: 'Operator / Kasir', icon: '👤' },
+  { to: '/reports', label: 'Laporan', icon: '📈' },
+  { to: '/settings', label: 'Pengaturan', icon: '⚙️' }
+]
+
+const isActive = (pathToMatch) => {
+  return route.path === pathToMatch
+}
+</script>
+===== src/main.js =====
+import { createApp } from 'vue'
+import './style.css'
+import App from './App.vue'
+import { router } from './router/index.js'
+import { syncRealtime as syncService } from './services/syncService.js'
+
+const app = createApp(App)
+app.use(router)
+app.mount('#app')
+
+// bungkus try-catch biar kalau firebase error gak bikin blank
+try {
+  syncService.init()
+} catch (e) {
+  console.error('Sync gagal init, jalan offline dulu:', e)
+}
+===== src/router/index.js =====
+import { createRouter, createWebHistory } from 'vue-router'
+import MainLayout from '../layouts/MainLayout.vue'
+
+export const router = createRouter({
+  history: createWebHistory(),
+  routes: [
+    {
+      path: '/',
+      component: MainLayout,
+      children: [
+        { 
+          path: '', 
+          name: 'dashboard', 
+          component: () => import('../views/Dashboard.vue'), 
+          meta: { title: 'Dashboard' } 
+        },
+        { 
+          path: 'kasir', 
+          name: 'kasir', 
+          component: () => import('../views/Kasir.vue'), 
+          meta: { title: 'Kasir' } 
+        },
+        { 
+          path: 'products', 
+          name: 'products', 
+          component: () => import('../views/ProductsList.vue'), 
+          meta: { title: 'Daftar Produk' } 
+        },
+        { 
+          path: 'add-products', 
+          name: 'add-products', 
+          component: () => import('../views/ProductsAdd.vue'), 
+          meta: { title: 'Tambah Produk' } 
+        },
+        { 
+          path: 'products-digital', 
+          name: 'products-digital', 
+          component: () => import('../views/ProductsDigital.vue'), 
+          meta: { title: 'Produk Digital' } 
+        },
+        { 
+          path: 'shopping', 
+          name: 'shopping', 
+          component: () => import('../views/Shopping.vue'), 
+          meta: { title: 'List Belanja' } 
+        },
+        { 
+          path: 'members', 
+          name: 'members', 
+          component: () => import('../views/Members.vue'), 
+          meta: { title: 'Member & Utang' } 
+        },
+        { 
+          path: 'expenses', 
+          name: 'expenses', 
+          component: () => import('../views/Expenses.vue'), 
+          meta: { title: 'Pengeluaran' } 
+        },
+        { 
+          path: 'operators', 
+          name: 'operators', 
+          component: () => import('../views/Operators.vue'), 
+          meta: { title: 'Operator & Kasir' } 
+        },
+        { 
+          path: 'reports', 
+          name: 'reports', 
+          component: () => import('../views/Reports.vue'), 
+          meta: { title: 'Laporan Penjualan' } 
+        },
+        { 
+          path: 'settings', 
+          name: 'settings', 
+          component: () => import('../views/Settings.vue'), 
+          meta: { title: 'Pengaturan' } 
+        }
+      ]
+    }
+  ]
+})
+
 ===== src/services/firebase.js =====
 import { initializeApp } from 'firebase/app'
 import { getFirestore } from 'firebase/firestore'
@@ -269,104 +444,534 @@ export const syncService = syncRealtime
 export default syncRealtime
 ===== src/stores/useCartStore.js =====
 
-===== src/layouts/MainLayout.vue =====
+===== src/style.css =====
+@import "tailwindcss";
+===== src/views/Dashboard.vue =====
 <template>
-  <div class="min-h-screen bg-[#f7f6f1] text-zinc-900">
-    <!-- HEADER - Burger Kiri + Icon Kasir Kanan -->
-    <header class="sticky top-0 z-20 flex h-14 items-center justify-between bg-white px-4 shadow-sm">
-      <button @click="drawer=true" class="p-2 -ml-2 text-xl">☰</button>
-      <h1 class="font-bold truncate">{{ $route.meta.title || 'Sinar Pagi' }}</h1>
-      <router-link to="/kasir" class="h-9 w-9 grid place-items-center rounded-xl bg-zinc-900 text-white">🧾</router-link>
-    </header>
-
-    <!-- DRAWER MENU -->
-    <div v-if="drawer" class="fixed inset-0 z-30">
-      <div class="absolute inset-0 bg-black/40" @click="drawer=false"></div>
-      <aside class="absolute left-0 top-0 h-full w-[80%] max-w-[300px] bg-white p-4">
-        <div class="mb-6 font-black text-lg">SINAR PAGI</div>
-        <nav class="space-y-1">
-          <router-link 
-            v-for="m in menus" :key="m.to" :to="m.to" 
-            @click="drawer=false"
-            class="block rounded-xl px-3 py-3 text-sm font-medium"
-            :class="$route.path===m.to? 'bg-zinc-900 text-white' : 'hover:bg-zinc-100'"
-          >
-            {{ m.icon }} {{ m.label }}
-          </router-link>
-        </nav>
-      </aside>
+  <div class="w-full space-y-5 pb-8">
+    <!-- Header Utama (Full Width) -->
+    <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 bg-white p-5 rounded-2xl shadow-sm border border-zinc-100">
+      <div class="space-y-0.5">
+        <h2 class="text-xl font-black tracking-tight text-zinc-900">Dashboard Toko</h2>
+        <p class="text-xs font-medium text-zinc-500">{{ todayFormatted }}</p>
+      </div>
+      <div class="flex items-center gap-3">
+        <div class="px-3 py-1.5 bg-emerald-50 text-emerald-700 text-xs font-bold rounded-xl border border-emerald-200/60 flex items-center gap-1.5">
+          <span class="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+          <span>Sistem Online</span>
+        </div>
+        <router-link to="/kasir" class="px-5 py-2.5 bg-zinc-900 hover:bg-zinc-800 active:scale-95 text-white font-bold rounded-xl text-xs flex items-center gap-2 shadow-sm transition-all">
+          <span class="text-sm">🧾</span>
+          <span>Buka Kasir</span>
+        </router-link>
+      </div>
     </div>
 
-    <!-- CONTENT -->
-    <main class="p-4">
-      <router-view />
-    </main>
+    <!-- Ringkasan Statistik Utama (Responsive Grid) -->
+    <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+      <!-- Omset -->
+      <div class="bg-white p-5 rounded-2xl shadow-sm border border-zinc-100 flex flex-col justify-between space-y-3">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-semibold text-zinc-500">Omset Hari Ini</span>
+          <div class="w-8 h-8 rounded-xl bg-zinc-100 grid place-items-center text-sm">💰</div>
+        </div>
+        <div>
+          <div class="text-xl md:text-2xl font-black text-zinc-900 tracking-tight">
+            Rp {{ formatRupiah(summary.todayOmset) }}
+          </div>
+          <p class="text-[11px] text-zinc-400 mt-1 font-medium">{{ summary.todayTxCount }} Transaksi Terproses</p>
+        </div>
+      </div>
+
+      <!-- Laba -->
+      <div class="bg-white p-5 rounded-2xl shadow-sm border border-zinc-100 flex flex-col justify-between space-y-3">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-semibold text-zinc-500">Estimasi Laba</span>
+          <div class="w-8 h-8 rounded-xl bg-emerald-50 text-emerald-600 grid place-items-center text-sm">📈</div>
+        </div>
+        <div>
+          <div class="text-xl md:text-2xl font-black text-emerald-600 tracking-tight">
+            Rp {{ formatRupiah(summary.todayProfit) }}
+          </div>
+          <p class="text-[11px] text-zinc-400 mt-1 font-medium">Estimasi Bersih Harian</p>
+        </div>
+      </div>
+
+      <!-- Pengeluaran -->
+      <div class="bg-white p-5 rounded-2xl shadow-sm border border-zinc-100 flex flex-col justify-between space-y-3">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-semibold text-zinc-500">Pengeluaran</span>
+          <div class="w-8 h-8 rounded-xl bg-rose-50 text-rose-600 grid place-items-center text-sm">💸</div>
+        </div>
+        <div>
+          <div class="text-xl md:text-2xl font-black text-rose-600 tracking-tight">
+            Rp {{ formatRupiah(summary.todayExpenses) }}
+          </div>
+          <p class="text-[11px] text-zinc-400 mt-1 font-medium">Biaya Operasional Toko</p>
+        </div>
+      </div>
+
+      <!-- Utang TEMPO -->
+      <div class="bg-white p-5 rounded-2xl shadow-sm border border-zinc-100 flex flex-col justify-between space-y-3">
+        <div class="flex items-center justify-between">
+          <span class="text-xs font-semibold text-zinc-500">Total Piutang TEMPO</span>
+          <div class="w-8 h-8 rounded-xl bg-amber-50 text-amber-600 grid place-items-center text-sm">👥</div>
+        </div>
+        <div>
+          <div class="text-xl md:text-2xl font-black text-amber-600 tracking-tight">
+            Rp {{ formatRupiah(summary.totalDebt) }}
+          </div>
+          <p class="text-[11px] text-zinc-400 mt-1 font-medium">Sisa Utang Member</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- Layout Dua Kolom Seimbang (Monitoring & Peringatan) -->
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-5">
+      
+      <!-- Kolom Kiri: Peringatan Stok Menipis -->
+      <div class="bg-white p-5 rounded-2xl shadow-sm border border-zinc-100 space-y-4 flex flex-col justify-between">
+        <div class="flex items-center justify-between border-b border-zinc-100 pb-3">
+          <div class="flex items-center gap-2">
+            <span class="text-lg">⚠️</span>
+            <h3 class="font-bold text-sm text-zinc-900">Stok Menipis / Perlu Belanja</h3>
+          </div>
+          <router-link to="/products" class="text-xs font-bold text-zinc-700 hover:text-black">
+            Lihat Stok →
+          </router-link>
+        </div>
+
+        <div v-if="lowStockProducts.length === 0" class="py-12 text-center text-xs text-zinc-400 bg-zinc-50 rounded-xl border border-dashed border-zinc-200">
+          Semua stok barang masih aman 👌
+        </div>
+
+        <div v-else class="space-y-2.5 max-h-[320px] overflow-y-auto pr-1">
+          <div 
+            v-for="prod in lowStockProducts" 
+            :key="prod.id" 
+            class="p-3 bg-zinc-50 border border-zinc-200/70 rounded-xl flex justify-between items-center hover:bg-zinc-100/60 transition-colors"
+          >
+            <div>
+              <div class="font-bold text-xs text-zinc-900">{{ prod.name }}</div>
+              <div class="text-[10px] text-zinc-500 mt-0.5">Kode: {{ prod.code }} | Kategori: {{ prod.category }}</div>
+            </div>
+            <div class="text-right">
+              <span class="inline-block px-2.5 py-1 bg-rose-100 text-rose-700 font-bold text-xs rounded-lg">
+                Sisa {{ prod.qty }} {{ prod.unit }}
+              </span>
+              <div class="text-[10px] text-zinc-400 mt-0.5">Batas Min: {{ prod.minStock || 5 }}</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Kolom Kanan: Ringkasan Aktivitas Transaksi Terakhir -->
+      <div class="bg-white p-5 rounded-2xl shadow-sm border border-zinc-100 space-y-4 flex flex-col justify-between">
+        <div class="flex items-center justify-between border-b border-zinc-100 pb-3">
+          <div class="flex items-center gap-2">
+            <span class="text-lg">🕒</span>
+            <h3 class="font-bold text-sm text-zinc-900">Transaksi Terbaru Hari Ini</h3>
+          </div>
+          <router-link to="/reports" class="text-xs font-bold text-zinc-700 hover:text-black">
+            Laporan Lengkap →
+          </router-link>
+        </div>
+
+        <div v-if="recentTransactions.length === 0" class="py-12 text-center text-xs text-zinc-400 bg-zinc-50 rounded-xl border border-dashed border-zinc-200">
+          Belum ada transaksi tercatat hari ini
+        </div>
+
+        <div v-else class="space-y-2.5 max-h-[320px] overflow-y-auto pr-1">
+          <div 
+            v-for="tx in recentTransactions" 
+            :key="tx.id" 
+            class="p-3 bg-zinc-50 border border-zinc-200/70 rounded-xl flex justify-between items-center"
+          >
+            <div>
+              <div class="font-bold text-xs text-zinc-900">
+                Rp {{ formatRupiah(tx.total) }} 
+                <span class="text-[10px] font-medium px-1.5 py-0.5 rounded bg-zinc-200 text-zinc-700 ml-1">
+                  {{ tx.paymentMethod }}
+                </span>
+              </div>
+              <div class="text-[10px] text-zinc-400 mt-0.5">{{ formatTime(tx.date) }}</div>
+            </div>
+            <div class="text-right">
+              <span 
+                class="px-2 py-0.5 text-[10px] font-bold rounded-md"
+                :class="tx.status === 'completed' ? 'bg-emerald-100 text-emerald-700' : 'bg-amber-100 text-amber-700'"
+              >
+                {{ tx.status === 'completed' ? 'Lunas' : 'TEMPO' }}
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue'
-const drawer = ref(false)
-const menus = [
-  { to: '/', label: 'Dashboard', icon: '📊' },
-  { to: '/kasir', label: 'Kasir', icon: '🧾' },
-  { to: '/products', label: 'Produk', icon: '📦' },
-  { to: '/shopping', label: 'List Belanja', icon: '🛒' },
-  { to: '/members', label: 'Member & Utang', icon: '👥' },
-  { to: '/products-digital', label: 'Produk Digital', icon: '💳' },
-  { to: '/expenses', label: 'Pengeluaran', icon: '💸' },
-  { to: '/reports', label: 'Laporan', icon: '📈' },
-  { to: '/settings', label: 'Pengaturan', icon: '⚙️' },
-]
+import { ref, onMounted, computed } from 'vue'
+import dayjs from 'dayjs'
+import Big from 'big.js'
+import { db } from '../db'
+
+const todayFormatted = computed(() => dayjs().format('DD MMMM YYYY'))
+
+const summary = ref({
+  todayOmset: 0,
+  todayProfit: 0,
+  todayExpenses: 0,
+  todayTxCount: 0,
+  totalDebt: 0
+})
+
+const lowStockProducts = ref([])
+const recentTransactions = ref([])
+
+const formatRupiah = (val) => {
+  if (!val) return '0'
+  return new Intl.NumberFormat('id-ID').format(val)
+}
+
+const formatTime = (isoString) => {
+  if (!isoString) return ''
+  return dayjs(isoString).format('HH:mm')
+}
+
+const loadDashboardData = async () => {
+  try {
+    const todayStart = dayjs().startOf('day').toISOString()
+    const todayEnd = dayjs().endOf('day').toISOString()
+
+    // 1. Ambil Transaksi Hari Ini
+    const todayTx = await db.transactions
+      .where('date')
+      .between(todayStart, todayEnd, true, true)
+      .toArray()
+
+    let omset = Big(0)
+    summary.value.todayTxCount = todayTx.length
+
+    for (const tx of todayTx) {
+      omset = omset.plus(tx.total || 0)
+    }
+    summary.value.todayOmset = omset.toNumber()
+    recentTransactions.value = todayTx.slice(-5).reverse() // 5 transaksi terbaru
+
+    // 2. Ambil Pengeluaran Hari Ini
+    const todayExp = await db.expenses
+      .where('date')
+      .between(todayStart, todayEnd, true, true)
+      .toArray()
+
+    let expenses = Big(0)
+    for (const exp of todayExp) {
+      expenses = expenses.plus(exp.amount || 0)
+    }
+    summary.value.todayExpenses = expenses.toNumber()
+
+    // 3. Hitung Total Utang Member
+    const members = await db.members.toArray()
+    let debtSum = Big(0)
+    for (const m of members) {
+      debtSum = debtSum.plus(m.debt || 0)
+    }
+    summary.value.totalDebt = debtSum.toNumber()
+
+    // 4. Ambil Barang Stok Menipis
+    const allProducts = await db.products.toArray()
+    lowStockProducts.value = allProducts.filter(p => p.qty <= (p.minStock || 5))
+
+  } catch (err) {
+    console.error('Gagal memuat data dashboard:', err)
+  }
+}
+
+onMounted(() => {
+  loadDashboardData()
+})
 </script>
-===== src/views/Dashboard.vue =====
-<template>
-  <div class="p-4">
-    <h1 class="text-2xl font-bold">TES DASHBOARD</h1>
-    <p>Kalau ini muncul, MainLayout berhasil</p>
-  </div>
-</template>
+
+===== src/views/Expenses.vue =====
+
 ===== src/views/Kasir.vue =====
 
 ===== src/views/Members.vue =====
 
-===== src/views/Shopping.vue =====
+===== src/views/Operators.vue =====
 
-===== src/views/Reports.vue =====
+===== src/views/ProductsAdd.vue =====
+<template>
+<div class="flex flex-col gap-3 pb-24 max-w-xl mx-auto">
+  <div class="p-5 bg-white rounded-3xl shadow-sm border border-gray-100 flex flex-col gap-3">
 
-===== src/views/Expenses.vue =====
+    <!-- FOTO -->
+    <div class="flex flex-col items-center mb-2">
+      <div @click="takePhoto" class="w-40 h-40 bg-gray-50 rounded-3xl flex items-center justify-center overflow-hidden border-2 border-dashed border-gray-200 relative cursor-pointer active:scale-95 transition">
+        <img v-if="product.image" :src="product.image" class="w-full h-full object-cover" />
+        <div v-else class="text-center text-gray-400 p-4">
+          <span class="text-4xl">📷</span>
+          <span class="block text-[10px] mt-2 uppercase font-black">Foto Produk</span>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <label class="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">Nama Produk</label>
+      <input v-model="product.name" type="text" class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-zinc-900 focus:bg-white" placeholder="Contoh: Indomie Goreng" />
+    </div>
+
+    <div>
+      <label class="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">Kode / Barcode</label>
+      <div class="flex items-stretch gap-2 h-12">
+        <input v-model="product.code" type="text" class="flex-1 px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-zinc-900 focus:bg-white" placeholder="Scan atau manual..." />
+        <button @click="$emit('open-scanner')" class="bg-blue-50 text-blue-600 px-4 rounded-xl flex items-center justify-center active:bg-blue-100">
+          <span class="text-xl">📷</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 gap-3">
+      <div>
+        <label class="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">Kategori</label>
+        <select v-model="product.category" class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm focus:outline-none focus:border-zinc-900">
+          <option value="Umum">Umum</option>
+          <option v-for="cat in listCategories" :key="cat.id" :value="cat.name">{{ cat.name }}</option>
+        </select>
+      </div>
+      <div>
+        <label class="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">Satuan</label>
+        <select v-model="product.unit" class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm">
+          <option value="pcs">pcs</option>
+          <option value="bks">bks</option>
+          <option value="btg">btg</option>
+          <option value="rtg">rtg</option>
+        </select>
+      </div>
+    </div>
+
+    <hr class="border-gray-50 my-1" />
+
+    <div class="p-4 bg-blue-50/50 rounded-2xl border border-blue-100 flex flex-col gap-3">
+      <div class="flex justify-between items-center px-1">
+        <span class="text-[10px] font-black text-blue-600 uppercase tracking-widest">Kalkulator Grosir</span>
+        <span>🧮</span>
+      </div>
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label class="text-[9px] font-black text-gray-400 uppercase mb-1 block">Harga 1 Pak</label>
+          <input :value="displayPack" @input="updateNumber('pack_price', $event)" type="text" inputmode="numeric" class="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-bold" placeholder="0" />
+        </div>
+        <div>
+          <label class="text-[9px] font-black text-gray-400 uppercase mb-1 block">Isi Per Pak</label>
+          <input v-model.number="product.pack_size" @input="updatePackSize" @focus="clearInitialSize" type="number" class="w-full px-3 py-2.5 bg-white border border-gray-200 rounded-xl text-sm font-bold" placeholder="1" />
+        </div>
+      </div>
+    </div>
+
+    <div class="grid grid-cols-2 gap-3">
+      <div>
+        <label class="text-[10px] font-black text-red-400 uppercase tracking-widest mb-1 block">Harga Modal (/pcs)</label>
+        <input :value="displayModal" @input="updateNumber('price_modal', $event)" type="text" inputmode="numeric" class="w-full px-4 py-3 bg-red-50/20 border border-gray-200 rounded-xl text-sm font-bold text-red-600" placeholder="0" />
+      </div>
+      <div>
+        <label class="text-[10px] font-black text-green-500 uppercase tracking-widest mb-1 block">Harga Jual (/pcs)</label>
+        <input :value="displaySell" @input="updateNumber('price_sell', $event)" type="text" inputmode="numeric" class="w-full px-4 py-3 bg-green-50/20 border border-gray-200 rounded-xl text-sm font-bold text-green-600" placeholder="0" />
+      </div>
+    </div>
+
+    <div>
+      <label class="text-[10px] font-black text-gray-400 uppercase tracking-widest mb-1 block">Stok Awal</label>
+      <input v-model.number="product.qty" type="number" class="w-full px-4 py-3 bg-gray-50 border border-gray-200 rounded-xl text-sm font-bold" placeholder="0" />
+    </div>
+
+    <button @click="saveProduct" :disabled="loading" class="w-full mt-4 bg-blue-600 text-white py-4 rounded-2xl font-black shadow-lg uppercase active:scale-95 transition disabled:opacity-50">
+      {{ loading? 'Menyimpan...' : 'Simpan Produk' }}
+    </button>
+  </div>
+</div>
+</template>
+
+<script setup>
+import { ref, watch, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { db } from '../db/index.js'
+
+const router = useRouter()
+const emit = defineEmits(['open-scanner'])
+const loading = ref(false)
+
+const product = ref({
+  id: '',
+  image: null,
+  name: '',
+  code: '',
+  category: 'Umum',
+  unit: 'pcs',
+  price_modal: 0,
+  price_sell: 0,
+  qty: 0,
+  pack_price: 0,
+  pack_size: 1
+})
+
+const displayModal = ref("")
+const displaySell = ref("")
+const displayPack = ref("")
+const listCategories = ref([])
+
+const formatDisplay = (val) => {
+  if (!val) return ""
+  return val.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ".")
+}
+
+const updateNumber = (field, event) => {
+  let rawValue = event.target.value.replace(/\D/g, "")
+  let numValue = parseInt(rawValue) || 0
+  product.value[field] = numValue
+
+  if (field === 'price_modal') displayModal.value = formatDisplay(numValue)
+  if (field === 'price_sell') displaySell.value = formatDisplay(numValue)
+  if (field === 'pack_price') {
+    displayPack.value = formatDisplay(numValue)
+    if (product.value.pack_size > 0) {
+      const unitModal = Math.round(numValue / product.value.pack_size)
+      product.value.price_modal = unitModal
+      displayModal.value = formatDisplay(unitModal)
+    }
+  }
+}
+
+const clearInitialSize = () => {
+  if (product.value.pack_size === 1) product.value.pack_size = null
+}
+
+const updatePackSize = () => {
+  if (product.value.pack_price > 0 && product.value.pack_size > 0) {
+    const unitModal = Math.round(product.value.pack_price / product.value.pack_size)
+    product.value.price_modal = unitModal
+    displayModal.value = formatDisplay(unitModal)
+  }
+}
+
+const takePhoto = () => {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = 'image/*'
+  input.capture = 'environment'
+  input.onchange = (e) => {
+    const file = e.target.files[0]
+    if (!file) return
+    const reader = new FileReader()
+    reader.readAsDataURL(file)
+    reader.onload = (event) => {
+      const img = new Image()
+      img.src = event.target.result
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        const size = 400
+        canvas.width = size
+        canvas.height = size
+        const ctx = canvas.getContext('2d')
+        const min = Math.min(img.width, img.height)
+        const sx = (img.width - min) / 2
+        const sy = (img.height - min) / 2
+        ctx.drawImage(img, sx, sy, min, min, 0, 0, size, size)
+        product.value.image = canvas.toDataURL('image/jpeg', 0.7)
+      }
+    }
+  }
+  input.click()
+}
+
+// Validasi kode realtime - sama kayak logika lama
+watch(() => product.value.code, async (newCode) => {
+  if (newCode && newCode.trim()!== "") {
+    const exist = await db.products.where('code').equals(newCode).first()
+    if (exist) {
+      alert(`⚠️ Kode "${newCode}" sudah dipakai "${exist.name}"`)
+    }
+  }
+})
+
+const loadCategories = async () => {
+  const data = await db.categories.toArray()
+  listCategories.value = data
+}
+
+const saveProduct = async () => {
+  if(!product.value.name ||!product.value.price_sell) {
+    alert("Nama dan Harga Jual wajib diisi!")
+    return
+  }
+  loading.value = true
+  try {
+    if (product.value.code) {
+      const existing = await db.products.where('code').equals(product.value.code).first()
+      if (existing) {
+        alert(`Gagal! Kode sudah milik "${existing.name}"`)
+        loading.value = false
+        return
+      }
+    }
+
+    const finalId = window.generateUID? window.generateUID() : crypto.randomUUID()
+
+    const productData = {
+     ...JSON.parse(JSON.stringify(product.value)),
+      id: finalId,
+      // mapping ke schema Dexie kamu yang lama
+      code: product.value.code,
+      name: product.value.name,
+      category: product.value.category,
+      unit: product.value.unit,
+      price_modal: product.value.price_modal,
+      price_sell: product.value.price_sell,
+      qty: product.value.qty,
+      packPrice: product.value.pack_price,
+      packQty: product.value.pack_size,
+      image: product.value.image,
+      updatedAt: new Date().toISOString(),
+      synced: 0
+    }
+
+    await db.products.add(productData)
+
+    // trigger sync kalau ada service kamu
+    if (navigator.onLine) {
+      try {
+        const { syncService } = await import('../services/syncService.js')
+        syncService.pushLocalToCloud?.()
+      } catch {}
+    }
+
+    alert("Produk Berhasil Disimpan!")
+    product.value = { id: '', image: null, name: '', code: '', category: 'Umum', unit: 'pcs', price_modal: 0, price_sell: 0, qty: 0, pack_price: 0, pack_size: 1 }
+    displayModal.value = ""; displaySell.value = ""; displayPack.value = ""
+
+    const scrollContainer = document.querySelector('.content-scroll') || document.querySelector('main')
+    if (scrollContainer) scrollContainer.scrollTo({ top: 0, behavior: 'smooth' })
+
+    router.push('/products')
+  } catch (err) {
+    alert("Gagal menyimpan: " + err.message)
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(loadCategories)
+</script>
+===== src/views/ProductsDigital.vue =====
 
 ===== src/views/ProductsList.vue =====
 
-===== src/views/Operators.vue =====
+===== src/views/Reports.vue =====
 
 ===== src/views/Settings.vue =====
 
-===== src/views/ProductsAdd.vue =====
+===== src/views/Shopping.vue =====
 
-===== src/views/ProductsDigital.vue =====
-
-===== src/router/index.js =====
-import { createRouter, createWebHistory } from 'vue-router'
-import MainLayout from '../layouts/MainLayout.vue'
-
-export const router = createRouter({
-  history: createWebHistory(),
-  routes: [
-    {
-      path: '/',
-      component: MainLayout, // <-- pakai MainLayout disini
-      children: [
-        { path: '', name: 'dashboard', component: () => import('../views/Dashboard.vue'), meta: { title: 'Dashboard' } },
-        { path: 'kasir', name: 'kasir', component: () => import('../views/Kasir.vue'), meta: { title: 'Kasir' } },
-        { path: 'products', name: 'products', component: () => import('../views/ProductsList.vue'), meta: { title: 'Produk' } },
-        { path: 'products/add', name: 'products-add', component: () => import('../views/ProductsAdd.vue'), meta: { title: 'Tambah Produk' } },
-        { path: 'shopping', name: 'shopping', component: () => import('../views/Shopping.vue'), meta: { title: 'Belanja' } },
-        { path: 'members', name: 'members', component: () => import('../views/Members.vue'), meta: { title: 'Member & Utang' } },
-        { path: 'expenses', name: 'expenses', component: () => import('../views/Expenses.vue'), meta: { title: 'Pengeluaran' } },
-        { path: 'reports', name: 'reports', component: () => import('../views/Reports.vue'), meta: { title: 'Laporan' } },
-        { path: 'settings', name: 'settings', component: () => import('../views/Settings.vue'), meta: { title: 'Pengaturan' } },
-      ]
-    }
-  ]
-})
