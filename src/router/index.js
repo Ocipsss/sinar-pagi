@@ -32,6 +32,12 @@ export const router = createRouter({
           component: () => import('../views/ProductsAdd.vue'), 
           meta: { title: 'Tambah Produk' } 
         },
+        {
+    path: '/shopping',
+    name: 'Shopping',
+    component: () => import('../views/Shopping.vue'),
+    meta: { title: 'Estimasi Belanja' }
+  },
         { 
           path: 'products-digital', 
           name: 'products-digital', 

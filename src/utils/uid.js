@@ -1,0 +1,1 @@
+export const generateUID = () => window.generateUID? window.generateUID() : crypto.randomUUID()
