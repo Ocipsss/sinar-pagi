@@ -1,4 +1,4 @@
-find src -type f -exec sh -c 'echo "===== {} ====="; cat "{}"; echo ""' \; > semua_src.txt
+find src -type f -exec sh -c 'echo "===== {} ====="; cat "{}"; echo ""' \; > src-v.1.1.txt
 
 find src -type f > daftar_file_src.txt
 

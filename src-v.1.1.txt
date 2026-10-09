@@ -1,0 +1,672 @@
+===== src/App.vue =====
+<template><router-view/></template>
+===== src/db/index.js =====
+import Dexie from 'dexie'
+
+export const db = new Dexie('SinarPagiDB')
+
+db.version(1).stores({
+  // Produk (Code/Barcode diindeks untuk scanner)
+  products: 'id, code, name, category, price_modal, price_sell, qty, unit, minStock, idealStock, purchasePackName, packQty, packPrice, updatedAt, synced',
+
+  // Paket eceran rokok: 1 batang, 1/2 bks, 1 bks
+  product_packages: 'id, productId, name, qty_pcs, price_sell, updatedAt, synced',
+
+  // Kategori
+  categories: 'id, name, updatedAt, synced',
+
+  // Transaksi Utama - support TEMPO
+  // status: paid | unpaid | partial
+  // paymentMethod: CASH | QRIS | TEMPO
+  transactions: 'id, date, total, memberId, paymentMethod, amountPaid, paidAmount, remaining, change, status, dueDate, updatedAt, synced',
+
+  // Detail item - 1 baris udah include jasa seduh
+  // serviceId null kalau tidak diseduh
+  transaction_items: 'id, transactionId, productId, serviceId, updatedAt, synced',
+
+  // Member + saldo utang
+  members: 'id, name, phone, address, total_spending, points, debt, updatedAt, synced',
+
+  // Tabel baru untuk cicilan TEMPO
+  debt_payments: 'id, transactionId, memberId, date, amount, paymentMethod, updatedAt, synced',
+
+  expenses: 'id, date, category, amount, note, paymentMethod, cashPart, qrisPart, updatedAt, synced',
+  digital_transactions: 'id, date, type, provider, nominal, adminFee, adminPaymentMethod, totalReceived, profit, updatedAt, synced',
+  services: 'id, name, price, updatedAt, synced',
+  settings: 'id'
+})
+
+export default db
+===== src/db/repositories/productRepository.js =====
+import { db } from '../index.js'
+import dayjs from 'dayjs'
+
+export const productRepo = {
+  getAll: () => db.products.toArray(),
+  getByCode: (code) => db.products.where('code').equals(code).first(),
+  create: (data) => db.products.add({
+   ...data,
+    id: crypto.randomUUID(),
+    updatedAt: dayjs().toISOString(),
+    synced: 0
+  })
+}
+===== src/layouts/MainLayout.vue =====
+<template>
+<div class="min-h-screen bg-zinc-50">
+  <header class="sticky top-0 bg-white border-b px-4 py-3 flex justify-between items-center">
+    <div class="font-black tracking-tight">SINAR PAGI</div>
+    <router-link to="/add-products" class="bg-zinc-900 text-white px-3 py-1.5 rounded-xl text-xs font-bold">+ Barang</router-link>
+  </header>
+  <main class="max-w-xl mx-auto">
+    <router-view />
+  </main>
+  <nav class="fixed bottom-0 left-0 right-0 bg-white border-t flex justify-around p-2 pb-6 max-w-xl mx-auto">
+    <router-link to="/products" class="text-xs font-bold px-4 py-2 rounded-xl" active-class="bg-zinc-900 text-white">Barang</router-link>
+    <router-link to="/kasir" class="text-xs font-bold px-4 py-2 rounded-xl text-zinc-400">Kasir</router-link>
+    <router-link to="/shopping" class="text-xs font-bold px-4 py-2 rounded-xl text-zinc-400">Belanja</router-link>
+  </nav>
+</div>
+</template>
+===== src/main.js =====
+import { createApp } from 'vue'
+import { createPinia } from 'pinia'
+import piniaPluginPersistedstate from 'pinia-plugin-persistedstate'
+import './style.css'
+import App from './App.vue'
+import { router } from './router/index.js'
+import { syncRealtime as syncService } from './services/syncService.js'
+
+const app = createApp(App)
+const pinia = createPinia()
+pinia.use(piniaPluginPersistedstate)
+app.use(pinia)
+app.use(router)
+app.mount('#app')
+
+try { syncService.init() } catch (e) {
+  console.error('Sync gagal init, jalan offline dulu:', e)
+}
+===== src/router/index.js =====
+import { createRouter, createWebHistory } from 'vue-router'
+import MainLayout from '../layouts/MainLayout.vue'
+import ProductsList from '../views/ProductsList.vue'
+import ProductsAdd from '../views/ProductsAdd.vue'
+
+export const router = createRouter({
+  history: createWebHistory(),
+  routes: [
+    {
+      path: '/',
+      component: MainLayout,
+      children: [
+        { path: '', redirect: '/products' },
+        { 
+          path: 'products', 
+          name: 'ProductsList',
+          component: ProductsList 
+        },
+        { 
+          path: 'add-products', 
+          name: 'ProductsAdd',
+          component: ProductsAdd 
+        },
+        // placeholder buat sesi v.2 nanti
+        { path: 'kasir', name: 'Kasir', component: () => import('../views/Kasir.vue') },
+        { path: 'shopping', name: 'Shopping', component: () => import('../views/Shopping.vue') }
+      ]
+    }
+  ]
+})
+===== src/services/firebase.js =====
+import { initializeApp } from 'firebase/app'
+import { getFirestore } from 'firebase/firestore'
+
+const firebaseConfig = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN,
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET,
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID,
+  appId: import.meta.env.VITE_FIREBASE_APP_ID
+}
+
+const app = initializeApp(firebaseConfig)
+export const firestore = getFirestore(app)
+
+===== src/services/syncService.js =====
+import { db } from '../db'
+import { firestore } from './firebase'
+import { collection, doc, writeBatch, query, where, onSnapshot } from 'firebase/firestore'
+import dayjs from 'dayjs'
+import Big from 'big.js'
+
+const TABLES_TO_SYNC = [
+  'products',
+  'product_packages',
+  'categories',
+  'members',
+  'services'
+]
+
+const TRANSACTION_TABLES = [
+  'transactions',
+  'transaction_items',
+  'expenses',
+  'digital_transactions',
+  'debt_payments'
+]
+
+let isSyncing = false
+let unsubscribers = []
+let intervalId = null
+
+async function recalculateMemberDebt(memberId) {
+  if (!memberId ||!db?.transactions ||!db?.members) return
+  try {
+    const unpaid = await db.transactions
+     .where('memberId').equals(memberId)
+     .filter(t => t.remaining > 0)
+     .toArray()
+    const totalDebt = unpaid.reduce((acc, t) => Big(acc).plus(t.remaining || 0).toString(), '0')
+    await db.members.update(memberId, { debt: Number(totalDebt) })
+  } catch (e) {
+    console.warn('[Sync] recalc debt fail', e)
+  }
+}
+
+export const syncRealtime = {
+  async pushLocalToCloud() {
+    if (!navigator.onLine || isSyncing ||!db ||!firestore) return
+    isSyncing = true
+    try {
+      for (const tableName of [...TABLES_TO_SYNC,...TRANSACTION_TABLES]) {
+        if (!db[tableName]) continue
+        const unsynced = await db[tableName].where('synced').equals(0).toArray()
+        if (!unsynced.length) continue
+        for (let i = 0; i < unsynced.length; i += 400) {
+          const batch = writeBatch(firestore)
+          const chunk = unsynced.slice(i, i + 400)
+          chunk.forEach(item => {
+            const { synced,...clean } = item
+            batch.set(doc(firestore, tableName, item.id), clean, { merge: true })
+          })
+          await batch.commit()
+          await db[tableName].bulkUpdate(chunk.map(c => ({ key: c.id, changes: { synced: 1 } })))
+        }
+      }
+    } catch (e) {
+      console.warn('[Sync] push fail', e?.message)
+    } finally {
+      isSyncing = false
+    }
+  },
+
+  initRealtimePull() {
+    this.stopRealtime()
+    console.log('[Sync] Realtime ON')
+
+    if (!firestore) {
+      console.warn('[Sync] firestore belum siap')
+      return
+    }
+
+    const today = dayjs().startOf('day').toISOString()
+
+    const handleError = (err) => {
+      if (err?.name === 'AbortError' || err?.code === 'aborted' || err?.message?.includes('aborted')) {
+        return // ini normal pas HMR / stopRealtime, biarin
+      }
+      console.error('[Sync] Snapshot error:', err)
+    }
+
+    // 1. Master data
+    TABLES_TO_SYNC.forEach(tableName => {
+      try {
+        const q = collection(firestore, tableName)
+        const unsub = onSnapshot(q, async (snapshot) => {
+          if (isSyncing) return
+          for (const change of snapshot.docChanges()) {
+            try {
+              const cloudData = change.doc.data()
+              const local = await db[tableName]?.get(change.doc.id)
+              if (change.type === 'removed') {
+                if (local) await db[tableName].delete(change.doc.id)
+                continue
+              }
+              if (tableName === 'members') {
+                if (!local || cloudData.updatedAt > local.updatedAt) {
+                  const localDebt = local?.debt
+                  await db[tableName].put({...cloudData, id: change.doc.id, synced: 1, debt: localDebt?? cloudData.debt })
+                  await recalculateMemberDebt(change.doc.id)
+                }
+              } else {
+                if (!local || cloudData.updatedAt > local.updatedAt) {
+                  await db[tableName].put({...cloudData, id: change.doc.id, synced: 1 })
+                }
+              }
+            } catch (e) {}
+          }
+        }, handleError)
+        unsubscribers.push(unsub)
+      } catch (e) {}
+    })
+
+    // 2. Transaksi hari ini
+    TRANSACTION_TABLES.forEach(tableName => {
+      try {
+        const q = query(collection(firestore, tableName), where('updatedAt', '>=', today))
+        const unsub = onSnapshot(q, async (snapshot) => {
+          if (isSyncing) return
+          for (const change of snapshot.docChanges()) {
+            if (change.type === 'removed') continue
+            try {
+              const cloudData = change.doc.data()
+              const local = await db[tableName]?.get(change.doc.id)
+              if (!local || cloudData.updatedAt > local.updatedAt) {
+                await db[tableName].put({...cloudData, id: change.doc.id, synced: 1 })
+                if (tableName === 'transactions' || tableName === 'debt_payments') {
+                  await recalculateMemberDebt(cloudData.memberId)
+                }
+              }
+            } catch (e) {}
+          }
+        }, handleError)
+        unsubscribers.push(unsub)
+      } catch (e) {}
+    })
+
+    // 3. FIX UTANG LAMA
+    try {
+      const qUnpaid = query(collection(firestore, 'transactions'), where('remaining', '>', 0))
+      const unsubUnpaid = onSnapshot(qUnpaid, async (snapshot) => {
+        if (isSyncing) return
+        for (const change of snapshot.docChanges()) {
+          if (change.type === 'removed') continue
+          try {
+            const cloudData = change.doc.data()
+            const local = await db.transactions.get(change.doc.id)
+            if (!local || cloudData.updatedAt > local.updatedAt) {
+              await db.transactions.put({...cloudData, id: change.doc.id, synced: 1 })
+              await recalculateMemberDebt(cloudData.memberId)
+            }
+          } catch (e) {}
+        }
+      }, handleError)
+      unsubscribers.push(unsubUnpaid)
+    } catch (e) {}
+  },
+
+  stopRealtime() {
+    try {
+      unsubscribers.forEach(unsub => {
+        try { unsub() } catch {}
+      })
+    } catch {}
+    unsubscribers = []
+    if (intervalId) {
+      clearInterval(intervalId)
+      intervalId = null
+    }
+  },
+
+  init() {
+    try {
+      if (!firestore ||!db) {
+        console.warn('[Sync] skip init, db/firestore belum siap')
+        return
+      }
+      window.addEventListener('online', () => this.pushLocalToCloud())
+      if (intervalId) clearInterval(intervalId)
+      intervalId = setInterval(() => this.pushLocalToCloud(), 60 * 1000)
+      this.initRealtimePull()
+      this.pushLocalToCloud()
+    } catch (e) {
+      console.error('[Sync] init error:', e?.message, e)
+    }
+  }
+}
+
+export const syncService = syncRealtime
+export default syncRealtime
+===== src/services/productService.js =====
+import { productRepo } from '../db/repositories/productRepository.js'
+
+export const productService = {
+  async createProduct(formData, modalPerPcs) {
+    const exist = formData.code? await productRepo.getByCode(formData.code) : null
+    if(exist) throw new Error(`Kode sudah dipakai ${exist.name}`)
+    return await productRepo.create({
+     ...formData,
+      price_modal: modalPerPcs,
+      unit: 'pcs'
+    })
+  }
+}
+===== src/stores/productStore.js =====
+import { defineStore } from 'pinia'
+import { productRepo } from '../db/repositories/productRepository.js'
+
+export const useProductsStore = defineStore('products', {
+  state: () => ({ list: [], loading: false }),
+  actions: {
+    async fetch() { this.loading=true; this.list = await productRepo.getAll(); this.loading=false },
+    async add(payload) { await productRepo.create(payload); await this.fetch() }
+  },
+  persist: true
+})
+===== src/style.css =====
+@import "tailwindcss";
+===== src/views/Dashboard.vue =====
+
+===== src/views/Expenses.vue =====
+
+===== src/views/Kasir.vue =====
+
+===== src/views/Members.vue =====
+
+===== src/views/Operators.vue =====
+
+===== src/views/ProductsAdd.vue =====
+<template>
+  <div class="max-w-xl mx-auto p-4 pb-24">
+    <ProductForm />
+  </div>
+</template>
+<script setup>
+import ProductForm from '../components/product/ProductForm.vue'
+</script>
+===== src/views/ProductsDigital.vue =====
+
+===== src/views/ProductsList.vue =====
+<template>
+<div class="max-w-xl mx-auto p-4 pb-24">
+  <h1 class="font-black text-xl mb-4">Daftar Barang ({{store.list.length}})</h1>
+  <input v-model="q" placeholder="Cari..." class="w-full px-4 py-3 bg-white border rounded-2xl mb-4 text-sm"/>
+  <div v-for="p in filtered" :key="p.id" class="p-4 bg-white rounded-2xl border mb-2 flex justify-between">
+    <div>
+      <div class="font-bold text-sm">{{p.name}}</div>
+      <div class="text-[11px] text-zinc-400">{{p.code}} | Stok {{p.qty}} | Modal Rp {{p.price_modal}}</div>
+    </div>
+    <span v-if="p.qty <= p.minStock" class="text-[10px] bg-red-100 text-red-600 px-2 py-1 rounded-full h-fit">TIPIS</span>
+  </div>
+</div>
+</template>
+<script setup>
+import { ref, computed, onMounted } from 'vue'
+import { useProductsStore } from '../stores/productStore.js'
+const store = useProductsStore()
+const q = ref('')
+const filtered = computed(()=> store.list.filter(p=> p.name.toLowerCase().includes(q.value.toLowerCase())))
+onMounted(()=> store.fetch())
+</script>
+===== src/views/Reports.vue =====
+
+===== src/views/Settings.vue =====
+
+===== src/views/Shopping.vue =====
+
+===== src/composables/useProductScanner.js =====
+import { ref } from 'vue'
+import { Html5Qrcode } from 'html5-qrcode'
+
+export function useProductScanner() {
+  const isScanning = ref(false)
+  let qr = null
+
+  const start = async (onDetected) => {
+    isScanning.value = true
+    qr = new Html5Qrcode("reader")
+    await qr.start({ facingMode: "environment" }, { fps: 10, qrbox: 250 },
+      (decoded) => { onDetected(decoded); stop() }, null)
+  }
+  const stop = async () => { try{ await qr?.stop() }catch{} isScanning.value=false }
+
+  return { isScanning, start, stop }
+}
+===== src/composables/useProductForm.js =====
+import { useForm, useField } from 'vee-validate'
+import { productSchema } from '../schemas/product.schema.js'
+
+function toTypedSchema(zodSchema) {
+  return {
+    parse(values) {
+      const r = zodSchema.safeParse(values)
+      if (r.success) return {}
+      const errs = {}
+      r.error.issues.forEach(i => { errs[i.path.join('.')] = i.message })
+      return errs
+    }
+  }
+}
+
+export function useProductForm() {
+  const { handleSubmit, errors, isSubmitting } = useForm({
+    validationSchema: toTypedSchema(productSchema),
+    initialValues: {
+      name: '',
+      code: '',
+      category: 'Umum',
+      purchasePackName: '',
+      packPrice: '',
+      packQty: '',
+      price_modal: '',
+      price_sell: '',
+      qty: '',
+      minStock: 5
+    }
+  })
+
+  const { value: name } = useField('name')
+  const { value: code } = useField('code')
+  const { value: purchasePackName } = useField('purchasePackName')
+  const { value: packPrice } = useField('packPrice')
+  const { value: packQty } = useField('packQty')
+  const { value: price_modal } = useField('price_modal')
+  const { value: price_sell } = useField('price_sell')
+  const { value: qty } = useField('qty')
+  const { value: minStock } = useField('minStock')
+
+  return { name, code, purchasePackName, packPrice, packQty, price_modal, price_sell, qty, minStock, handleSubmit, errors, isSubmitting }
+}
+===== src/composables/useProductCalculator.js =====
+import { computed } from 'vue'
+import { calcModalDariPack, calcMargin } from '../utils/calculator/product.js'
+
+export function useProductCalculator(packPriceRef, packQtyRef, priceSellRef = { value: 0 }) {
+  const modalPerPcs = computed(() =>
+    calcModalDariPack(packPriceRef.value, packQtyRef.value)
+  )
+  const marginPersen = computed(() =>
+    calcMargin(priceSellRef.value, modalPerPcs.value)
+  )
+  return { modalPerPcs, marginPersen }
+}
+===== src/composables/useRupiah.js =====
+import { computed } from 'vue'
+import { formatRp, formatRibuan, toNumber } from '../utils/formatters/currency.js'
+
+export function useRupiah(fieldRef, withPrefix = true) {
+  const display = computed(() => {
+    return withPrefix ? formatRp(fieldRef.value) : formatRibuan(fieldRef.value)
+  })
+
+  const onInput = (e) => {
+    const raw = toNumber(e.target.value)
+    fieldRef.value = raw
+    // paksa tampil Rp di input nya langsung
+    e.target.value = withPrefix ? formatRp(raw) : formatRibuan(raw)
+  }
+
+  return { display, onInput, toNumber, formatRp, formatRibuan }
+}
+===== src/utils/calculator/product.js =====
+import Big from 'big.js'
+
+// Helper buat ubah "12.000" atau "Rp 1.250.000" jadi 12000
+const toNumber = (v) => {
+  if (typeof v === 'number') return v
+  if (!v) return 0
+  const cleaned = String(v).replace(/[^0-9]/g, '') // hapus titik, koma, Rp
+  return Number(cleaned) || 0
+}
+
+export const calcModalDariPack = (packPrice, packQty) => {
+  const price = toNumber(packPrice)
+  const qty = toNumber(packQty)
+  if (!price || !qty) return 0
+  try {
+    return Number(Big(price).div(qty).round(0))
+  } catch { return 0 }
+}
+
+export const calcMargin = (jual, modal) => {
+  const j = toNumber(jual)
+  const m = toNumber(modal)
+  if (!m || !j) return 0
+  try {
+    return Number(Big(j).minus(m).div(m).times(100).round(0))
+  } catch { return 0 }
+}
+
+export const getBarangTipis = (products) =>
+  products.filter(p => (p.qty || 0) <= (p.minStock || 5))
+===== src/utils/formatters/currency.js =====
+export const toNumber = (v) => Number(String(v?? '').replace(/[^0-9]/g, '')) || 0
+
+export const formatRp = (v) => {
+  const n = toNumber(v)
+  if (!n) return ''
+  return `Rp ${n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.')}`
+}
+
+export const formatRibuan = (v) => {
+  const n = toNumber(v)
+  if (!n) return ''
+  return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.')
+}
+===== src/schemas/product.schema.js =====
+import * as z from 'zod'
+
+export const productSchema = z.object({
+  name: z.string().min(3, 'Nama minimal 3 huruf'),
+  code: z.string().optional(),
+  category: z.string().default('Umum'),
+  purchasePackName: z.string().optional(), // nama satuan: dus/slop
+  packPrice: z.coerce.number().optional().default(0),
+  packQty: z.coerce.number().optional().default(0),
+  price_modal: z.coerce.number().min(1, 'Modal/pcs wajib'),
+  price_sell: z.coerce.number().min(1, 'Harga jual wajib'),
+  qty: z.coerce.number().min(0).default(0),
+  minStock: z.coerce.number().min(1).default(5)
+})
+===== src/components/product/ProductForm.vue =====
+<template>
+<form @submit.prevent="onSubmit" class="bg-white p-5 rounded-3xl border flex flex-col gap-4 shadow-sm">
+  <div class="flex flex-col gap-1">
+    <input v-model="name" placeholder="Nama Produk *" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold"/>
+    <span v-if="errors.name" class="text-[10px] text-red-500">{{ errors.name }}</span>
+  </div>
+
+  <div class="flex gap-2">
+    <input v-model="code" placeholder="Barcode" class="flex-1 px-4 py-3 bg-zinc-50 border rounded-xl text-sm"/>
+    <button type="button" @click="start(c => code = c)" class="px-4 bg-zinc-900 text-white rounded-xl"><ScanLine class="w-4 h-4"/></button>
+  </div>
+  <div id="reader" class="w-full rounded-xl overflow-hidden"></div>
+
+  <!-- Kalkulator Grosir -->
+  <div class="p-4 bg-blue-50 rounded-2xl border border-blue-100 flex flex-col gap-3">
+    <div class="text-[10px] font-black text-blue-600 uppercase">Kalkulator Grosir</div>
+    <div class="grid grid-cols-3 gap-2">
+      <div class="col-span-2 flex flex-col gap-1">
+        <label class="text-[10px] text-zinc-500">Harga Per Pak</label>
+        <input :value="formatRp(packPrice)" @input="onPackPriceInput" inputmode="numeric" placeholder="Rp 0" class="w-full px-3 py-2.5 bg-white border rounded-xl text-sm font-bold"/>
+      </div>
+      <div class="flex flex-col gap-1">
+        <label class="text-[10px] text-zinc-500">Isi / Pak</label>
+        <input v-model.number="packQty" type="number" inputmode="numeric" placeholder="12" class="w-full px-3 py-2.5 bg-white border rounded-xl text-sm font-bold"/>
+      </div>
+    </div>
+    <div v-if="toNumber(packPrice) > 0" class="flex flex-col gap-1">
+      <input v-model="purchasePackName" placeholder="Nama grosir: dus, slop" class="px-3 py-2.5 bg-white border rounded-xl text-sm"/>
+      <div class="text-[11px] text-blue-600 bg-white p-2 rounded-xl border">Auto modal: {{ formatRp(autoModal) }}</div>
+    </div>
+  </div>
+
+  <!-- Modal + Jual bersebelahan -->
+  <div class="grid grid-cols-2 gap-2">
+    <div class="flex flex-col gap-1">
+      <label class="text-[10px] text-zinc-500">Modal / Pcs * (bisa manual)</label>
+      <input :value="formatRp(price_modal)" @input="onModalInput" inputmode="numeric" placeholder="Rp 0" class="w-full px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-sm font-bold"/>
+      <span v-if="errors.price_modal" class="text-[10px] text-red-500">{{ errors.price_modal }}</span>
+    </div>
+    <div class="flex flex-col gap-1">
+      <label class="text-[10px] text-zinc-500">Harga Jual *</label>
+      <input :value="formatRp(price_sell)" @input="onJualInput" inputmode="numeric" placeholder="Rp 0" class="w-full px-3 py-2.5 bg-green-50 border border-green-200 rounded-xl text-sm font-bold"/>
+      <span class="text-[10px] text-green-600 font-bold">Margin {{ marginPersen }}%</span>
+    </div>
+  </div>
+
+  <!-- Stok Awal + Min Stok bersebelahan -->
+  <div class="grid grid-cols-2 gap-2">
+    <div class="flex flex-col gap-1">
+      <label class="text-[10px] text-zinc-500">Stok Awal</label>
+      <input v-model.number="qty" type="number" placeholder="0" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold"/>
+    </div>
+    <div class="flex flex-col gap-1">
+      <label class="text-[10px] text-zinc-500">Min. Stok</label>
+      <input v-model.number="minStock" type="number" placeholder="5" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold"/>
+    </div>
+  </div>
+
+  <button :disabled="isSubmitting" class="w-full bg-zinc-900 text-white py-4 rounded-2xl font-black text-sm">{{ isSubmitting? 'Menyimpan...' : 'Simpan Barang' }}</button>
+</form>
+</template>
+
+<script setup>
+import { computed, watch } from 'vue'
+import { ScanLine } from 'lucide-vue-next'
+import { useRouter } from 'vue-router'
+import { useProductForm } from '../../composables/useProductForm.js'
+import { useProductScanner } from '../../composables/useProductScanner.js'
+import { calcModalDariPack, calcMargin } from '../../utils/calculator/product.js'
+import { formatRp, toNumber } from '../../utils/formatters/currency.js'
+import { productService } from '../../services/productService.js'
+
+const { name, code, purchasePackName, packPrice, packQty, price_modal, price_sell, qty, minStock, handleSubmit, errors, isSubmitting } = useProductForm()
+const { start } = useProductScanner()
+const router = useRouter()
+
+const autoModal = computed(() => calcModalDariPack(packPrice.value, packQty.value))
+const marginPersen = computed(() => calcMargin(price_sell.value, price_modal.value))
+
+// Input handler biar ada Rp + titik ribuan + gak jadi 010
+const onPackPriceInput = (e) => {
+  const raw = toNumber(e.target.value)
+  packPrice.value = raw
+  e.target.value = formatRp(raw)
+}
+const onModalInput = (e) => {
+  const raw = toNumber(e.target.value)
+  price_modal.value = raw
+  e.target.value = formatRp(raw)
+}
+const onJualInput = (e) => {
+  const raw = toNumber(e.target.value)
+  price_sell.value = raw
+  e.target.value = formatRp(raw)
+}
+
+watch(autoModal, (val) => { if (val > 0) price_modal.value = val })
+
+const onSubmit = handleSubmit(async (vals) => {
+  await productService.createProduct({
+    name: vals.name, code: vals.code || '', category: 'Umum',
+    purchasePackName: purchasePackName.value || '',
+    packPrice: toNumber(packPrice.value), packQty: toNumber(packQty.value),
+    price_modal: toNumber(price_modal.value), price_sell: toNumber(price_sell.value),
+    qty: toNumber(qty.value), minStock: toNumber(minStock.value) || 5, unit: 'pcs'
+  }, toNumber(price_modal.value))
+  router.push('/products')
+})
+</script>

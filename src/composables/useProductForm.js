@@ -1,42 +1,44 @@
-import { ref } from 'vue'
-import { formatDisplay, parseNumber } from '../utils/currency.js'
-import { calcModalDariPack } from '../utils/calculator/product.js'
+import { useForm, useField } from 'vee-validate'
+import { productSchema } from '../schemas/product.schema.js'
+
+function toTypedSchema(zodSchema) {
+  return {
+    parse(values) {
+      const r = zodSchema.safeParse(values)
+      if (r.success) return {}
+      const errs = {}
+      r.error.issues.forEach(i => { errs[i.path.join('.')] = i.message })
+      return errs
+    }
+  }
+}
 
 export function useProductForm() {
-  const product = ref({
-    id: '', image: null, name: '', code: '', category: 'Umum',
-    unit: 'pcs', price_modal: 0, price_sell: 0, qty: 0, pack_price: 0, pack_size: 1
+  const { handleSubmit, errors, isSubmitting } = useForm({
+    validationSchema: toTypedSchema(productSchema),
+    initialValues: {
+      name: '',
+      code: '',
+      category: 'Umum',
+      purchasePackName: '',
+      packPrice: '',
+      packQty: '',
+      price_modal: '',
+      price_sell: '',
+      qty: '',
+      minStock: 5
+    }
   })
-  const display = ref({ modal: "", sell: "", pack: "" })
 
-  const updateNumber = (field, event) => {
-    const num = parseNumber(event.target.value)
-    product.value[field] = num
+  const { value: name } = useField('name')
+  const { value: code } = useField('code')
+  const { value: purchasePackName } = useField('purchasePackName')
+  const { value: packPrice } = useField('packPrice')
+  const { value: packQty } = useField('packQty')
+  const { value: price_modal } = useField('price_modal')
+  const { value: price_sell } = useField('price_sell')
+  const { value: qty } = useField('qty')
+  const { value: minStock } = useField('minStock')
 
-    if (field === 'price_modal') display.value.modal = formatDisplay(num)
-    if (field === 'price_sell') display.value.sell = formatDisplay(num)
-    if (field === 'pack_price') {
-      display.value.pack = formatDisplay(num)
-      if (product.value.pack_size > 0) {
-        const m = calcModalDariPack(num, product.value.pack_size)
-        product.value.price_modal = m
-        display.value.modal = formatDisplay(m)
-      }
-    }
-  }
-
-  const updatePackSize = () => {
-    if (product.value.pack_price && product.value.pack_size) {
-      const m = calcModalDariPack(product.value.pack_price, product.value.pack_size)
-      product.value.price_modal = m
-      display.value.modal = formatDisplay(m)
-    }
-  }
-
-  const resetForm = () => {
-    product.value = { id: '', image: null, name: '', code: '', category: 'Umum', unit: 'pcs', price_modal: 0, price_sell: 0, qty: 0, pack_price: 0, pack_size: 1 }
-    display.value = { modal: "", sell: "", pack: "" }
-  }
-
-  return { product, display, updateNumber, updatePackSize, resetForm }
+  return { name, code, purchasePackName, packPrice, packQty, price_modal, price_sell, qty, minStock, handleSubmit, errors, isSubmitting }
 }

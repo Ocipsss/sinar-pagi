@@ -1,19 +1,30 @@
-export const calcModalDariPack = (packPrice, packSize) => {
-  if(!packPrice ||!packSize) return 0
-  return Math.round(packPrice / packSize)
+import Big from 'big.js'
+
+// Helper buat ubah "12.000" atau "Rp 1.250.000" jadi 12000
+const toNumber = (v) => {
+  if (typeof v === 'number') return v
+  if (!v) return 0
+  const cleaned = String(v).replace(/[^0-9]/g, '') // hapus titik, koma, Rp
+  return Number(cleaned) || 0
 }
 
-export const getBarangTipis = (products) => products.filter(p => (p.qty || 0) <= (p.min_stock || 5))
-
-export const hitungEstimasiBelanja = (products, target = 30) => {
-  const tipis = getBarangTipis(products)
-  let grandTotal = 0
-  const list = tipis.map(p => {
-    const butuh = Math.max(0, target - p.qty)
-    const butuhPack = p.pack_size > 1? Math.ceil(butuh / p.pack_size) : butuh
-    const totalModal = butuhPack * (p.pack_price || p.price_modal * (p.pack_size||1))
-    grandTotal += totalModal
-    return {...p, butuh, butuhPack, totalModal, checked: true }
-  })
-  return { list, grandTotal }
+export const calcModalDariPack = (packPrice, packQty) => {
+  const price = toNumber(packPrice)
+  const qty = toNumber(packQty)
+  if (!price || !qty) return 0
+  try {
+    return Number(Big(price).div(qty).round(0))
+  } catch { return 0 }
 }
+
+export const calcMargin = (jual, modal) => {
+  const j = toNumber(jual)
+  const m = toNumber(modal)
+  if (!m || !j) return 0
+  try {
+    return Number(Big(j).minus(m).div(m).times(100).round(0))
+  } catch { return 0 }
+}
+
+export const getBarangTipis = (products) =>
+  products.filter(p => (p.qty || 0) <= (p.minStock || 5))
