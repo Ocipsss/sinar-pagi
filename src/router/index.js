@@ -8,6 +8,7 @@ import SalesHistoryView from '../views/SalesHistory.vue'
 import SettingsMenu from '../views/SettingsMenu.vue'
 import Operators from '../views/Operators.vue'
 import ProductsDigital from '../views/ProductsDigital.vue'
+import Finance from '../views/Finance.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -71,6 +72,12 @@ export const router = createRouter({
           component: SalesHistoryView,
           meta: { title: 'Riwayat Penjualan' }
         },
+        { 
+  path: 'finance', 
+  name: 'Finance', 
+  component: () => import('../views/Finance.vue'),
+  meta: { title: 'Kas & Keuangan' }
+},
         {
   path: 'settings-menu', 
   name: 'SettingsMenu', 

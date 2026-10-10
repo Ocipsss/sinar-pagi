@@ -1,6 +1,7 @@
 // src/services/kasirService.js
 import { db } from '../db/index.js'
 import dayjs from 'dayjs'
+import { financeRepo } from '../db/repositories/financeRepository.js'
 
 export const kasirService = {
   async checkout({ cart, member, paymentMethod }) {
@@ -28,18 +29,38 @@ export const kasirService = {
       synced: 0
     })
 
+    // Mutasi Saldo Otomatis berdasarkan Metode Pembayaran
+    if (paymentMethod === 'CASH') {
+      await financeRepo.addMutation({
+        accountId: 'acc_cash',
+        type: 'IN',
+        amount: total,
+        category: 'Penjualan Toko',
+        note: `Transaksi Kasir (Tunai) #${id.slice(0, 8)}`,
+        refId: id
+      })
+    } else if (paymentMethod === 'QRIS') {
+      await financeRepo.addMutation({
+        accountId: 'acc_bank',
+        type: 'IN',
+        amount: total,
+        category: 'Penjualan Toko',
+        note: `Transaksi Kasir (QRIS) #${id.slice(0, 8)}`,
+        refId: id
+      })
+    }
+
     for (const c of cart) {
       const modal = c.price_modal || 0
       const itemProfit = (c.price_sell - modal) * c.cartQty
       totalProfit += Math.max(0, itemProfit)
 
-      // Simpan item transaksi menggunakan nama yang sudah diformat (c.name)
       await db.transaction_items.add({
         id: crypto.randomUUID(), 
         transactionId: id, 
         productId: c.id,
         serviceId: c.isServed ? 'SERVICE_SEDUH' : null, 
-        name: c.name, // Menyimpan teks kustom seperti "Mie Seduh Indomie Goreng" / "Djarum Super (1/2 Bungkus)"
+        name: c.name, 
         qty: c.cartQty, 
         price: c.price_sell,
         subtotal: c.price_sell * c.cartQty, 
@@ -47,7 +68,6 @@ export const kasirService = {
         synced: 0
       })
 
-      // Hitung pemotongan stok
       const qtyDipotong = c.packageInfo ? (c.packageInfo.qty_pcs * c.cartQty) : c.cartQty
 
       await db.products.update(c.id, { 

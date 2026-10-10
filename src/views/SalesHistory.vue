@@ -3,7 +3,7 @@
     <!-- Header -->
     <div class="flex justify-between items-center">
       <div>
-        <h1 class="font-black text-xl text-zinc-900">Riwayat Penjualan</h1>
+        <h1 class="font-black text-xl text-zinc-900">Riwayat Penjualan & Digital</h1>
         <p class="text-xs text-zinc-400">Total {{ filteredTransactions.length }} transaksi ditemukan</p>
       </div>
     </div>
@@ -11,7 +11,7 @@
     <!-- Ringkasan Statistik -->
     <div class="grid grid-cols-2 gap-3">
       <div class="bg-white border border-zinc-100 p-3.5 rounded-2xl shadow-sm">
-        <div class="text-[10px] font-black text-zinc-400 uppercase">Total Omzet</div>
+        <div class="text-[10px] font-black text-zinc-400 uppercase">Estimasi Arus Kas</div>
         <div class="text-base font-black text-zinc-900 mt-0.5">Rp {{ formatRibuan(totalOmzet) }}</div>
       </div>
       <div class="bg-amber-50 border border-amber-100 p-3.5 rounded-2xl shadow-sm">
@@ -26,7 +26,7 @@
         <Search class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
         <input 
           v-model="searchQuery" 
-          placeholder="Cari ID transaksi / nama member..." 
+          placeholder="Cari ID, member, provider..." 
           class="w-full pl-11 pr-4 py-3 bg-white border border-zinc-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"
         />
       </div>
@@ -66,7 +66,12 @@
           <div>
             <div class="font-bold text-xs text-zinc-900 flex items-center gap-1.5">
               <span>{{ t.memberName }}</span>
-              <span v-if="t.memberId" class="px-2 py-0.5 bg-zinc-100 text-zinc-600 rounded-md text-[9px] font-black">MEMBER</span>
+              <span 
+                :class="t.trxType === 'DIGITAL' ? 'bg-blue-100 text-blue-700' : 'bg-zinc-100 text-zinc-600'"
+                class="px-2 py-0.5 rounded-md text-[9px] font-black uppercase"
+              >
+                {{ t.trxType }}
+              </span>
             </div>
             <div class="text-[10px] text-zinc-400 mt-0.5 flex items-center gap-1">
               <Calendar class="w-3 h-3" />
@@ -85,11 +90,20 @@
 
         <div class="flex justify-between items-end pt-2 border-t border-zinc-50">
           <div class="text-[11px] text-zinc-500 font-medium">
-            {{ t.items.length }} Item Barang
+            <template v-if="t.trxType === 'DIGITAL'">
+              Biaya Admin: Rp {{ formatRibuan(t.adminFee) }}
+            </template>
+            <template v-else>
+              {{ t.items.length }} Item Barang
+            </template>
           </div>
           <div class="text-right">
-            <div class="text-[9px] text-zinc-400 font-bold uppercase">Total Transaksi</div>
-            <div class="text-sm font-black text-zinc-900">Rp {{ formatRibuan(t.total) }}</div>
+            <div class="text-[9px] text-zinc-400 font-bold uppercase">
+              {{ t.trxType === 'DIGITAL' ? 'Arus Kas Fisik' : 'Total Transaksi' }}
+            </div>
+            <div :class="['text-sm font-black', t.total < 0 ? 'text-red-500' : 'text-zinc-900']">
+              {{ t.total < 0 ? '-' : '' }}Rp {{ formatRibuan(Math.abs(t.total)) }}
+            </div>
           </div>
         </div>
       </div>
@@ -100,7 +114,9 @@
       <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl max-h-[85vh] flex flex-col animate-in slide-in-from-bottom duration-200">
         <div class="flex justify-between items-start mb-4 border-b border-zinc-100 pb-3">
           <div>
-            <h2 class="font-black text-base text-zinc-900">Detail Rincian Nota</h2>
+            <h2 class="font-black text-base text-zinc-900">
+              {{ selectedTransaction.trxType === 'DIGITAL' ? 'Detail Transaksi Digital' : 'Detail Rincian Nota' }}
+            </h2>
             <p class="text-[11px] text-zinc-400">ID: {{ selectedTransaction.id.slice(0, 13) }}...</p>
           </div>
           <button @click="selectedTransaction = null" class="p-2 bg-zinc-100 rounded-xl">
@@ -114,7 +130,7 @@
             <span class="font-bold text-zinc-800">{{ formatDate(selectedTransaction.date) }}</span>
           </div>
           <div class="flex justify-between">
-            <span class="text-zinc-500">Pelanggan:</span>
+            <span class="text-zinc-500">Keterangan:</span>
             <span class="font-bold text-zinc-800">{{ selectedTransaction.memberName }}</span>
           </div>
           <div class="flex justify-between">
@@ -124,26 +140,46 @@
         </div>
 
         <div class="flex-1 overflow-auto space-y-2 mb-4 pr-1">
-          <div class="text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-2">Item Dibeli</div>
-          <div 
-            v-for="item in selectedTransaction.items" 
-            :key="item.id"
-            class="flex justify-between items-center py-2 border-b border-zinc-50 last:border-0"
-          >
-            <div>
-              <div class="font-bold text-xs text-zinc-900">{{ item.productName }}</div>
-              <div class="text-[10px] text-zinc-400">Rp {{ formatRibuan(item.price) }} x {{ item.qty }}</div>
+          <div class="text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-2">Rincian Transaksi</div>
+          
+          <template v-if="selectedTransaction.trxType === 'DIGITAL'">
+            <div class="flex justify-between items-center py-2 border-b border-zinc-50">
+              <span class="text-xs font-bold">Nominal {{ selectedTransaction.digitalType === 'topup' ? 'Top Up' : 'Tarik Tunai' }}</span>
+              <span class="font-black text-xs">Rp {{ formatRibuan(selectedTransaction.nominal) }}</span>
             </div>
-            <div class="font-black text-xs text-zinc-900">
-              Rp {{ formatRibuan(item.subtotal || (item.price * item.qty)) }}
+            <div class="flex justify-between items-center py-2 border-b border-zinc-50">
+              <span class="text-xs font-bold">Biaya Admin (Profit)</span>
+              <span class="font-black text-xs text-emerald-600">Rp {{ formatRibuan(selectedTransaction.adminFee) }}</span>
             </div>
-          </div>
+            <div class="flex justify-between items-center py-2 border-b border-zinc-50">
+              <span class="text-xs font-bold">Metode Admin</span>
+              <span class="font-bold text-xs uppercase">{{ selectedTransaction.adminPaymentMethod === 'cash' ? 'Uang Tunai' : 'Potong Saldo' }}</span>
+            </div>
+          </template>
+
+          <template v-else>
+            <div 
+              v-for="item in selectedTransaction.items" 
+              :key="item.id"
+              class="flex justify-between items-center py-2 border-b border-zinc-50 last:border-0"
+            >
+              <div>
+                <div class="font-bold text-xs text-zinc-900">{{ item.productName }}</div>
+                <div class="text-[10px] text-zinc-400">Rp {{ formatRibuan(item.price) }} x {{ item.qty }}</div>
+              </div>
+              <div class="font-black text-xs text-zinc-900">
+                Rp {{ formatRibuan(item.subtotal || (item.price * item.qty)) }}
+              </div>
+            </div>
+          </template>
         </div>
 
         <div class="border-t border-zinc-100 pt-3 space-y-2">
           <div class="flex justify-between items-center text-sm">
-            <span class="font-bold text-zinc-600">Total Akhir</span>
-            <span class="font-black text-base text-zinc-900">Rp {{ formatRibuan(selectedTransaction.total) }}</span>
+            <span class="font-bold text-zinc-600">Impact Kas Fisik</span>
+            <span :class="['font-black text-base', selectedTransaction.total < 0 ? 'text-red-500' : 'text-zinc-900']">
+              {{ selectedTransaction.total < 0 ? '-' : '' }}Rp {{ formatRibuan(Math.abs(selectedTransaction.total)) }}
+            </span>
           </div>
 
           <button 

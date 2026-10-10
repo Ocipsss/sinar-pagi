@@ -1,107 +1,50 @@
 import { ref, computed } from 'vue'
-import { digitalTransactionRepo } from '../db/repositories/digitalTransactionRepository.js'
-import { syncRealtime } from '../services/syncService.js'
+import { productsDigitalService } from '../services/productsDigitalService.js'
 
 export function useProductsDigital() {
-  const transactions = ref([])
-  const searchQuery = ref('')
-  const loading = ref(false)
-  const showModal = ref(false)
-
   const form = ref({
-    type: 'PULSA',
-    provider: 'Telkomsel',
-    targetNumber: '',
-    nominal: 0,
-    costPrice: 0,
-    sellingPrice: 0,
-    adminFee: 0,
-    adminPaymentMethod: 'CASH',
-    status: 'SUCCESS'
+    type: 'topup',
+    provider: '',
+    nominal: null,
+    adminFee: 2000,
+    adminPaymentMethod: 'cash'
+  })
+  const loading = ref(false)
+
+  const estimasiKas = computed(() => {
+    const n = Number(form.value.nominal) || 0
+    const fee = Number(form.value.adminFee) || 0
+    const feeCash = form.value.adminPaymentMethod === 'cash' ? fee : 0
+    return form.value.type === 'topup' ? n + feeCash : n - feeCash
   })
 
-  const typeOptions = ['PULSA', 'PAKET DATA', 'PLN', 'E-WALLET', 'VOUCHER GAME', 'LAINNYA']
-  const paymentMethods = ['CASH', 'QRIS']
+  const saveTransaction = async () => {
+    if (!form.value.provider?.trim()) {
+      alert('Pilih/isi Layanan / Provider terlebih dahulu!')
+      return
+    }
+    if (!form.value.nominal || form.value.nominal <= 0) {
+      alert('Nominal transaksi harus lebih besar dari 0!')
+      return
+    }
 
-  const loadTransactions = async () => {
     loading.value = true
     try {
-      transactions.value = await digitalTransactionRepo.getAll()
+      await productsDigitalService.create(form.value)
+      alert('Transaksi digital berhasil disimpan!')
+      form.value = {
+        type: 'topup',
+        provider: '',
+        nominal: null,
+        adminFee: 2000,
+        adminPaymentMethod: 'cash'
+      }
+    } catch (e) {
+      alert(`Gagal menyimpan transaksi: ${e.message}`)
     } finally {
       loading.value = false
     }
   }
 
-  const filteredTransactions = computed(() => {
-    const q = searchQuery.value.toLowerCase().trim()
-    if (!q) return transactions.value
-    return transactions.value.filter(t => 
-      t.provider.toLowerCase().includes(q) || 
-      t.type.toLowerCase().includes(q) ||
-      (t.targetNumber || '').includes(q)
-    )
-  })
-
-  const totalOmzetHariIni = computed(() => {
-    const today = new Date().toISOString().slice(0, 10)
-    return transactions.value
-      .filter(t => t.date.startsWith(today))
-      .reduce((sum, t) => sum + (t.totalReceived || 0), 0)
-  })
-
-  const totalProfitHariIni = computed(() => {
-    const today = new Date().toISOString().slice(0, 10)
-    return transactions.value
-      .filter(t => t.date.startsWith(today))
-      .reduce((sum, t) => sum + (t.profit || 0), 0)
-  })
-
-  const openModal = () => {
-    form.value = {
-      type: 'PULSA',
-      provider: 'Telkomsel',
-      targetNumber: '',
-      nominal: 0,
-      costPrice: 0,
-      sellingPrice: 0,
-      adminFee: 0,
-      adminPaymentMethod: 'CASH',
-      status: 'SUCCESS'
-    }
-    showModal.value = true
-  }
-
-  const saveTransaction = async () => {
-    if (!form.value.provider || !form.value.sellingPrice) return
-
-    await digitalTransactionRepo.create(form.value)
-    showModal.value = false
-    await loadTransactions()
-    syncRealtime.pushLocalToCloud()
-  }
-
-  const deleteTransaction = async (t) => {
-    if (confirm(`Hapus catatan transaksi ${t.provider} - ${t.targetNumber}?`)) {
-      await digitalTransactionRepo.delete(t.id)
-      await loadTransactions()
-      syncRealtime.pushLocalToCloud()
-    }
-  }
-
-  return {
-    transactions,
-    searchQuery,
-    loading,
-    showModal,
-    form,
-    typeOptions,
-    paymentMethods,
-    filteredTransactions,
-    totalOmzetHariIni,
-    totalProfitHariIni,
-    loadTransactions,
-    openModal,
-    saveTransaction,
-    deleteTransaction
-  }
+  return { form, estimasiKas, loading, saveTransaction }
 }

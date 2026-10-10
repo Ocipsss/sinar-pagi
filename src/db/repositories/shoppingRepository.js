@@ -1,17 +1,15 @@
 import { db } from '../index.js'
 import dayjs from 'dayjs'
 
-// Repository untuk mengelola operasi tabel 'shopping_list' di Dexie DB
 export const shoppingRepository = {
   async getAll() {
-    // Memastikan tabel 'shopping_list' diakses dengan aman
-    if (!db.shopping_list) return []
-    return await db.shopping_list.toArray()
+    const table = db.shopping_list || db.table('shopping_list')
+    return await table.toArray()
   },
 
   async getById(id) {
-    if (!db.shopping_list) return null
-    return await db.shopping_list.get(id)
+    const table = db.shopping_list || db.table('shopping_list')
+    return await table.get(id)
   },
 
   async add(item) {
@@ -20,18 +18,14 @@ export const shoppingRepository = {
     const newItem = {
       ...item,
       id,
-      isBought: item.isBought || false,
+      isBought: item.isBought ? 1 : 0,
       createdAt: item.createdAt || now,
       updatedAt: now,
       synced: 0
     }
     
-    // Gunakan table() dinamis jika schema Dexie belum terdefinisi secara statis
-    if (db.shopping_list) {
-      await db.shopping_list.put(newItem)
-    } else {
-      await db.table('shopping_list').put(newItem)
-    }
+    const table = db.shopping_list || db.table('shopping_list')
+    await table.put(newItem)
     return newItem
   },
 
@@ -40,7 +34,7 @@ export const shoppingRepository = {
     const preparedItems = items.map(item => ({
       ...item,
       id: item.id || crypto.randomUUID(),
-      isBought: item.isBought || false,
+      isBought: item.isBought ? 1 : 0,
       createdAt: item.createdAt || now,
       updatedAt: now,
       synced: 0
@@ -54,11 +48,11 @@ export const shoppingRepository = {
   async update(id, changes) {
     const now = dayjs().toISOString()
     const table = db.shopping_list || db.table('shopping_list')
-    await table.update(id, {
-      ...changes,
-      updatedAt: now,
-      synced: 0
-    })
+    const updateData = { ...changes, updatedAt: now, synced: 0 }
+    if (typeof changes.isBought === 'boolean') {
+      updateData.isBought = changes.isBought ? 1 : 0
+    }
+    await table.update(id, updateData)
   },
 
   async delete(id) {

@@ -14,9 +14,11 @@ export function useSalesHistory() {
 
   const filterOptions = [
     { label: 'Semua', value: 'ALL' },
+    { label: 'Barang', value: 'BARANG' },
+    { label: 'Digital', value: 'DIGITAL' },
     { label: 'Cash', value: 'CASH' },
     { label: 'QRIS', value: 'QRIS' },
-    { label: 'Tempo / Piutang', value: 'TEMPO' }
+    { label: 'Tempo', value: 'TEMPO' }
   ]
 
   const loadHistory = async () => {
@@ -31,20 +33,38 @@ export function useSalesHistory() {
   const filteredTransactions = computed(() => {
     const q = searchQuery.value.toLowerCase().trim()
     return transactions.value.filter(t => {
-      const matchQuery = !q || t.memberName.toLowerCase().includes(q) || t.id.toLowerCase().includes(q)
-      const matchFilter = selectedFilter.value === 'ALL' || t.paymentMethod === selectedFilter.value
+      const matchQuery = !q || 
+        (t.memberName || '').toLowerCase().includes(q) || 
+        (t.provider || '').toLowerCase().includes(q) || 
+        t.id.toLowerCase().includes(q)
+
+      let matchFilter = true
+      if (selectedFilter.value === 'BARANG') matchFilter = t.trxType === 'BARANG'
+      else if (selectedFilter.value === 'DIGITAL') matchFilter = t.trxType === 'DIGITAL'
+      else if (selectedFilter.value !== 'ALL') matchFilter = t.paymentMethod === selectedFilter.value
+
       return matchQuery && matchFilter
     })
   })
 
+  // Total Omzet / Arus Kas Fisik Bersih
   const totalOmzet = computed(() => {
     return filteredTransactions.value.reduce((sum, t) => sum + (t.total || 0), 0)
   })
 
+  // Total Piutang TEMPO khusus transaksi barang
   const totalPiutang = computed(() => {
     return filteredTransactions.value
-      .filter(t => t.paymentMethod === 'TEMPO')
+      .filter(t => t.trxType === 'BARANG' && t.paymentMethod === 'TEMPO')
       .reduce((sum, t) => sum + (t.remaining || t.total || 0), 0)
+  })
+
+  // Total Keuntungan (Profit) gabungan
+  const totalProfit = computed(() => {
+    return filteredTransactions.value.reduce((sum, t) => {
+      if (t.trxType === 'DIGITAL') return sum + (t.profit || 0)
+      return sum // Profit transaksi barang dihitung terpisah per item jika diperlukan
+    }, 0)
   })
 
   const formatDate = (dateString) => {
@@ -62,6 +82,7 @@ export function useSalesHistory() {
     filteredTransactions,
     totalOmzet,
     totalPiutang,
+    totalProfit,
     loadHistory,
     formatDate
   }
