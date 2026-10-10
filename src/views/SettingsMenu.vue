@@ -199,13 +199,13 @@
 import { ref, onMounted } from 'vue'
 import { Plus, Pencil, Trash2, X } from 'lucide-vue-next'
 import { useSettingsMenu } from '../composables/useSettingsMenu.js'
-import { categoryRepo } from '../db/repositories/categoryRepository.js'
 import { formatRibuan, formatRp, toNumber } from '../utils/formatters/currency.js'
 
 const activeTab = ref('seduh')
 const {
   rokokProducts,
   services,
+  categoryOptions,
   loadData,
   getPackagesForProduct,
   savePackage,
@@ -213,8 +213,6 @@ const {
   saveService,
   deleteService
 } = useSettingsMenu()
-
-const categoryOptions = ref([])
 
 // Modal State Jasa
 const showServiceModal = ref(false)
@@ -276,8 +274,7 @@ const handleDeletePackage = async (pkg) => {
   }
 }
 
-onMounted(async () => {
-  await loadData()
-  categoryOptions.value = await categoryRepo.getAll()
+onMounted(() => {
+  loadData()
 })
 </script>

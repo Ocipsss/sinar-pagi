@@ -72,7 +72,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { computed, watch, onMounted } from 'vue'
 import { ScanLine } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 import { useProductForm } from '../../composables/useProductForm.js'
@@ -80,19 +80,21 @@ import { useProductScanner } from '../../composables/useProductScanner.js'
 import { calcModalDariPack, calcMargin } from '../../utils/calculator/product.js'
 import { formatRp, toNumber } from '../../utils/formatters/currency.js'
 import { productService } from '../../services/productService.js'
-import { categoryRepo } from '../../db/repositories/categoryRepository.js'
 
-const { name, code, category, purchasePackName, packPrice, packQty, price_modal, price_sell, qty, minStock, handleSubmit, errors, isSubmitting } = useProductForm()
+const { 
+  name, code, category, purchasePackName, packPrice, packQty, 
+  price_modal, price_sell, qty, minStock, categories, loadCategories, 
+  handleSubmit, errors, isSubmitting 
+} = useProductForm()
+
 const { start } = useProductScanner()
 const router = useRouter()
-
-const categories = ref([])
 
 const autoModal = computed(() => calcModalDariPack(packPrice.value, packQty.value))
 const marginPersen = computed(() => calcMargin(price_sell.value, price_modal.value))
 
-onMounted(async () => {
-  categories.value = await categoryRepo.getAll()
+onMounted(() => {
+  loadCategories()
 })
 
 const onPackPriceInput = (e) => {

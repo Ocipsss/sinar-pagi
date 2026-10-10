@@ -1,8 +1,11 @@
 ===== src/App.vue =====
 <template><router-view/></template>
 ===== src/composables/useProductForm.js =====
+// src/composables/useProductForm.js
+import { ref } from 'vue'
 import { useForm, useField } from 'vee-validate'
 import { productSchema } from '../schemas/product.schema.js'
+import { categoryRepo } from '../db/repositories/categoryRepository.js'
 
 function toTypedSchema(zodSchema) {
   return {
@@ -17,6 +20,8 @@ function toTypedSchema(zodSchema) {
 }
 
 export function useProductForm() {
+  const categories = ref([])
+
   const { handleSubmit, errors, isSubmitting } = useForm({
     validationSchema: toTypedSchema(productSchema),
     initialValues: {
@@ -35,7 +40,7 @@ export function useProductForm() {
 
   const { value: name } = useField('name')
   const { value: code } = useField('code')
-  const { value: category } = useField('category') // Tambahkan ini
+  const { value: category } = useField('category')
   const { value: purchasePackName } = useField('purchasePackName')
   const { value: packPrice } = useField('packPrice')
   const { value: packQty } = useField('packQty')
@@ -44,7 +49,27 @@ export function useProductForm() {
   const { value: qty } = useField('qty')
   const { value: minStock } = useField('minStock')
 
-  return { name, code, category, purchasePackName, packPrice, packQty, price_modal, price_sell, qty, minStock, handleSubmit, errors, isSubmitting }
+  const loadCategories = async () => {
+    categories.value = await categoryRepo.getAll()
+  }
+
+  return {
+    name,
+    code,
+    category,
+    purchasePackName,
+    packPrice,
+    packQty,
+    price_modal,
+    price_sell,
+    qty,
+    minStock,
+    categories,
+    loadCategories,
+    handleSubmit,
+    errors,
+    isSubmitting
+  }
 }
 
 ===== src/composables/useProductCalculator.js =====
@@ -132,8 +157,11 @@ export function useDashboard() {
   return { stats, lowProducts, chartRaw, loading, load }
 }
 ===== src/composables/useKasir.js =====
+// src/composables/useKasir.js
 import { ref, computed } from 'vue'
 import { kasirService } from '../services/kasirService.js'
+import { packageRepository } from '../db/repositories/packageRepository.js'
+import { serviceRepository } from '../db/repositories/serviceRepository.js'
 import { formatRibuan } from '../utils/formatters/currency.js'
 import { useKasirStore } from '../stores/kasirStore.js'
 
@@ -141,9 +169,13 @@ export function useKasir() {
   const store = useKasirStore()
   const products = ref([])
   const members = ref([])
+  const packagesList = ref([])
+  const servicesList = ref([])
+
   const q = ref('')
   const memberQ = ref('')
   const showSearch = ref(false)
+  const selectedProductForOption = ref(null)
 
   const total = computed(() => store.cart.reduce((s, c) => s + c.price_sell * c.cartQty, 0))
   const kembalian = computed(() => Math.max(0, (store.bayarNominal || 0) - total.value))
@@ -169,16 +201,49 @@ export function useKasir() {
     return members.value.filter(m => m.name.toLowerCase().includes(qq) || (m.phone || '').includes(qq)).slice(0, 20)
   })
 
+  // Filter jasa berdasarkan kategori produk aktif
+  const filteredServicesByCategory = computed(() => {
+    if (!selectedProductForOption.value) return []
+    const pCat = (selectedProductForOption.value.category || '').toLowerCase()
+    return servicesList.value.filter(s => (s.category || '').toLowerCase() === pCat)
+  })
+
   const load = async () => {
-    const data = await kasirService.getInitialData()
+    const [data, packages, services] = await Promise.all([
+      kasirService.getInitialData(),
+      packageRepository.getAll(),
+      serviceRepository.getAll()
+    ])
     products.value = data.products
     members.value = data.members
+    packagesList.value = packages
+    servicesList.value = services
   }
 
-  const addToCart = (p) => {
-    store.addToCart(p)
-    q.value = ''
+  const getProductPackages = (productId) => {
+    return packagesList.value.filter(pkg => pkg.productId === productId)
+  }
+
+  const handleSelectProduct = (product) => {
+    const pCat = (product.category || '').toLowerCase()
+    const isRokok = pCat === 'rokok'
+    const hasConfiguredServices = servicesList.value.some(s => (s.category || '').toLowerCase() === pCat)
+
+    if (isRokok || hasConfiguredServices) {
+      selectedProductForOption.value = product
+    } else {
+      store.addToCart(product)
+      q.value = ''
+      showSearch.value = false
+    }
+  }
+
+  const confirmAddToCart = (product, options) => {
+    const targetPrice = (options.price_sell !== undefined) ? options.price_sell : product.price_sell
+    store.addToCart({ ...product, price_sell: targetPrice }, options)
+    selectedProductForOption.value = null
     showSearch.value = false
+    q.value = ''
   }
 
   const checkout = async () => {
@@ -199,7 +264,8 @@ export function useKasir() {
     store,
     q, memberQ, products, filteredProducts, filteredMembers,
     total, kembalian, kurangBayar, bayarDisplay, showSearch,
-    load, addToCart, checkout
+    selectedProductForOption, filteredServicesByCategory,
+    load, handleSelectProduct, confirmAddToCart, getProductPackages, checkout
   }
 }
 
@@ -274,31 +340,36 @@ export function useSalesHistory() {
 }
 
 ===== src/composables/useSettingsMenu.js =====
-import { ref, computed } from 'vue'
+// src/composables/useSettingsMenu.js
+import { ref } from 'vue'
 import { productRepo } from '../db/repositories/productRepository.js'
 import { packageRepository } from '../db/repositories/packageRepository.js'
 import { serviceRepository } from '../db/repositories/serviceRepository.js'
+import { categoryRepo } from '../db/repositories/categoryRepository.js'
 import { syncRealtime } from '../services/syncService.js'
 
 export function useSettingsMenu() {
   const rokokProducts = ref([])
   const packages = ref([])
   const services = ref([])
+  const categoryOptions = ref([])
   const loading = ref(false)
 
   const loadData = async () => {
     loading.value = true
     try {
-      const [allProducts, allPackages, allServices] = await Promise.all([
+      const [allProducts, allPackages, allServices, allCategories] = await Promise.all([
         productRepo.getAll(),
         packageRepository.getAll(),
-        serviceRepository.getAll()
+        serviceRepository.getAll(),
+        categoryRepo.getAll()
       ])
       
       // Filter khusus produk kategori Rokok
       rokokProducts.value = allProducts.filter(p => (p.category || '').toLowerCase() === 'rokok')
       packages.value = allPackages
       services.value = allServices
+      categoryOptions.value = allCategories
     } finally {
       loading.value = false
     }
@@ -336,6 +407,7 @@ export function useSettingsMenu() {
     rokokProducts,
     packages,
     services,
+    categoryOptions,
     loading,
     loadData,
     getPackagesForProduct,
@@ -343,6 +415,182 @@ export function useSettingsMenu() {
     deletePackage,
     saveService,
     deleteService
+  }
+}
+
+===== src/composables/useCategories.js =====
+// src/composables/useCategories.js
+import { ref, computed, nextTick } from 'vue'
+import { categoryRepo } from '../db/repositories/categoryRepository.js'
+import { syncRealtime } from '../services/syncService.js'
+
+export function useCategories() {
+  const categories = ref([])
+  const searchQuery = ref('')
+  const showModal = ref(false)
+  const formName = ref('')
+  const editingId = ref(null)
+  const inputRef = ref(null)
+
+  const filteredCategories = computed(() => {
+    const q = searchQuery.value.toLowerCase().trim()
+    if (!q) return categories.value
+    return categories.value.filter(c => c.name.toLowerCase().includes(q))
+  })
+
+  const loadCategories = async () => {
+    categories.value = await categoryRepo.getAll()
+  }
+
+  const openModal = (cat = null) => {
+    if (cat) {
+      editingId.value = cat.id
+      formName.value = cat.name
+    } else {
+      editingId.value = null
+      formName.value = ''
+    }
+    showModal.value = true
+    nextTick(() => inputRef.value?.focus())
+  }
+
+  const saveCategory = async () => {
+    if (!formName.value.trim()) return
+
+    if (editingId.value) {
+      await categoryRepo.update(editingId.value, formName.value.trim())
+    } else {
+      await categoryRepo.create(formName.value.trim())
+    }
+
+    showModal.value = false
+    formName.value = ''
+    editingId.value = null
+
+    await loadCategories()
+    syncRealtime.pushLocalToCloud()
+  }
+
+  const deleteCategory = async (cat) => {
+    if (confirm(`Hapus kategori "${cat.name}"?`)) {
+      await categoryRepo.delete(cat.id)
+      await loadCategories()
+      syncRealtime.pushLocalToCloud()
+    }
+  }
+
+  return {
+    categories,
+    searchQuery,
+    filteredCategories,
+    showModal,
+    formName,
+    editingId,
+    inputRef,
+    loadCategories,
+    openModal,
+    saveCategory,
+    deleteCategory
+  }
+}
+
+===== src/composables/useMembers.js =====
+// src/composables/useMembers.js
+import { ref, computed } from 'vue'
+import { memberRepo } from '../db/repositories/memberRepository.js'
+import { syncRealtime } from '../services/syncService.js'
+
+export function useMembers() {
+  const members = ref([])
+  const searchQuery = ref('')
+
+  // State Modal Form (Tambah / Edit)
+  const showModal = ref(false)
+  const editingId = ref(null)
+  const form = ref({ name: '', phone: '', address: '' })
+
+  // State Modal Bayar Utang
+  const showPayModal = ref(false)
+  const selectedMemberForPay = ref(null)
+  const payAmount = ref(0)
+
+  const filteredMembers = computed(() => {
+    const q = searchQuery.value.toLowerCase().trim()
+    if (!q) return members.value
+    return members.value.filter(m => m.name.toLowerCase().includes(q) || (m.phone || '').includes(q))
+  })
+
+  const loadMembers = async () => {
+    members.value = await memberRepo.getAll()
+  }
+
+  const openModal = (m = null) => {
+    if (m) {
+      editingId.value = m.id
+      form.value = { name: m.name, phone: m.phone || '', address: m.address || '' }
+    } else {
+      editingId.value = null
+      form.value = { name: '', phone: '', address: '' }
+    }
+    showModal.value = true
+  }
+
+  const saveMember = async () => {
+    if (!form.value.name.trim()) return
+
+    if (editingId.value) {
+      await memberRepo.update(editingId.value, form.value)
+    } else {
+      await memberRepo.create(form.value)
+    }
+
+    showModal.value = false
+    await loadMembers()
+    syncRealtime.pushLocalToCloud()
+  }
+
+  const deleteMember = async (m) => {
+    if (confirm(`Hapus member "${m.name}"?`)) {
+      await memberRepo.delete(m.id)
+      await loadMembers()
+      syncRealtime.pushLocalToCloud()
+    }
+  }
+
+  const openPayModal = (m) => {
+    selectedMemberForPay.value = m
+    payAmount.value = m.debt || 0
+    showPayModal.value = true
+  }
+
+  const submitPayDebt = async () => {
+    if (!selectedMemberForPay.value || payAmount.value <= 0) return
+
+    await memberRepo.payDebt(selectedMemberForPay.value.id, payAmount.value)
+    showPayModal.value = false
+    payAmount.value = 0
+    selectedMemberForPay.value = null
+
+    await loadMembers()
+    syncRealtime.pushLocalToCloud()
+  }
+
+  return {
+    members,
+    searchQuery,
+    filteredMembers,
+    showModal,
+    editingId,
+    form,
+    showPayModal,
+    selectedMemberForPay,
+    payAmount,
+    loadMembers,
+    openModal,
+    saveMember,
+    deleteMember,
+    openPayModal,
+    submitPayDebt
   }
 }
 
@@ -450,19 +698,31 @@ db.version(1).stores({
 
 export default db
 ===== src/db/repositories/productRepository.js =====
+// src/db/repositories/productRepository.js
 import { db } from '../index.js'
 import dayjs from 'dayjs'
 
 export const productRepo = {
   getAll: () => db.products.toArray(),
+  getById: (id) => db.products.get(id),
   getByCode: (code) => db.products.where('code').equals(code).first(),
   create: (data) => db.products.add({
-   ...data,
+    ...data,
     id: crypto.randomUUID(),
     updatedAt: dayjs().toISOString(),
     synced: 0
-  })
+  }),
+  update: async (id, data) => {
+    const now = dayjs().toISOString()
+    await db.products.update(id, {
+      ...data,
+      updatedAt: now,
+      synced: 0
+    })
+  },
+  delete: (id) => db.products.delete(id)
 }
+
 ===== src/db/repositories/transactionRepository.js =====
 import { db } from '../index.js'
 import dayjs from 'dayjs'
@@ -1072,7 +1332,7 @@ export const dashboardService = {
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { computed, watch, onMounted } from 'vue'
 import { ScanLine } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 import { useProductForm } from '../../composables/useProductForm.js'
@@ -1080,19 +1340,21 @@ import { useProductScanner } from '../../composables/useProductScanner.js'
 import { calcModalDariPack, calcMargin } from '../../utils/calculator/product.js'
 import { formatRp, toNumber } from '../../utils/formatters/currency.js'
 import { productService } from '../../services/productService.js'
-import { categoryRepo } from '../../db/repositories/categoryRepository.js'
 
-const { name, code, category, purchasePackName, packPrice, packQty, price_modal, price_sell, qty, minStock, handleSubmit, errors, isSubmitting } = useProductForm()
+const { 
+  name, code, category, purchasePackName, packPrice, packQty, 
+  price_modal, price_sell, qty, minStock, categories, loadCategories, 
+  handleSubmit, errors, isSubmitting 
+} = useProductForm()
+
 const { start } = useProductScanner()
 const router = useRouter()
-
-const categories = ref([])
 
 const autoModal = computed(() => calcModalDariPack(packPrice.value, packQty.value))
 const marginPersen = computed(() => calcMargin(price_sell.value, price_modal.value))
 
-onMounted(async () => {
-  categories.value = await categoryRepo.getAll()
+onMounted(() => {
+  loadCategories()
 })
 
 const onPackPriceInput = (e) => {
@@ -1432,10 +1694,10 @@ onMounted(async ()=>{ await load(); chartData.value = { labels: chartRaw.value.m
   </div>
 </div>
 
-<!-- Modal Pilihan Varian / Penyajian (Rokok, Mie, Kopi) -->
+<!-- Modal Pilihan Varian & Penyajian -->
 <div v-if="selectedProductForOption" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-  <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl animate-in slide-in-from-bottom duration-200">
-    <div class="flex justify-between items-center mb-4">
+  <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl animate-in slide-in-from-bottom duration-200 max-h-[80vh] flex flex-col">
+    <div class="flex justify-between items-center mb-4 shrink-0">
       <div>
         <h2 class="font-black text-base">{{ selectedProductForOption.name }}</h2>
         <p class="text-xs text-zinc-400">Pilih varian / opsi penyajian</p>
@@ -1445,8 +1707,8 @@ onMounted(async ()=>{ await load(); chartData.value = { labels: chartRaw.value.m
       </button>
     </div>
 
-    <!-- Opsi Pilihan ROKOK -->
-    <div v-if="selectedProductForOption.category === 'Rokok'" class="space-y-2">
+    <!-- Opsi khusus ROKOK -->
+    <div v-if="(selectedProductForOption.category || '').toLowerCase() === 'rokok'" class="space-y-2 overflow-auto flex-1 pr-1">
       <button 
         @click="confirmAddToCart(selectedProductForOption, { customName: selectedProductForOption.name })"
         class="w-full p-3.5 bg-zinc-50 border border-zinc-200 rounded-xl font-bold text-sm text-left flex justify-between items-center hover:bg-zinc-100 transition"
@@ -1456,7 +1718,7 @@ onMounted(async ()=>{ await load(); chartData.value = { labels: chartRaw.value.m
       </button>
 
       <button 
-        @click="confirmAddToCart(selectedProductForOption, { customName: `1/2 Bungkus ${selectedProductForOption.name}`, price_sell: Math.ceil(selectedProductForOption.price_sell / 2) })"
+        @click="confirmAddToCart(selectedProductForOption, { customName: `1/2 bungkus ${selectedProductForOption.name}`, price_sell: Math.ceil(selectedProductForOption.price_sell / 2) })"
         class="w-full p-3.5 bg-zinc-50 border border-zinc-200 rounded-xl font-bold text-sm text-left flex justify-between items-center hover:bg-zinc-100 transition"
       >
         <span>1/2 Bungkus</span>
@@ -1474,30 +1736,32 @@ onMounted(async ()=>{ await load(); chartData.value = { labels: chartRaw.value.m
       </button>
     </div>
 
-    <!-- Opsi Pilihan MIE & KOPI -->
-    <div v-else-if="['Mie', 'Kopi'].includes(selectedProductForOption.category)" class="space-y-2">
+    <!-- Opsi Jasa Tambahan Dinamis Sesuai Kategori -->
+    <div v-else class="space-y-2 overflow-auto flex-1 pr-1">
       <button 
         @click="confirmAddToCart(selectedProductForOption, { isServed: false, customName: selectedProductForOption.name })"
         class="w-full p-3.5 bg-zinc-50 border border-zinc-200 rounded-xl font-bold text-sm text-left flex justify-between items-center hover:bg-zinc-100 transition"
       >
         <div>
-          <div class="font-bold text-zinc-900">Mentah / Bungkus</div>
-          <div class="text-[10px] text-zinc-400">Bawa pulang mentah</div>
+          <div class="font-bold text-zinc-900">Mentah / Kemasan</div>
+          <div class="text-[10px] text-zinc-400">Bawa pulang tanpa jasa tambahan</div>
         </div>
         <span class="font-black text-zinc-900">Rp {{ formatRibuan(selectedProductForOption.price_sell) }}</span>
       </button>
 
       <button 
-        @click="confirmAddToCart(selectedProductForOption, { isServed: true, serviceFee: activeSeduhFee, customName: `${selectedProductForOption.category === 'Mie' ? 'Mie Seduh' : 'Kopi Seduh'} ${selectedProductForOption.name}` })"
+        v-for="s in filteredServicesByCategory" 
+        :key="s.id"
+        @click="confirmAddToCart(selectedProductForOption, { isServed: true, serviceFee: s.price, customName: `${selectedProductForOption.name} ${s.name}` })"
         class="w-full p-3.5 bg-amber-50 border border-amber-200 rounded-xl font-bold text-sm text-left flex justify-between items-center hover:bg-amber-100 transition"
       >
         <div>
           <div class="font-bold text-amber-900">
-            {{ selectedProductForOption.category === 'Mie' ? 'Mie Seduh' : 'Kopi Seduh' }}
+            {{ selectedProductForOption.name }} {{ s.name }}
           </div>
-          <div class="text-[10px] text-amber-700">+ Jasa Seduh Rp {{ formatRibuan(activeSeduhFee) }}</div>
+          <div class="text-[10px] text-amber-700">+ Biaya {{ s.name }} Rp {{ formatRibuan(s.price) }}</div>
         </div>
-        <span class="font-black text-amber-900">Rp {{ formatRibuan(selectedProductForOption.price_sell + activeSeduhFee) }}</span>
+        <span class="font-black text-amber-900">Rp {{ formatRibuan(selectedProductForOption.price_sell + s.price) }}</span>
       </button>
     </div>
   </div>
@@ -1562,60 +1826,16 @@ import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { Search, X, ShoppingBag, Clock, PauseCircle, Trash2 } from 'lucide-vue-next'
 import { useKasir } from '../composables/useKasir.js'
 import { formatRibuan } from '../utils/formatters/currency.js'
-import { db } from '../db/index.js'
 
-const { store, q, memberQ, filteredProducts, filteredMembers, total, kembalian, kurangBayar, bayarDisplay, showSearch, load, checkout } = useKasir()
+const { 
+  store, q, memberQ, filteredProducts, filteredMembers, 
+  total, kembalian, kurangBayar, bayarDisplay, showSearch, 
+  selectedProductForOption, filteredServicesByCategory,
+  load, handleSelectProduct, confirmAddToCart, getProductPackages, checkout 
+} = useKasir()
 
 const showMemberPicker = ref(false)
 const showPendingModal = ref(false)
-
-// State Modal Varian & Packages
-const selectedProductForOption = ref(null)
-const productPackagesList = ref([])
-const activeSeduhFee = ref(2000)
-
-const loadInitialSettings = async () => {
-  const [packages, services] = await Promise.all([
-    db.product_packages.toArray(),
-    db.services.toArray()
-  ])
-  productPackagesList.value = packages
-  
-  // Ambil tarif seduh dari database (default 2000 jika belum diset)
-  if (services.length > 0) {
-    activeSeduhFee.value = services[0].price || 2000
-  }
-}
-
-const getProductPackages = (productId) => {
-  return productPackagesList.value.filter(pkg => pkg.productId === productId)
-}
-
-const handleSelectProduct = (product) => {
-  const cat = (product.category || '').toLowerCase()
-  const isRokok = cat === 'rokok'
-  const isMie = cat === 'mie'
-  const isKopi = cat === 'kopi'
-
-  if (isRokok || isMie || isKopi) {
-    selectedProductForOption.value = {
-      ...product,
-      category: isRokok ? 'Rokok' : isMie ? 'Mie' : 'Kopi'
-    }
-  } else {
-    store.addToCart(product)
-    q.value = ''
-    showSearch.value = false
-  }
-}
-
-const confirmAddToCart = (product, options) => {
-  const targetPrice = (options.price_sell !== undefined) ? options.price_sell : product.price_sell
-  store.addToCart({ ...product, price_sell: targetPrice }, options)
-  selectedProductForOption.value = null
-  showSearch.value = false
-  q.value = ''
-}
 
 const handleMethod = (m) => { 
   store.paymentMethod = m
@@ -1648,7 +1868,6 @@ const openMemberHandler = () => showMemberPicker.value = true
 
 onMounted(() => { 
   load()
-  loadInitialSettings()
   window.addEventListener('open-member-picker', openMemberHandler) 
 })
 
@@ -1735,7 +1954,7 @@ onUnmounted(() => window.removeEventListener('open-member-picker', openMemberHan
           </div>
         </div>
 
-        <!-- Tombol Bayar Utang jika ada sisa utang -->
+        <!-- Tombol Bayar Utang -->
         <button 
           v-if="(m.debt || 0) > 0" 
           @click="openPayModal(m)"
@@ -1827,84 +2046,28 @@ onUnmounted(() => window.removeEventListener('open-member-picker', openMemberHan
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { onMounted } from 'vue'
 import { UserPlus, Search, Pencil, Trash2, X, CreditCard } from 'lucide-vue-next'
-import { memberRepo } from '../db/repositories/memberRepository.js'
 import { formatRibuan, formatRp, toNumber } from '../utils/formatters/currency.js'
-import { syncRealtime } from '../services/syncService.js'
+import { useMembers } from '../composables/useMembers.js'
 
-const members = ref([])
-const searchQuery = ref('')
-
-// State Modal Form
-const showModal = ref(false)
-const editingId = ref(null)
-const form = ref({ name: '', phone: '', address: '' })
-
-// State Modal Pay Debt
-const showPayModal = ref(false)
-const selectedMemberForPay = ref(null)
-const payAmount = ref(0)
-
-const filteredMembers = computed(() => {
-  const q = searchQuery.value.toLowerCase().trim()
-  if (!q) return members.value
-  return members.value.filter(m => m.name.toLowerCase().includes(q) || (m.phone || '').includes(q))
-})
-
-const loadMembers = async () => {
-  members.value = await memberRepo.getAll()
-}
-
-const openModal = (m = null) => {
-  if (m) {
-    editingId.value = m.id
-    form.value = { name: m.name, phone: m.phone || '', address: m.address || '' }
-  } else {
-    editingId.value = null
-    form.value = { name: '', phone: '', address: '' }
-  }
-  showModal.value = true
-}
-
-const saveMember = async () => {
-  if (!form.value.name.trim()) return
-
-  if (editingId.value) {
-    await memberRepo.update(editingId.value, form.value)
-  } else {
-    await memberRepo.create(form.value)
-  }
-
-  showModal.value = false
-  await loadMembers()
-  syncRealtime.pushLocalToCloud()
-}
-
-const deleteMember = async (m) => {
-  if (confirm(`Hapus member "${m.name}"?`)) {
-    await memberRepo.delete(m.id)
-    await loadMembers()
-  }
-}
-
-const openPayModal = (m) => {
-  selectedMemberForPay.value = m
-  payAmount.value = m.debt || 0
-  showPayModal.value = true
-}
-
-const submitPayDebt = async () => {
-  if (!selectedMemberForPay.value || payAmount.value <= 0) return
-
-  await memberRepo.payDebt(selectedMemberForPay.value.id, payAmount.value)
-  showPayModal.value = false
-  payAmount.value = 0
-  selectedMemberForPay.value = null
-
-  await loadMembers()
-  syncRealtime.pushLocalToCloud()
-}
+const {
+  members,
+  searchQuery,
+  filteredMembers,
+  showModal,
+  editingId,
+  form,
+  showPayModal,
+  selectedMemberForPay,
+  payAmount,
+  loadMembers,
+  openModal,
+  saveMember,
+  deleteMember,
+  openPayModal,
+  submitPayDebt
+} = useMembers()
 
 onMounted(() => {
   loadMembers()
@@ -1920,22 +2083,172 @@ onMounted(() => {
 ===== src/views/ProductsList.vue =====
 <template>
 <div class="flex-1 overflow-auto p-4 pb-24">
-  <h1 class="font-black text-xl mb-4">Daftar Barang ({{store.list.length}})</h1>
-  <input v-model="q" placeholder="Cari..." class="w-full px-4 py-3 bg-white border rounded-2xl mb-4 text-sm"/>
-  <div v-for="p in filtered" :key="p.id" class="p-4 bg-white rounded-2xl border mb-2 flex justify-between">
-    <div><div class="font-bold text-sm">{{p.name}}</div><div class="text-[11px] text-zinc-400">{{p.code}} | Stok {{p.qty}}</div></div>
-    <span v-if="p.qty <= p.minStock" class="text-[10px] bg-red-100 text-red-600 px-2 py-1 rounded-full h-fit">TIPIS</span>
+  <div class="flex justify-between items-center mb-4">
+    <div>
+      <h1 class="font-black text-xl text-zinc-900">Daftar Barang</h1>
+      <p class="text-xs text-zinc-400">Total {{ store.list.length }} barang terdaftar</p>
+    </div>
+    <router-link 
+      to="/add-products" 
+      class="bg-zinc-900 text-white px-4 py-2.5 rounded-2xl font-bold text-xs flex items-center gap-2 active:scale-95 transition"
+    >
+      <Plus class="w-4 h-4" /> Tambah
+    </router-link>
+  </div>
+
+  <div class="relative mb-4">
+    <Search class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+    <input 
+      v-model="store.searchQuery" 
+      placeholder="Cari nama, barcode, atau kategori..." 
+      class="w-full pl-11 pr-4 py-3 bg-white border border-zinc-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"
+    />
+  </div>
+
+  <div v-if="store.filteredProducts.length === 0" class="py-12 text-center text-zinc-400 text-xs">
+    Barang tidak ditemukan
+  </div>
+
+  <div class="space-y-2">
+    <div 
+      v-for="p in store.filteredProducts" 
+      :key="p.id" 
+      class="p-4 bg-white rounded-2xl border border-zinc-100 flex items-center justify-between shadow-sm"
+    >
+      <div class="flex-1 pr-2">
+        <div class="flex items-center gap-2">
+          <span class="font-bold text-sm text-zinc-900">{{ p.name }}</span>
+          <span 
+            v-if="p.qty <= (p.minStock || 5)" 
+            class="text-[9px] bg-red-100 text-red-600 px-2 py-0.5 rounded-full font-black uppercase"
+          >
+            TIPIS
+          </span>
+        </div>
+        <div class="text-[11px] text-zinc-400 mt-0.5">
+          <span class="px-1.5 py-0.5 bg-zinc-100 rounded font-semibold text-zinc-600 mr-1.5">{{ p.category || 'Umum' }}</span>
+          {{ p.code ? `${p.code} • ` : '' }}Stok {{ p.qty }} • Rp {{ formatRibuan(p.price_sell) }}
+        </div>
+      </div>
+
+      <div class="flex items-center gap-1 shrink-0">
+        <button @click="openEditModal(p)" class="p-2 text-zinc-600 hover:bg-zinc-100 rounded-xl transition">
+          <Pencil class="w-4 h-4" />
+        </button>
+        <button @click="handleDelete(p)" class="p-2 text-red-500 hover:bg-red-50 rounded-xl transition">
+          <Trash2 class="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Edit Barang -->
+  <div v-if="showModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+    <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl animate-in slide-in-from-bottom duration-200 max-h-[85vh] flex flex-col">
+      <div class="flex justify-between items-center mb-4 shrink-0">
+        <h2 class="font-black text-base">Edit Barang</h2>
+        <button @click="showModal = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4" /></button>
+      </div>
+
+      <form @submit.prevent="handleSave" class="space-y-3 overflow-auto flex-1 pr-1">
+        <div>
+          <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Nama Produk *</label>
+          <input v-model="editForm.name" required class="w-full px-4 py-2.5 bg-zinc-50 border rounded-xl text-sm font-bold" />
+        </div>
+
+        <div>
+          <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Barcode / Kode</label>
+          <input v-model="editForm.code" class="w-full px-4 py-2.5 bg-zinc-50 border rounded-xl text-sm font-bold" />
+        </div>
+
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Harga Modal *</label>
+            <input 
+              :value="formatRp(editForm.price_modal)" 
+              @input="e => editForm.price_modal = toNumber(e.target.value)" 
+              type="text" 
+              inputmode="numeric" 
+              required 
+              class="w-full px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-sm font-black text-zinc-900" 
+            />
+          </div>
+          <div>
+            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Harga Jual *</label>
+            <input 
+              :value="formatRp(editForm.price_sell)" 
+              @input="e => editForm.price_sell = toNumber(e.target.value)" 
+              type="text" 
+              inputmode="numeric" 
+              required 
+              class="w-full px-3 py-2.5 bg-green-50 border border-green-200 rounded-xl text-sm font-black text-zinc-900" 
+            />
+          </div>
+        </div>
+
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Stok Sisa</label>
+            <input v-model.number="editForm.qty" type="number" class="w-full px-4 py-2.5 bg-zinc-50 border rounded-xl text-sm font-bold" />
+          </div>
+          <div>
+            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Min. Stok</label>
+            <input v-model.number="editForm.minStock" type="number" class="w-full px-4 py-2.5 bg-zinc-50 border rounded-xl text-sm font-bold" />
+          </div>
+        </div>
+
+        <div class="flex gap-2 pt-3">
+          <button type="button" @click="showModal = false" class="flex-1 py-3 bg-zinc-100 font-bold text-xs rounded-xl">Batal</button>
+          <button type="submit" class="flex-1 py-3 bg-zinc-900 text-white font-bold text-xs rounded-xl shadow-md">Simpan Perubahan</button>
+        </div>
+      </form>
+    </div>
   </div>
 </div>
 </template>
+
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
+import { Plus, Search, Pencil, Trash2, X } from 'lucide-vue-next'
 import { useProductsStore } from '../stores/productStore.js'
+import { formatRibuan, formatRp, toNumber } from '../utils/formatters/currency.js'
+
 const store = useProductsStore()
-const q = ref('')
-const filtered = computed(()=> store.list.filter(p=> p.name.toLowerCase().includes(q.value.toLowerCase())))
-onMounted(()=> store.fetch())
+
+const showModal = ref(false)
+const editingId = ref(null)
+const editForm = ref({ name: '', code: '', price_modal: 0, price_sell: 0, qty: 0, minStock: 5 })
+
+const openEditModal = (p) => {
+  editingId.value = p.id
+  editForm.value = { 
+    name: p.name, 
+    code: p.code || '', 
+    price_modal: p.price_modal || 0, 
+    price_sell: p.price_sell || 0, 
+    qty: p.qty || 0, 
+    minStock: p.minStock || 5 
+  }
+  showModal.value = true
+}
+
+const handleSave = async () => {
+  if (!editingId.value) return
+  await store.update(editingId.value, editForm.value)
+  showModal.value = false
+}
+
+const handleDelete = async (p) => {
+  if (confirm(`Hapus barang "${p.name}"?`)) {
+    await store.remove(p.id)
+  }
+}
+
+onMounted(() => {
+  store.fetch()
+})
 </script>
+
 ===== src/views/ProductsAdd.vue =====
 <template>
   <div class="flex-1 overflow-auto p-4 pb-24">
@@ -2058,63 +2371,23 @@ import ProductForm from '../components/product/ProductForm.vue'
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { onMounted } from 'vue'
 import { Plus, Search, Pencil, Trash2, X } from 'lucide-vue-next'
-import { categoryRepo } from '../db/repositories/categoryRepository.js'
-import { syncRealtime } from '../services/syncService.js'
+import { useCategories } from '../composables/useCategories.js'
 
-const categories = ref([])
-const searchQuery = ref('')
-const showModal = ref(false)
-const formName = ref('')
-const editingId = ref(null)
-const inputRef = ref(null)
-
-const filteredCategories = computed(() => {
-  const q = searchQuery.value.toLowerCase().trim()
-  if (!q) return categories.value
-  return categories.value.filter(c => c.name.toLowerCase().includes(q))
-})
-
-const loadCategories = async () => {
-  categories.value = await categoryRepo.getAll()
-}
-
-const openModal = (cat = null) => {
-  if (cat) {
-    editingId.value = cat.id
-    formName.value = cat.name
-  } else {
-    editingId.value = null
-    formName.value = ''
-  }
-  showModal.value = true
-  nextTick(() => inputRef.value?.focus())
-}
-
-const saveCategory = async () => {
-  if (!formName.value.trim()) return
-
-  if (editingId.value) {
-    await categoryRepo.update(editingId.value, formName.value.trim())
-  } else {
-    await categoryRepo.create(formName.value.trim())
-  }
-
-  showModal.value = false
-  formName.value = ''
-  editingId.value = null
-
-  await loadCategories()
-  syncRealtime.pushLocalToCloud()
-}
-
-const deleteCategory = async (cat) => {
-  if (confirm(`Hapus kategori "${cat.name}"?`)) {
-    await categoryRepo.delete(cat.id)
-    await loadCategories()
-  }
-}
+const {
+  categories,
+  searchQuery,
+  filteredCategories,
+  showModal,
+  formName,
+  editingId,
+  inputRef,
+  loadCategories,
+  openModal,
+  saveCategory,
+  deleteCategory
+} = useCategories()
 
 onMounted(() => {
   loadCategories()
@@ -2313,16 +2586,16 @@ onMounted(() => {
     <!-- Header -->
     <div>
       <h1 class="font-black text-xl text-zinc-900">Pengaturan Menu & Jasa</h1>
-      <p class="text-xs text-zinc-400">Atur paket eceran rokok dan tarif jasa seduh mie/kopi</p>
+      <p class="text-xs text-zinc-400">Atur paket eceran rokok dan tarif jasa per kategori</p>
     </div>
 
-    <!-- Tab Navigasi Kategori -->
+    <!-- Tab Navigasi -->
     <div class="flex bg-zinc-100 p-1 rounded-2xl gap-1">
       <button 
         @click="activeTab = 'seduh'" 
         :class="['flex-1 py-2.5 rounded-xl text-xs font-bold transition', activeTab === 'seduh' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500']"
       >
-        Tarif Jasa Seduh
+        Tarif Jasa per Kategori
       </button>
       <button 
         @click="activeTab = 'rokok'" 
@@ -2332,10 +2605,10 @@ onMounted(() => {
       </button>
     </div>
 
-    <!-- TAB 1: SEKSI TARIF JASA SEDUH -->
+    <!-- TAB 1: TARIF JASA SEDUH / TAMBAHAN -->
     <div v-if="activeTab === 'seduh'" class="space-y-4">
       <div class="flex justify-between items-center">
-        <h2 class="font-black text-sm text-zinc-800">Daftar Tarif Seduh</h2>
+        <h2 class="font-black text-sm text-zinc-800">Daftar Tarif Jasa</h2>
         <button 
           @click="openServiceModal()" 
           class="bg-zinc-900 text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 active:scale-95 transition"
@@ -2345,7 +2618,7 @@ onMounted(() => {
       </div>
 
       <div v-if="services.length === 0" class="py-12 text-center text-zinc-400 text-xs bg-white rounded-2xl border border-zinc-100">
-        Belum ada tarif jasa seduh
+        Belum ada tarif jasa
       </div>
 
       <div v-else class="space-y-2">
@@ -2355,7 +2628,12 @@ onMounted(() => {
           class="p-4 bg-white rounded-2xl border border-zinc-100 shadow-sm flex items-center justify-between"
         >
           <div>
-            <div class="font-bold text-sm text-zinc-900">{{ s.name }}</div>
+            <div class="flex items-center gap-2">
+              <span class="font-bold text-sm text-zinc-900">{{ s.name }}</span>
+              <span class="px-2 py-0.5 bg-amber-100 text-amber-800 rounded-md text-[10px] font-black uppercase">
+                {{ s.category || 'Umum' }}
+              </span>
+            </div>
             <div class="text-xs text-amber-600 font-black mt-0.5">Rp {{ formatRibuan(s.price) }}</div>
           </div>
           <div class="flex gap-1">
@@ -2370,12 +2648,8 @@ onMounted(() => {
       </div>
     </div>
 
-    <!-- TAB 2: SEKSI ECERAN ROKOK -->
+    <!-- TAB 2: ECERAN ROKOK -->
     <div v-if="activeTab === 'rokok'" class="space-y-4">
-      <div class="text-xs text-zinc-500 bg-amber-50 border border-amber-200 p-3 rounded-2xl">
-        Atur paket eceran per batang atau per 1/2 bungkus untuk setiap merk rokok.
-      </div>
-
       <div v-if="rokokProducts.length === 0" class="py-12 text-center text-zinc-400 text-xs bg-white rounded-2xl border border-zinc-100">
         Belum ada produk dengan kategori "Rokok"
       </div>
@@ -2399,7 +2673,6 @@ onMounted(() => {
             </button>
           </div>
 
-          <!-- List Varian Paket Eceran Rokok Ini -->
           <div class="space-y-1.5">
             <div 
               v-for="pkg in getPackagesForProduct(p.id)" 
@@ -2417,27 +2690,31 @@ onMounted(() => {
                 </button>
               </div>
             </div>
-
-            <div v-if="getPackagesForProduct(p.id).length === 0" class="text-[11px] text-zinc-400 italic">
-              Belum ada varian eceran khusus
-            </div>
           </div>
         </div>
       </div>
     </div>
 
-    <!-- Modal Form Jasa Seduh -->
+    <!-- Modal Form Jasa -->
     <div v-if="showServiceModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl space-y-4">
         <div class="flex justify-between items-center">
-          <h2 class="font-black text-base">{{ editingServiceId ? 'Edit Tarif Seduh' : 'Tambah Tarif Seduh' }}</h2>
+          <h2 class="font-black text-base">{{ editingServiceId ? 'Edit Tarif Jasa' : 'Tambah Tarif Jasa' }}</h2>
           <button @click="showServiceModal = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
         </div>
 
         <form @submit.prevent="handleSaveService" class="space-y-3">
           <div>
+            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Untuk Kategori Produk *</label>
+            <select v-model="serviceForm.category" required class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold">
+              <option v-for="cat in categoryOptions" :key="cat.id" :value="cat.name">
+                {{ cat.name }}
+              </option>
+            </select>
+          </div>
+          <div>
             <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Nama Layanan *</label>
-            <input v-model="serviceForm.name" required placeholder="Contoh: Jasa Seduh Mie / Kopi" class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold"/>
+            <input v-model="serviceForm.name" required placeholder="Contoh: Seduh, Es Batu, dll" class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold"/>
           </div>
           <div>
             <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Biaya Jasa (Rp) *</label>
@@ -2511,6 +2788,7 @@ const activeTab = ref('seduh')
 const {
   rokokProducts,
   services,
+  categoryOptions,
   loadData,
   getPackagesForProduct,
   savePackage,
@@ -2519,10 +2797,10 @@ const {
   deleteService
 } = useSettingsMenu()
 
-// Modal State Jasa Seduh
+// Modal State Jasa
 const showServiceModal = ref(false)
 const editingServiceId = ref(null)
-const serviceForm = ref({ name: '', price: 0 })
+const serviceForm = ref({ name: '', price: 0, category: 'Mie' })
 
 // Modal State Paket Rokok
 const showPackageModal = ref(false)
@@ -2532,10 +2810,10 @@ const packageForm = ref({ name: '', qty_pcs: 1, price_sell: 0 })
 const openServiceModal = (s = null) => {
   if (s) {
     editingServiceId.value = s.id
-    serviceForm.value = { name: s.name, price: s.price }
+    serviceForm.value = { name: s.name, price: s.price, category: s.category || 'Mie' }
   } else {
     editingServiceId.value = null
-    serviceForm.value = { name: 'Jasa Seduh', price: 2000 }
+    serviceForm.value = { name: 'Seduh', price: 2000, category: categoryOptions.value[0]?.name || 'Mie' }
   }
   showServiceModal.value = true
 }
@@ -2544,13 +2822,14 @@ const handleSaveService = async () => {
   await saveService({
     id: editingServiceId.value,
     name: serviceForm.value.name,
-    price: serviceForm.value.price
+    price: serviceForm.value.price,
+    category: serviceForm.value.category
   })
   showServiceModal.value = false
 }
 
 const handleDeleteService = async (s) => {
-  if (confirm(`Hapus tarif seduh "${s.name}"?`)) {
+  if (confirm(`Hapus tarif "${s.name}"?`)) {
     await deleteService(s.id)
   }
 }
@@ -2676,17 +2955,53 @@ export const productSchema = z.object({
   minStock: z.coerce.number().min(1).default(5)
 })
 ===== src/stores/productStore.js =====
+// src/stores/productStore.js
 import { defineStore } from 'pinia'
 import { productRepo } from '../db/repositories/productRepository.js'
+import { syncRealtime } from '../services/syncService.js'
 
 export const useProductsStore = defineStore('products', {
-  state: () => ({ list: [], loading: false }),
+  state: () => ({ 
+    list: [], 
+    searchQuery: '',
+    loading: false 
+  }),
+  getters: {
+    filteredProducts: (state) => {
+      const q = state.searchQuery.toLowerCase().trim()
+      if (!q) return state.list
+      return state.list.filter(p => 
+        p.name.toLowerCase().includes(q) || 
+        (p.code || '').toLowerCase().includes(q) ||
+        (p.category || '').toLowerCase().includes(q)
+      )
+    }
+  },
   actions: {
-    async fetch() { this.loading=true; this.list = await productRepo.getAll(); this.loading=false },
-    async add(payload) { await productRepo.create(payload); await this.fetch() }
+    async fetch() { 
+      this.loading = true
+      this.list = await productRepo.getAll()
+      this.loading = false 
+    },
+    async add(payload) { 
+      await productRepo.create(payload)
+      await this.fetch() 
+      syncRealtime.pushLocalToCloud()
+    },
+    async update(id, payload) {
+      await productRepo.update(id, payload)
+      await this.fetch()
+      syncRealtime.pushLocalToCloud()
+    },
+    async remove(id) {
+      await productRepo.delete(id)
+      await this.fetch()
+      syncRealtime.pushLocalToCloud()
+    }
   },
   persist: true
 })
+
 ===== src/stores/kasirStore.js =====
 // src/stores/kasirStore.js
 import { defineStore } from 'pinia'
@@ -2778,49 +3093,4 @@ export const useKasirStore = defineStore('kasir', {
   },
   persist: true
 })
-
-===== src/package.json.txt =====
-{
-  "name": "sinar-pagi",
-  "private": true,
-  "version": "0.0.0",
-  "type": "module",
-  "scripts": {
-    "dev": "vite",
-    "build": "vite build",
-    "preview": "vite preview"
-  },
-  "dependencies": {
-    "@headlessui/vue": "^1.7.23",
-    "big.js": "^7.0.1",
-    "bootstrap-icons": "^1.13.2",
-    "chart.js": "^4.5.1",
-    "dayjs": "^1.11.23",
-    "dexie": "^4.4.6",
-    "esc-pos-encoder": "^3.0.0",
-    "firebase": "^13.0.0",
-    "html5-qrcode": "^2.3.8",
-    "jspdf": "^4.2.1",
-    "lucide-vue-next": "^1.0.0",
-    "pinia": "^4.0.3",
-    "pinia-plugin-persistedstate": "^4.7.1",
-    "v-money3": "^3.26.1",
-    "vee-validate": "^4.15.1",
-    "vue": "^3.5.42",
-    "vue-chartjs": "^5.3.4",
-    "vue-router": "^5.4.0",
-    "vue-sonner": "^2.0.9",
-    "xlsx": "^0.18.5",
-    "zod": "^4.6.5"
-  },
-  "devDependencies": {
-    "@tailwindcss/vite": "^4.3.3",
-    "@vitejs/plugin-vue": "^6.0.8",
-    "autoprefixer": "^10.6.1",
-    "postcss": "^8.5.29",
-    "tailwindcss": "^4.3.3",
-    "vite": "^8.3.0",
-    "vite-plugin-pwa": "^2.0.0"
-  }
-}
 

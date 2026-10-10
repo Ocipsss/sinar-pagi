@@ -208,9 +208,8 @@
       </button>
     </div>
 
-    <!-- Opsi Jasa Tambahan Dinamis Sesuai Kategori di SettingsMenu -->
+    <!-- Opsi Jasa Tambahan Dinamis Sesuai Kategori -->
     <div v-else class="space-y-2 overflow-auto flex-1 pr-1">
-      <!-- Opsi Mentah / Produk Utuh -->
       <button 
         @click="confirmAddToCart(selectedProductForOption, { isServed: false, customName: selectedProductForOption.name })"
         class="w-full p-3.5 bg-zinc-50 border border-zinc-200 rounded-xl font-bold text-sm text-left flex justify-between items-center hover:bg-zinc-100 transition"
@@ -222,7 +221,6 @@
         <span class="font-black text-zinc-900">Rp {{ formatRibuan(selectedProductForOption.price_sell) }}</span>
       </button>
 
-      <!-- Menampilkan Jasa yang Kategori-nya Cocok -->
       <button 
         v-for="s in filteredServicesByCategory" 
         :key="s.id"
@@ -296,70 +294,20 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { Search, X, ShoppingBag, Clock, PauseCircle, Trash2 } from 'lucide-vue-next'
 import { useKasir } from '../composables/useKasir.js'
 import { formatRibuan } from '../utils/formatters/currency.js'
-import { db } from '../db/index.js'
 
-const { store, q, memberQ, filteredProducts, filteredMembers, total, kembalian, kurangBayar, bayarDisplay, showSearch, load, checkout } = useKasir()
+const { 
+  store, q, memberQ, filteredProducts, filteredMembers, 
+  total, kembalian, kurangBayar, bayarDisplay, showSearch, 
+  selectedProductForOption, filteredServicesByCategory,
+  load, handleSelectProduct, confirmAddToCart, getProductPackages, checkout 
+} = useKasir()
 
 const showMemberPicker = ref(false)
 const showPendingModal = ref(false)
-
-// State Modal Varian Packages & Services
-const selectedProductForOption = ref(null)
-const productPackagesList = ref([])
-const servicesList = ref([])
-
-const loadInitialSettings = async () => {
-  const [packages, services] = await Promise.all([
-    db.product_packages.toArray(),
-    db.services.toArray()
-  ])
-  productPackagesList.value = packages
-  servicesList.value = services
-}
-
-// Filter otomatis tarif jasa berdasarkan kategori produk aktif di modal Kasir
-const filteredServicesByCategory = computed(() => {
-  if (!selectedProductForOption.value) return []
-  const pCat = (selectedProductForOption.value.category || '').toLowerCase()
-  
-  return servicesList.value.filter(
-    s => (s.category || '').toLowerCase() === pCat
-  )
-})
-
-const getProductPackages = (productId) => {
-  return productPackagesList.value.filter(pkg => pkg.productId === productId)
-}
-
-const handleSelectProduct = (product) => {
-  const pCat = (product.category || '').toLowerCase()
-  const isRokok = pCat === 'rokok'
-
-  // Cek apakah ada opsi paket eceran atau settingan tarif jasa untuk kategori barang ini
-  const hasConfiguredServices = servicesList.value.some(
-    s => (s.category || '').toLowerCase() === pCat
-  )
-
-  if (isRokok || hasConfiguredServices) {
-    selectedProductForOption.value = product
-  } else {
-    store.addToCart(product)
-    q.value = ''
-    showSearch.value = false
-  }
-}
-
-const confirmAddToCart = (product, options) => {
-  const targetPrice = (options.price_sell !== undefined) ? options.price_sell : product.price_sell
-  store.addToCart({ ...product, price_sell: targetPrice }, options)
-  selectedProductForOption.value = null
-  showSearch.value = false
-  q.value = ''
-}
 
 const handleMethod = (m) => { 
   store.paymentMethod = m
@@ -392,7 +340,6 @@ const openMemberHandler = () => showMemberPicker.value = true
 
 onMounted(() => { 
   load()
-  loadInitialSettings()
   window.addEventListener('open-member-picker', openMemberHandler) 
 })
 

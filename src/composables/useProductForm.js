@@ -1,5 +1,8 @@
+// src/composables/useProductForm.js
+import { ref } from 'vue'
 import { useForm, useField } from 'vee-validate'
 import { productSchema } from '../schemas/product.schema.js'
+import { categoryRepo } from '../db/repositories/categoryRepository.js'
 
 function toTypedSchema(zodSchema) {
   return {
@@ -14,6 +17,8 @@ function toTypedSchema(zodSchema) {
 }
 
 export function useProductForm() {
+  const categories = ref([])
+
   const { handleSubmit, errors, isSubmitting } = useForm({
     validationSchema: toTypedSchema(productSchema),
     initialValues: {
@@ -32,7 +37,7 @@ export function useProductForm() {
 
   const { value: name } = useField('name')
   const { value: code } = useField('code')
-  const { value: category } = useField('category') // Tambahkan ini
+  const { value: category } = useField('category')
   const { value: purchasePackName } = useField('purchasePackName')
   const { value: packPrice } = useField('packPrice')
   const { value: packQty } = useField('packQty')
@@ -41,5 +46,25 @@ export function useProductForm() {
   const { value: qty } = useField('qty')
   const { value: minStock } = useField('minStock')
 
-  return { name, code, category, purchasePackName, packPrice, packQty, price_modal, price_sell, qty, minStock, handleSubmit, errors, isSubmitting }
+  const loadCategories = async () => {
+    categories.value = await categoryRepo.getAll()
+  }
+
+  return {
+    name,
+    code,
+    category,
+    purchasePackName,
+    packPrice,
+    packQty,
+    price_modal,
+    price_sell,
+    qty,
+    minStock,
+    categories,
+    loadCategories,
+    handleSubmit,
+    errors,
+    isSubmitting
+  }
 }
