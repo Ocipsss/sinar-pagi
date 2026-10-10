@@ -48,7 +48,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Menu, X, Package, Store, LayoutDashboard, Plus, Users, ShoppingCart, Tags, History } from 'lucide-vue-next'
+import { Menu, X, Package, Store, LayoutDashboard, Plus, Users, ShoppingCart, Tags, History, Coffee } from 'lucide-vue-next'
 import SidebarComponent from '../components/Sidebar.vue'
 const isOpen = ref(false)
 const route = useRoute()
@@ -62,8 +62,10 @@ const groups = ref([
       { name: 'Dashboard', icon: LayoutDashboard, to: '/dashboard' },
       { name: 'Barang', icon: Package, to: '/products' },
       { name: 'Kategori', icon: Tags, to: '/categories' },
+      { name: 'Atur Rokok & Seduh', icon: Coffee, to: '/settings-menu' },
       { name: 'Member', icon: Users, to: '/members' },
-      { name: 'Tambah Barang', icon: Plus, to: '/add-products' }
+      { name: 'Tambah Barang', icon: Plus, to: '/add-products' },
+      
     ]
   },
   { 

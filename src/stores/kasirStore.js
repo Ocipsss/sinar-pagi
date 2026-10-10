@@ -1,3 +1,4 @@
+// src/stores/kasirStore.js
 import { defineStore } from 'pinia'
 
 export const useKasirStore = defineStore('kasir', {
@@ -6,17 +7,41 @@ export const useKasirStore = defineStore('kasir', {
     selectedMember: null,
     paymentMethod: 'CASH',
     bayarNominal: 0,
-    pendingCarts: [] // tempat menyimpan transaksi tertunda
+    pendingCarts: []
   }),
   actions: {
-    addToCart(product) {
-      const idx = this.cart.findIndex(c => c.id === product.id)
+    // Parameter itemOption bisa berisi: { packageInfo, isServed, serviceFee, customName }
+    addToCart(product, options = {}) {
+      const { packageInfo = null, isServed = false, serviceFee = 0, customName = '' } = options
+
+      const itemId = packageInfo 
+        ? `${product.id}_pkg_${packageInfo.id}`
+        : isServed 
+          ? `${product.id}_served` 
+          : product.id
+
+      const finalName = customName || (isServed ? `Seduh ${product.name}` : product.name)
+      const basePrice = packageInfo ? packageInfo.price_sell : product.price_sell
+      const finalPrice = basePrice + (isServed ? serviceFee : 0)
+
+      const idx = this.cart.findIndex(c => c.cartItemId === itemId)
+
       if (idx > -1) {
         this.cart[idx].cartQty++
         const item = this.cart.splice(idx, 1)[0]
         this.cart.unshift(item)
       } else {
-        this.cart.unshift({ ...product, cartQty: 1 })
+        this.cart.unshift({
+          ...product,
+          cartItemId: itemId,
+          name: finalName,
+          originalName: product.name,
+          price_sell: finalPrice,
+          cartQty: 1,
+          packageInfo,
+          isServed,
+          serviceFee
+        })
       }
     },
     inc(index) {
@@ -36,7 +61,6 @@ export const useKasirStore = defineStore('kasir', {
       this.bayarNominal = 0
       this.paymentMethod = 'CASH'
     },
-    // Fitur Tunda Transaksi
     holdCurrentCart(label = '') {
       if (this.cart.length === 0) return
       this.pendingCarts.push({
@@ -49,7 +73,6 @@ export const useKasirStore = defineStore('kasir', {
       })
       this.clearCart()
     },
-    // Fitur Lanjutkan Transaksi yang Ditunda
     resumeCart(pendingId) {
       const idx = this.pendingCarts.findIndex(p => p.id === pendingId)
       if (idx > -1) {

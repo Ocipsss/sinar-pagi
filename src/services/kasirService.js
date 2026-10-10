@@ -1,3 +1,4 @@
+// src/services/kasirService.js
 import { db } from '../db/index.js'
 import dayjs from 'dayjs'
 
@@ -32,11 +33,13 @@ export const kasirService = {
       const itemProfit = (c.price_sell - modal) * c.cartQty
       totalProfit += Math.max(0, itemProfit)
 
+      // Simpan item transaksi menggunakan nama yang sudah diformat (c.name)
       await db.transaction_items.add({
         id: crypto.randomUUID(), 
         transactionId: id, 
         productId: c.id,
-        serviceId: null, 
+        serviceId: c.isServed ? 'SERVICE_SEDUH' : null, 
+        name: c.name, // Menyimpan teks kustom seperti "Mie Seduh Indomie Goreng" / "Djarum Super (1/2 Bungkus)"
         qty: c.cartQty, 
         price: c.price_sell,
         subtotal: c.price_sell * c.cartQty, 
@@ -44,18 +47,19 @@ export const kasirService = {
         synced: 0
       })
 
+      // Hitung pemotongan stok
+      const qtyDipotong = c.packageInfo ? (c.packageInfo.qty_pcs * c.cartQty) : c.cartQty
+
       await db.products.update(c.id, { 
-        qty: (c.qty || 0) - c.cartQty, 
+        qty: (c.qty || 0) - qtyDipotong, 
         updatedAt: now, 
         synced: 0 
       })
     }
 
-    // Jika transaksi dikaitkan ke Member:
     if (member) {
       const currentMember = await db.members.get(member.id)
       if (currentMember) {
-        // Hitung poin: 1% dari total profit transaksi
         const earnedPoints = Math.floor(totalProfit * 0.01)
         const updatedPoints = (currentMember.points || 0) + earnedPoints
         const updatedSpending = (currentMember.total_spending || 0) + total
@@ -75,7 +79,10 @@ export const kasirService = {
   },
 
   async getInitialData() {
-    const [products, members] = await Promise.all([db.products.toArray(), db.members.toArray()])
+    const [products, members] = await Promise.all([
+      db.products.toArray(),
+      db.members.toArray()
+    ])
     return { products, members }
   }
 }

@@ -5,6 +5,7 @@ import ProductsAdd from '../views/ProductsAdd.vue'
 import CategoriesView from '../views/Categories.vue'
 import MembersView from '../views/Members.vue'
 import SalesHistoryView from '../views/SalesHistory.vue'
+import SettingsMenu from '../views/SettingsMenu.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -55,6 +56,12 @@ export const router = createRouter({
           name: 'SalesHistory',
           component: SalesHistoryView,
           meta: { title: 'Riwayat Penjualan' }
+        },
+        {
+  path: 'settings-menu', 
+  name: 'SettingsMenu', 
+  component: () => import('../views/SettingsMenu.vue'),
+  meta: { title: 'Atur Rokok & Seduh' }
         },
         { 
           path: 'shopping', 
