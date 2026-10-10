@@ -4,6 +4,7 @@ import ProductsList from '../views/ProductsList.vue'
 import ProductsAdd from '../views/ProductsAdd.vue'
 import CategoriesView from '../views/Categories.vue'
 import MembersView from '../views/Members.vue'
+import SalesHistoryView from '../views/SalesHistory.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -19,22 +20,16 @@ export const router = createRouter({
           component: ProductsList,
           meta: { title: 'Barang' }
         },
-          { 
-        path: 'categories', 
-        name: 'Categories',
-        component: CategoriesView,
-        meta: { title: 'Kategori Barang' }
-      },
+        { 
+          path: 'categories', 
+          name: 'Categories',
+          component: CategoriesView,
+          meta: { title: 'Kategori Barang' }
+        },
         { 
           path: 'add-products', 
           name: 'ProductsAdd',
           component: ProductsAdd,
-          meta: { title: 'Tambah Barang' }
-        },
-        { 
-          path: 'edit-product/:id', 
-          name: 'ProductsEdit',
-          component: ProductsAdd, // pakai form yang sama buat edit
           meta: { title: 'Tambah Barang' }
         },
         { 
@@ -44,16 +39,22 @@ export const router = createRouter({
           meta: { title: 'Dashboard' }
         },
         { 
-  path: 'members', 
-  name: 'Members',
-  component: MembersView,
-  meta: { title: 'Daftar Member' }
-},
+          path: 'members', 
+          name: 'Members',
+          component: MembersView,
+          meta: { title: 'Daftar Member' }
+        },
         { 
           path: 'kasir', 
           name: 'Kasir', 
           component: () => import('../views/Kasir.vue'),
           meta: { title: 'Kasir' }
+        },
+        { 
+          path: 'sales-history', 
+          name: 'SalesHistory',
+          component: SalesHistoryView,
+          meta: { title: 'Riwayat Penjualan' }
         },
         { 
           path: 'shopping', 

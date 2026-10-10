@@ -48,7 +48,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Menu, X, Package, Store, LayoutDashboard, Plus, Users, ShoppingCart, Tags } from 'lucide-vue-next'
+import { Menu, X, Package, Store, LayoutDashboard, Plus, Users, ShoppingCart, Tags, History } from 'lucide-vue-next'
 import SidebarComponent from '../components/Sidebar.vue'
 const isOpen = ref(false)
 const route = useRoute()
@@ -70,6 +70,7 @@ const groups = ref([
     title: 'TRANSAKSI', 
     items: [
       { name: 'Kasir', icon: Store, to: '/kasir' },
+      { name: 'Riwayat Penjualan', icon: History, to: '/sales-history' },
       { name: 'Belanja', icon: ShoppingCart, to: '/shopping' }
     ]
   }

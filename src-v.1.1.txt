@@ -203,6 +203,76 @@ export function useKasir() {
   }
 }
 
+===== src/composables/useSalesHistory.js =====
+import { ref, computed } from 'vue'
+import { transactionRepo } from '../db/repositories/transactionRepository.js'
+import dayjs from 'dayjs'
+import localeId from 'dayjs/locale/id'
+
+dayjs.locale(localeId)
+
+export function useSalesHistory() {
+  const transactions = ref([])
+  const searchQuery = ref('')
+  const selectedFilter = ref('ALL')
+  const selectedTransaction = ref(null)
+  const loading = ref(false)
+
+  const filterOptions = [
+    { label: 'Semua', value: 'ALL' },
+    { label: 'Cash', value: 'CASH' },
+    { label: 'QRIS', value: 'QRIS' },
+    { label: 'Tempo / Piutang', value: 'TEMPO' }
+  ]
+
+  const loadHistory = async () => {
+    loading.value = true
+    try {
+      transactions.value = await transactionRepo.getWithDetails()
+    } finally {
+      loading.value = false
+    }
+  }
+
+  const filteredTransactions = computed(() => {
+    const q = searchQuery.value.toLowerCase().trim()
+    return transactions.value.filter(t => {
+      const matchQuery = !q || t.memberName.toLowerCase().includes(q) || t.id.toLowerCase().includes(q)
+      const matchFilter = selectedFilter.value === 'ALL' || t.paymentMethod === selectedFilter.value
+      return matchQuery && matchFilter
+    })
+  })
+
+  const totalOmzet = computed(() => {
+    return filteredTransactions.value.reduce((sum, t) => sum + (t.total || 0), 0)
+  })
+
+  const totalPiutang = computed(() => {
+    return filteredTransactions.value
+      .filter(t => t.paymentMethod === 'TEMPO')
+      .reduce((sum, t) => sum + (t.remaining || t.total || 0), 0)
+  })
+
+  const formatDate = (dateString) => {
+    if (!dateString) return '-'
+    return dayjs(dateString).format('DD MMM YYYY • HH:mm')
+  }
+
+  return {
+    transactions,
+    searchQuery,
+    selectedFilter,
+    selectedTransaction,
+    loading,
+    filterOptions,
+    filteredTransactions,
+    totalOmzet,
+    totalPiutang,
+    loadHistory,
+    formatDate
+  }
+}
+
 ===== src/utils/formatters/currency.js =====
 export const toNumber = (v) => Number(String(v?? '').replace(/[^0-9]/g, '')) || 0
 
@@ -323,11 +393,39 @@ export const productRepo = {
 ===== src/db/repositories/transactionRepository.js =====
 import { db } from '../index.js'
 import dayjs from 'dayjs'
+
 export const transactionRepo = {
   getAll: () => db.transactions.toArray(),
   getToday: () => db.transactions.where('date').aboveOrEqual(dayjs().startOf('day').toISOString()).toArray(),
   create: (data) => db.transactions.add(data),
+
+  // Ambil transaksi lengkap dengan item dan nama member
+  getWithDetails: async () => {
+    const transactions = await db.transactions.orderBy('date').reverse().toArray()
+    const members = await db.members.toArray()
+    const products = await db.products.toArray()
+    const allItems = await db.transaction_items.toArray()
+
+    const memberMap = new Map(members.map(m => [m.id, m.name]))
+    const productMap = new Map(products.map(p => [p.id, p.name]))
+
+    return transactions.map(t => {
+      const items = allItems
+        .filter(item => item.transactionId === t.id)
+        .map(item => ({
+          ...item,
+          productName: productMap.get(item.productId) || 'Produk Dihapus'
+        }))
+
+      return {
+        ...t,
+        memberName: t.memberId ? (memberMap.get(t.memberId) || 'Member Tidak Ditemukan') : 'Umum / Non-Member',
+        items
+      }
+    })
+  }
 }
+
 ===== src/db/repositories/memberRepository.js =====
 import { db } from '../index.js'
 import dayjs from 'dayjs'
@@ -988,7 +1086,7 @@ defineEmits(['select-page','close'])
 <script setup>
 import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Menu, X, Package, Store, LayoutDashboard, Plus, Users, ShoppingCart, Tags } from 'lucide-vue-next'
+import { Menu, X, Package, Store, LayoutDashboard, Plus, Users, ShoppingCart, Tags, History } from 'lucide-vue-next'
 import SidebarComponent from '../components/Sidebar.vue'
 const isOpen = ref(false)
 const route = useRoute()
@@ -1010,6 +1108,7 @@ const groups = ref([
     title: 'TRANSAKSI', 
     items: [
       { name: 'Kasir', icon: Store, to: '/kasir' },
+      { name: 'Riwayat Penjualan', icon: History, to: '/sales-history' },
       { name: 'Belanja', icon: ShoppingCart, to: '/shopping' }
     ]
   }
@@ -1716,6 +1815,190 @@ onMounted(() => {
 })
 </script>
 
+===== src/views/SalesHistory.vue =====
+<template>
+  <div class="flex-1 overflow-auto p-4 pb-24 space-y-4">
+    <!-- Header -->
+    <div class="flex justify-between items-center">
+      <div>
+        <h1 class="font-black text-xl text-zinc-900">Riwayat Penjualan</h1>
+        <p class="text-xs text-zinc-400">Total {{ filteredTransactions.length }} transaksi ditemukan</p>
+      </div>
+    </div>
+
+    <!-- Ringkasan Statistik -->
+    <div class="grid grid-cols-2 gap-3">
+      <div class="bg-white border border-zinc-100 p-3.5 rounded-2xl shadow-sm">
+        <div class="text-[10px] font-black text-zinc-400 uppercase">Total Omzet</div>
+        <div class="text-base font-black text-zinc-900 mt-0.5">Rp {{ formatRibuan(totalOmzet) }}</div>
+      </div>
+      <div class="bg-amber-50 border border-amber-100 p-3.5 rounded-2xl shadow-sm">
+        <div class="text-[10px] font-black text-amber-600 uppercase">Sisa Piutang TEMPO</div>
+        <div class="text-base font-black text-amber-700 mt-0.5">Rp {{ formatRibuan(totalPiutang) }}</div>
+      </div>
+    </div>
+
+    <!-- Filter & Search Bar -->
+    <div class="space-y-2">
+      <div class="relative">
+        <Search class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+        <input 
+          v-model="searchQuery" 
+          placeholder="Cari ID transaksi / nama member..." 
+          class="w-full pl-11 pr-4 py-3 bg-white border border-zinc-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"
+        />
+      </div>
+
+      <div class="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+        <button 
+          v-for="f in filterOptions" 
+          :key="f.value"
+          @click="selectedFilter = f.value"
+          :class="[
+            'px-3.5 py-2 rounded-xl text-xs font-bold shrink-0 transition',
+            selectedFilter === f.value 
+              ? 'bg-zinc-900 text-white shadow-sm' 
+              : 'bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-50'
+          ]"
+        >
+          {{ f.label }}
+        </button>
+      </div>
+    </div>
+
+    <!-- Empty State -->
+    <div v-if="filteredTransactions.length === 0" class="py-16 text-center text-zinc-400 text-xs">
+      <Receipt class="w-8 h-8 text-zinc-300 mx-auto mb-2" />
+      Belum ada riwayat transaksi
+    </div>
+
+    <!-- Daftar Transaksi -->
+    <div v-else class="space-y-3">
+      <div 
+        v-for="t in filteredTransactions" 
+        :key="t.id"
+        @click="selectedTransaction = t"
+        class="bg-white p-4 rounded-2xl border border-zinc-100 shadow-sm flex flex-col gap-2.5 active:scale-[0.99] transition cursor-pointer"
+      >
+        <div class="flex justify-between items-start">
+          <div>
+            <div class="font-bold text-xs text-zinc-900 flex items-center gap-1.5">
+              <span>{{ t.memberName }}</span>
+              <span v-if="t.memberId" class="px-2 py-0.5 bg-zinc-100 text-zinc-600 rounded-md text-[9px] font-black">MEMBER</span>
+            </div>
+            <div class="text-[10px] text-zinc-400 mt-0.5 flex items-center gap-1">
+              <Calendar class="w-3 h-3" />
+              <span>{{ formatDate(t.date) }}</span>
+            </div>
+          </div>
+
+          <div :class="[
+            'px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider',
+            t.paymentMethod === 'TEMPO' ? 'bg-amber-100 text-amber-700' :
+            t.paymentMethod === 'QRIS' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'
+          ]">
+            {{ t.paymentMethod }}
+          </div>
+        </div>
+
+        <div class="flex justify-between items-end pt-2 border-t border-zinc-50">
+          <div class="text-[11px] text-zinc-500 font-medium">
+            {{ t.items.length }} Item Barang
+          </div>
+          <div class="text-right">
+            <div class="text-[9px] text-zinc-400 font-bold uppercase">Total Transaksi</div>
+            <div class="text-sm font-black text-zinc-900">Rp {{ formatRibuan(t.total) }}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal Detail Transaksi -->
+    <div v-if="selectedTransaction" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl max-h-[85vh] flex flex-col animate-in slide-in-from-bottom duration-200">
+        <div class="flex justify-between items-start mb-4 border-b border-zinc-100 pb-3">
+          <div>
+            <h2 class="font-black text-base text-zinc-900">Detail Rincian Nota</h2>
+            <p class="text-[11px] text-zinc-400">ID: {{ selectedTransaction.id.slice(0, 13) }}...</p>
+          </div>
+          <button @click="selectedTransaction = null" class="p-2 bg-zinc-100 rounded-xl">
+            <X class="w-4 h-4" />
+          </button>
+        </div>
+
+        <div class="bg-zinc-50 p-3 rounded-xl space-y-1.5 mb-4 text-xs">
+          <div class="flex justify-between">
+            <span class="text-zinc-500">Tanggal:</span>
+            <span class="font-bold text-zinc-800">{{ formatDate(selectedTransaction.date) }}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-zinc-500">Pelanggan:</span>
+            <span class="font-bold text-zinc-800">{{ selectedTransaction.memberName }}</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-zinc-500">Metode Bayar:</span>
+            <span class="font-black text-zinc-800">{{ selectedTransaction.paymentMethod }}</span>
+          </div>
+        </div>
+
+        <div class="flex-1 overflow-auto space-y-2 mb-4 pr-1">
+          <div class="text-[10px] font-black text-zinc-400 uppercase tracking-wider mb-2">Item Dibeli</div>
+          <div 
+            v-for="item in selectedTransaction.items" 
+            :key="item.id"
+            class="flex justify-between items-center py-2 border-b border-zinc-50 last:border-0"
+          >
+            <div>
+              <div class="font-bold text-xs text-zinc-900">{{ item.productName }}</div>
+              <div class="text-[10px] text-zinc-400">Rp {{ formatRibuan(item.price) }} x {{ item.qty }}</div>
+            </div>
+            <div class="font-black text-xs text-zinc-900">
+              Rp {{ formatRibuan(item.subtotal || (item.price * item.qty)) }}
+            </div>
+          </div>
+        </div>
+
+        <div class="border-t border-zinc-100 pt-3 space-y-2">
+          <div class="flex justify-between items-center text-sm">
+            <span class="font-bold text-zinc-600">Total Akhir</span>
+            <span class="font-black text-base text-zinc-900">Rp {{ formatRibuan(selectedTransaction.total) }}</span>
+          </div>
+
+          <button 
+            @click="selectedTransaction = null" 
+            class="w-full py-3 bg-zinc-900 text-white rounded-xl font-bold text-xs"
+          >
+            Tutup
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { onMounted } from 'vue'
+import { Search, Receipt, Calendar, X } from 'lucide-vue-next'
+import { formatRibuan } from '../utils/formatters/currency.js'
+import { useSalesHistory } from '../composables/useSalesHistory.js'
+
+const {
+  searchQuery,
+  selectedFilter,
+  selectedTransaction,
+  filterOptions,
+  filteredTransactions,
+  totalOmzet,
+  totalPiutang,
+  loadHistory,
+  formatDate
+} = useSalesHistory()
+
+onMounted(() => {
+  loadHistory()
+})
+</script>
+
 ===== src/views/ProductsDigital.vue =====
 
 ===== src/router/index.js =====
@@ -1725,6 +2008,7 @@ import ProductsList from '../views/ProductsList.vue'
 import ProductsAdd from '../views/ProductsAdd.vue'
 import CategoriesView from '../views/Categories.vue'
 import MembersView from '../views/Members.vue'
+import SalesHistoryView from '../views/SalesHistory.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -1740,22 +2024,16 @@ export const router = createRouter({
           component: ProductsList,
           meta: { title: 'Barang' }
         },
-          { 
-        path: 'categories', 
-        name: 'Categories',
-        component: CategoriesView,
-        meta: { title: 'Kategori Barang' }
-      },
+        { 
+          path: 'categories', 
+          name: 'Categories',
+          component: CategoriesView,
+          meta: { title: 'Kategori Barang' }
+        },
         { 
           path: 'add-products', 
           name: 'ProductsAdd',
           component: ProductsAdd,
-          meta: { title: 'Tambah Barang' }
-        },
-        { 
-          path: 'edit-product/:id', 
-          name: 'ProductsEdit',
-          component: ProductsAdd, // pakai form yang sama buat edit
           meta: { title: 'Tambah Barang' }
         },
         { 
@@ -1765,16 +2043,22 @@ export const router = createRouter({
           meta: { title: 'Dashboard' }
         },
         { 
-  path: 'members', 
-  name: 'Members',
-  component: MembersView,
-  meta: { title: 'Daftar Member' }
-},
+          path: 'members', 
+          name: 'Members',
+          component: MembersView,
+          meta: { title: 'Daftar Member' }
+        },
         { 
           path: 'kasir', 
           name: 'Kasir', 
           component: () => import('../views/Kasir.vue'),
           meta: { title: 'Kasir' }
+        },
+        { 
+          path: 'sales-history', 
+          name: 'SalesHistory',
+          component: SalesHistoryView,
+          meta: { title: 'Riwayat Penjualan' }
         },
         { 
           path: 'shopping', 
@@ -1786,6 +2070,7 @@ export const router = createRouter({
     }
   ]
 })
+
 ===== src/schemas/product.schema.js =====
 import * as z from 'zod'
 
