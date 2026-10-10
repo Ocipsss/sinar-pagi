@@ -6,6 +6,7 @@ import { ref } from 'vue'
 import { useForm, useField } from 'vee-validate'
 import { productSchema } from '../schemas/product.schema.js'
 import { categoryRepo } from '../db/repositories/categoryRepository.js'
+import { unitRepo } from '../db/repositories/unitRepository.js'
 
 function toTypedSchema(zodSchema) {
   return {
@@ -21,6 +22,7 @@ function toTypedSchema(zodSchema) {
 
 export function useProductForm() {
   const categories = ref([])
+  const units = ref([])
 
   const { handleSubmit, errors, isSubmitting } = useForm({
     validationSchema: toTypedSchema(productSchema),
@@ -28,6 +30,7 @@ export function useProductForm() {
       name: '',
       code: '',
       category: 'Umum',
+      unit: 'pcs',
       purchasePackName: '',
       packPrice: '',
       packQty: '',
@@ -41,6 +44,7 @@ export function useProductForm() {
   const { value: name } = useField('name')
   const { value: code } = useField('code')
   const { value: category } = useField('category')
+  const { value: unit } = useField('unit')
   const { value: purchasePackName } = useField('purchasePackName')
   const { value: packPrice } = useField('packPrice')
   const { value: packQty } = useField('packQty')
@@ -53,10 +57,15 @@ export function useProductForm() {
     categories.value = await categoryRepo.getAll()
   }
 
+  const loadUnits = async () => {
+    units.value = await unitRepo.getAll()
+  }
+
   return {
     name,
     code,
     category,
+    unit,
     purchasePackName,
     packPrice,
     packQty,
@@ -65,7 +74,9 @@ export function useProductForm() {
     qty,
     minStock,
     categories,
+    units,
     loadCategories,
+    loadUnits,
     handleSubmit,
     errors,
     isSubmitting
@@ -594,6 +605,193 @@ export function useMembers() {
   }
 }
 
+===== src/composables/useShopping.js =====
+import { ref, computed } from 'vue'
+import { shoppingService } from '../services/shoppingService.js'
+import { productRepo } from '../db/repositories/productRepository.js'
+import { categoryRepo } from '../db/repositories/categoryRepository.js'
+
+export function useShopping() {
+  const items = ref([])
+  const products = ref([])
+  const categories = ref([])
+  const searchQuery = ref('')
+  const activeFilter = ref('ALL') // ALL, PENDING, BOUGHT
+  const loading = ref(false)
+
+  // State Modal Tambah Belanjaan
+  const showAddModal = ref(false)
+  const isCustomItem = ref(false)
+  const selectedProduct = ref(null)
+  const form = ref({
+    productId: null,
+    name: '',
+    category: 'Umum',
+    qty: 1,
+    unit: 'pcs',
+    estimatedPrice: 0,
+    notes: ''
+  })
+
+  const totalItems = computed(() => items.value.length)
+  const boughtItemsCount = computed(() => items.value.filter(i => i.isBought).length)
+  const pendingItemsCount = computed(() => items.value.filter(i => !i.isBought).length)
+  
+  const estimatedTotalCost = computed(() => {
+    return items.value.reduce((sum, item) => sum + (Number(item.estimatedPrice) || 0), 0)
+  })
+
+  const boughtTotalCost = computed(() => {
+    return items.value
+      .filter(i => i.isBought)
+      .reduce((sum, item) => sum + (Number(item.estimatedPrice) || 0), 0)
+  })
+
+  const filteredItems = computed(() => {
+    const q = searchQuery.value.toLowerCase().trim()
+    return items.value.filter(item => {
+      const matchQuery = !q || 
+        item.name.toLowerCase().includes(q) || 
+        (item.category || '').toLowerCase().includes(q)
+      
+      const matchFilter = 
+        activeFilter.value === 'ALL' ||
+        (activeFilter.value === 'PENDING' && !item.isBought) ||
+        (activeFilter.value === 'BOUGHT' && item.isBought)
+
+      return matchQuery && matchFilter
+    })
+  })
+
+  const loadData = async () => {
+    loading.value = true
+    try {
+      const [shoppingData, productData, categoryData] = await Promise.all([
+        shoppingService.getShoppingItems(),
+        productRepo.getAll(),
+        categoryRepo.getAll()
+      ])
+      items.value = shoppingData
+      products.value = productData
+      categories.value = categoryData
+    } finally {
+      loading.value = false
+    }
+  }
+
+  const handleAutoRestock = async () => {
+    loading.value = true
+    try {
+      const addedCount = await shoppingService.populateLowStockItems()
+      await loadData()
+      return addedCount
+    } finally {
+      loading.value = false
+    }
+  }
+
+  const toggleBought = async (item) => {
+    await shoppingService.toggleBoughtStatus(item)
+    await loadData()
+  }
+
+  const openModal = () => {
+    isCustomItem.value = false
+    selectedProduct.value = null
+    form.value = {
+      productId: null,
+      name: '',
+      category: categories.value[0]?.name || 'Umum',
+      qty: 1,
+      unit: 'pcs',
+      estimatedPrice: 0,
+      notes: ''
+    }
+    showAddModal.value = true
+  }
+
+  const selectProductForAdd = (product) => {
+    selectedProduct.value = product
+    form.value.productId = product.id
+    form.value.name = product.name
+    form.value.category = product.category || 'Umum'
+    form.value.unit = product.unit || 'pcs'
+    form.value.qty = product.packQty || 10
+    form.value.estimatedPrice = product.packPrice || (product.price_modal * (product.packQty || 10)) || 0
+  }
+
+  const saveItem = async () => {
+    if (!form.value.name.trim()) return
+
+    await shoppingService.addShoppingItem(form.value)
+    showAddModal.value = false
+    await loadData()
+  }
+
+  const deleteItem = async (id) => {
+    await shoppingService.removeItem(id)
+    await loadData()
+  }
+
+  const clearCompletedItems = async () => {
+    await shoppingService.clearCompleted()
+    await loadData()
+  }
+
+  const exportShoppingListText = () => {
+    const pending = items.value.filter(i => !i.isBought)
+    if (pending.length === 0) return ''
+
+    let text = `*DAFTAR BELANJA KULAKAN SINAR PAGI*\n`
+    text += `Tanggal: ${new Date().toLocaleDateString('id-ID')}\n`
+    text += `===============================\n\n`
+
+    pending.forEach((item, idx) => {
+      text += `${idx + 1}. *${item.name}*\n`
+      text += `   • Jumlah: ${item.qty} ${item.unit}\n`
+      if (item.estimatedPrice > 0) {
+        text += `   • Est. Modal: Rp ${item.estimatedPrice.toLocaleString('id-ID')}\n`
+      }
+      if (item.notes) {
+        text += `   • Catatan: ${item.notes}\n`
+      }
+      text += `\n`
+    })
+
+    text += `===============================\n`
+    text += `*Estimasi Total Modal:* Rp ${estimatedTotalCost.value.toLocaleString('id-ID')}\n`
+
+    return text
+  }
+
+  return {
+    items,
+    products,
+    categories,
+    searchQuery,
+    activeFilter,
+    loading,
+    showAddModal,
+    isCustomItem,
+    selectedProduct,
+    form,
+    totalItems,
+    boughtItemsCount,
+    pendingItemsCount,
+    estimatedTotalCost,
+    boughtTotalCost,
+    filteredItems,
+    loadData,
+    handleAutoRestock,
+    toggleBought,
+    openModal,
+    selectProductForAdd,
+    saveItem,
+    deleteItem,
+    clearCompletedItems,
+    exportShoppingListText
+  }
+}
 ===== src/utils/formatters/currency.js =====
 export const toNumber = (v) => Number(String(v?? '').replace(/[^0-9]/g, '')) || 0
 
@@ -693,6 +891,7 @@ db.version(1).stores({
   expenses: 'id, date, category, amount, note, paymentMethod, cashPart, qrisPart, updatedAt, synced',
   digital_transactions: 'id, date, type, provider, nominal, adminFee, adminPaymentMethod, totalReceived, profit, updatedAt, synced',
   services: 'id, name, price, updatedAt, synced',
+  units: 'id, name, updatedAt, synced',
   settings: 'id'
 })
 
@@ -897,6 +1096,107 @@ export const serviceRepository = {
   deleteService: (id) => db.services.delete(id)
 }
 
+===== src/db/repositories/unitRepository.js =====
+// src/db/repositories/unitRepository.js
+import { db } from '../index.js'
+import dayjs from 'dayjs'
+
+export const unitRepo = {
+  getAll: () => (db.units ? db.units.toArray() : db.table('units').toArray()),
+  getById: (id) => (db.units ? db.units.get(id) : db.table('units').get(id)),
+  create: async (name) => {
+    const id = crypto.randomUUID()
+    const now = dayjs().toISOString()
+    const item = { id, name, updatedAt: now, synced: 0 }
+    const table = db.units || db.table('units')
+    await table.add(item)
+    return id
+  },
+  update: async (id, name) => {
+    const now = dayjs().toISOString()
+    const table = db.units || db.table('units')
+    await table.update(id, { name, updatedAt: now, synced: 0 })
+  },
+  delete: (id) => (db.units || db.table('units')).delete(id)
+}
+
+===== src/db/repositories/shoppingRepository.js =====
+import { db } from '../index.js'
+import dayjs from 'dayjs'
+
+// Repository untuk mengelola operasi tabel 'shopping_list' di Dexie DB
+export const shoppingRepository = {
+  async getAll() {
+    // Memastikan tabel 'shopping_list' diakses dengan aman
+    if (!db.shopping_list) return []
+    return await db.shopping_list.toArray()
+  },
+
+  async getById(id) {
+    if (!db.shopping_list) return null
+    return await db.shopping_list.get(id)
+  },
+
+  async add(item) {
+    const id = item.id || crypto.randomUUID()
+    const now = dayjs().toISOString()
+    const newItem = {
+      ...item,
+      id,
+      isBought: item.isBought || false,
+      createdAt: item.createdAt || now,
+      updatedAt: now,
+      synced: 0
+    }
+    
+    // Gunakan table() dinamis jika schema Dexie belum terdefinisi secara statis
+    if (db.shopping_list) {
+      await db.shopping_list.put(newItem)
+    } else {
+      await db.table('shopping_list').put(newItem)
+    }
+    return newItem
+  },
+
+  async addBulk(items) {
+    const now = dayjs().toISOString()
+    const preparedItems = items.map(item => ({
+      ...item,
+      id: item.id || crypto.randomUUID(),
+      isBought: item.isBought || false,
+      createdAt: item.createdAt || now,
+      updatedAt: now,
+      synced: 0
+    }))
+
+    const table = db.shopping_list || db.table('shopping_list')
+    await table.bulkPut(preparedItems)
+    return preparedItems
+  },
+
+  async update(id, changes) {
+    const now = dayjs().toISOString()
+    const table = db.shopping_list || db.table('shopping_list')
+    await table.update(id, {
+      ...changes,
+      updatedAt: now,
+      synced: 0
+    })
+  },
+
+  async delete(id) {
+    const table = db.shopping_list || db.table('shopping_list')
+    await table.delete(id)
+  },
+
+  async clearBought() {
+    const table = db.shopping_list || db.table('shopping_list')
+    const boughtItems = await table.where('isBought').equals(1).toArray()
+    const ids = boughtItems.map(i => i.id)
+    await table.bulkDelete(ids)
+    return ids.length
+  }
+}
 ===== src/services/firebase.js =====
 import { initializeApp } from 'firebase/app'
 import { getFirestore } from 'firebase/firestore'
@@ -1257,29 +1557,151 @@ export const dashboardService = {
     }
   }
 }
+===== src/services/shoppingService.js =====
+import { shoppingRepository } from '../db/repositories/shoppingRepository.js'
+import { productRepo } from '../db/repositories/productRepository.js'
+import { syncRealtime } from './syncService.js'
+
+export const shoppingService = {
+  async getShoppingItems() {
+    return await shoppingRepository.getAll()
+  },
+
+  async populateLowStockItems() {
+    const allProducts = await productRepo.getAll()
+    const currentShoppingList = await shoppingRepository.getAll()
+    
+    // Ambil produk yang stoknya <= minStock
+    const lowStockProducts = allProducts.filter(p => (p.qty || 0) <= (p.minStock || 5))
+    
+    // Filter produk yang belum ada di daftar belanjaan (aktif / belum dibeli)
+    const existingProductIds = new Set(
+      currentShoppingList.filter(i => !i.isBought).map(i => i.productId).filter(Boolean)
+    )
+
+    const itemsToAdd = []
+    for (const p of lowStockProducts) {
+      if (!existingProductIds.has(p.id)) {
+        // Estimasi jumlah yang perlu dibeli = packQty jika ada, atau selisih ke target
+        const targetQty = (p.packQty && p.packQty > 0) ? p.packQty : Math.max(10, (p.minStock || 5) * 2 - (p.qty || 0))
+        
+        itemsToAdd.push({
+          productId: p.id,
+          name: p.name,
+          category: p.category || 'Umum',
+          qty: targetQty,
+          unit: p.unit || 'pcs',
+          estimatedPrice: p.packPrice || (p.price_modal * targetQty) || 0,
+          isBought: false,
+          notes: `Restock otomatis (Stok sisa: ${p.qty})`
+        })
+      }
+    }
+
+    if (itemsToAdd.length > 0) {
+      await shoppingRepository.addBulk(itemsToAdd)
+      syncRealtime.pushLocalToCloud()
+    }
+
+    return itemsToAdd.length
+  },
+
+  async toggleBoughtStatus(item) {
+    const newStatus = !item.isBought
+    await shoppingRepository.update(item.id, { isBought: newStatus })
+
+    // Jika ditandai "Sudah Dibeli", update stok produk di master produk (jika terhubung ke productId)
+    if (newStatus && item.productId) {
+      const product = await productRepo.getById(item.productId)
+      if (product) {
+        // Hitung penambahan stok
+        const qtyToAdd = Number(item.qty) || 0
+        const updatedQty = (product.qty || 0) + qtyToAdd
+
+        // Jika ada perubahan estimasi harga modal per pcs, perbarui juga jika diset
+        const changes = { qty: updatedQty }
+        if (item.estimatedPrice && item.qty > 0 && !product.packQty) {
+          changes.price_modal = Math.round(item.estimatedPrice / item.qty)
+        }
+
+        await productRepo.update(item.productId, changes)
+      }
+    }
+
+    syncRealtime.pushLocalToCloud()
+    return newStatus
+  },
+
+  async addShoppingItem(data) {
+    const newItem = await shoppingRepository.add({
+      productId: data.productId || null,
+      name: data.name,
+      category: data.category || 'Umum',
+      qty: Number(data.qty) || 1,
+      unit: data.unit || 'pcs',
+      estimatedPrice: Number(data.estimatedPrice) || 0,
+      isBought: false,
+      notes: data.notes || ''
+    })
+
+    syncRealtime.pushLocalToCloud()
+    return newItem
+  },
+
+  async removeItem(id) {
+    await shoppingRepository.delete(id)
+    syncRealtime.pushLocalToCloud()
+  },
+
+  async clearCompleted() {
+    const count = await shoppingRepository.clearBought()
+    syncRealtime.pushLocalToCloud()
+    return count
+  }
+}
 ===== src/components/product/ProductForm.vue =====
 <template>
 <form @submit.prevent="onSubmit" class="bg-white p-5 rounded-3xl border flex flex-col gap-4 shadow-sm">
+  <!-- Nama Produk -->
   <div class="flex flex-col gap-1">
     <input v-model="name" placeholder="Nama Produk *" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold"/>
     <span v-if="errors.name" class="text-[10px] text-red-500">{{ errors.name }}</span>
   </div>
 
+  <!-- Barcode + Scanner -->
   <div class="flex gap-2">
     <input v-model="code" placeholder="Barcode" class="flex-1 px-4 py-3 bg-zinc-50 border rounded-xl text-sm"/>
     <button type="button" @click="start(c => code = c)" class="px-4 bg-zinc-900 text-white rounded-xl"><ScanLine class="w-4 h-4"/></button>
   </div>
   <div id="reader" class="w-full rounded-xl overflow-hidden"></div>
 
-  <!-- Pilihan Kategori -->
-  <div class="flex flex-col gap-1">
-    <label class="text-[10px] text-zinc-500">Kategori</label>
-    <select v-model="category" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold">
-      <option value="Umum">Umum</option>
-      <option v-for="cat in categories" :key="cat.id" :value="cat.name">
-        {{ cat.name }}
-      </option>
-    </select>
+  <!-- Kategori & Satuan (Bersebelahan di Luar Grosir) -->
+  <div class="grid grid-cols-2 gap-2">
+    <div class="flex flex-col gap-1">
+      <label class="text-[10px] text-zinc-500 font-bold uppercase">Kategori</label>
+      <select v-model="category" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold">
+        <option value="Umum">Umum</option>
+        <option v-for="cat in categories" :key="cat.id" :value="cat.name">
+          {{ cat.name }}
+        </option>
+      </select>
+    </div>
+
+    <div class="flex flex-col gap-1">
+      <label class="text-[10px] text-zinc-500 font-bold uppercase">Satuan Eceran *</label>
+      <select v-model="unit" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold">
+        <option value="pcs">pcs</option>
+        <option value="bungkus">bungkus</option>
+
+        <option value="renteng">renteng</option>
+        <option value="pack">pack</option>
+        <option value="botol">botol</option>
+        <option value="sachet">sachet</option>
+        <option v-for="u in units" :key="u.id" :value="u.name">
+          {{ u.name }}
+        </option>
+      </select>
+    </div>
   </div>
 
   <!-- Kalkulator Grosir -->
@@ -1287,7 +1709,7 @@ export const dashboardService = {
     <div class="text-[10px] font-black text-blue-600 uppercase">Kalkulator Grosir</div>
     <div class="grid grid-cols-3 gap-2">
       <div class="col-span-2 flex flex-col gap-1">
-        <label class="text-[10px] text-zinc-500">Harga Per Pak</label>
+        <label class="text-[10px] text-zinc-500">Harga Per Pak/Dus</label>
         <input :value="formatRp(packPrice)" @input="onPackPriceInput" inputmode="numeric" placeholder="Rp 0" class="w-full px-3 py-2.5 bg-white border rounded-xl text-sm font-bold"/>
       </div>
       <div class="flex flex-col gap-1">
@@ -1296,20 +1718,20 @@ export const dashboardService = {
       </div>
     </div>
     <div v-if="toNumber(packPrice) > 0" class="flex flex-col gap-1">
-      <input v-model="purchasePackName" placeholder="Nama grosir: dus, slop" class="px-3 py-2.5 bg-white border rounded-xl text-sm"/>
-      <div class="text-[11px] text-blue-600 bg-white p-2 rounded-xl border">Auto modal: {{ formatRp(autoModal) }}</div>
+      <input v-model="purchasePackName" placeholder="Nama kemasan grosir: dus, slop, bal..." class="px-3 py-2.5 bg-white border rounded-xl text-sm"/>
+      <div class="text-[11px] text-blue-600 bg-white p-2 rounded-xl border font-semibold">Auto modal / {{ unit || 'pcs' }}: {{ formatRp(autoModal) }}</div>
     </div>
   </div>
 
   <!-- Modal + Jual bersebelahan -->
   <div class="grid grid-cols-2 gap-2">
     <div class="flex flex-col gap-1">
-      <label class="text-[10px] text-zinc-500">Modal / Pcs * (bisa manual)</label>
+      <label class="text-[10px] text-zinc-500 font-bold uppercase">Modal / {{ unit || 'pcs' }} *</label>
       <input :value="formatRp(price_modal)" @input="onModalInput" inputmode="numeric" placeholder="Rp 0" class="w-full px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-sm font-bold"/>
       <span v-if="errors.price_modal" class="text-[10px] text-red-500">{{ errors.price_modal }}</span>
     </div>
     <div class="flex flex-col gap-1">
-      <label class="text-[10px] text-zinc-500">Harga Jual *</label>
+      <label class="text-[10px] text-zinc-500 font-bold uppercase">Harga Jual / {{ unit || 'pcs' }} *</label>
       <input :value="formatRp(price_sell)" @input="onJualInput" inputmode="numeric" placeholder="Rp 0" class="w-full px-3 py-2.5 bg-green-50 border border-green-200 rounded-xl text-sm font-bold"/>
       <span class="text-[10px] text-green-600 font-bold">Margin {{ marginPersen }}%</span>
     </div>
@@ -1318,16 +1740,18 @@ export const dashboardService = {
   <!-- Stok Awal + Min Stok bersebelahan -->
   <div class="grid grid-cols-2 gap-2">
     <div class="flex flex-col gap-1">
-      <label class="text-[10px] text-zinc-500">Stok Awal</label>
+      <label class="text-[10px] text-zinc-500 font-bold uppercase">Stok Awal ({{ unit || 'pcs' }})</label>
       <input v-model.number="qty" type="number" placeholder="0" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold"/>
     </div>
     <div class="flex flex-col gap-1">
-      <label class="text-[10px] text-zinc-500">Min. Stok</label>
+      <label class="text-[10px] text-zinc-500 font-bold uppercase">Min. Stok</label>
       <input v-model.number="minStock" type="number" placeholder="5" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold"/>
     </div>
   </div>
 
-  <button :disabled="isSubmitting" class="w-full bg-zinc-900 text-white py-4 rounded-2xl font-black text-sm">{{ isSubmitting? 'Menyimpan...' : 'Simpan Barang' }}</button>
+  <button :disabled="isSubmitting" class="w-full bg-zinc-900 text-white py-4 rounded-2xl font-black text-sm active:scale-95 transition">
+    {{ isSubmitting ? 'Menyimpan...' : 'Simpan Barang' }}
+  </button>
 </form>
 </template>
 
@@ -1342,8 +1766,8 @@ import { formatRp, toNumber } from '../../utils/formatters/currency.js'
 import { productService } from '../../services/productService.js'
 
 const { 
-  name, code, category, purchasePackName, packPrice, packQty, 
-  price_modal, price_sell, qty, minStock, categories, loadCategories, 
+  name, code, category, unit, purchasePackName, packPrice, packQty, 
+  price_modal, price_sell, qty, minStock, categories, units, loadCategories, loadUnits,
   handleSubmit, errors, isSubmitting 
 } = useProductForm()
 
@@ -1355,6 +1779,7 @@ const marginPersen = computed(() => calcMargin(price_sell.value, price_modal.val
 
 onMounted(() => {
   loadCategories()
+  loadUnits()
 })
 
 const onPackPriceInput = (e) => {
@@ -1380,14 +1805,14 @@ const onSubmit = handleSubmit(async (vals) => {
     name: vals.name,
     code: vals.code || '',
     category: category.value || 'Umum',
+    unit: unit.value || 'pcs',
     purchasePackName: purchasePackName.value || '',
     packPrice: toNumber(packPrice.value),
     packQty: toNumber(packQty.value),
     price_modal: toNumber(price_modal.value),
     price_sell: toNumber(price_sell.value),
     qty: toNumber(qty.value),
-    minStock: toNumber(minStock.value) || 5,
-    unit: 'pcs'
+    minStock: toNumber(minStock.value) || 5
   }, toNumber(price_modal.value))
   router.push('/products')
 })
@@ -2075,7 +2500,390 @@ onMounted(() => {
 </script>
 
 ===== src/views/Shopping.vue =====
+```html
+<template>
+<div class="flex-1 overflow-auto p-4 pb-28 space-y-4">
+  <!-- Header Title & Quick Action -->
+  <div class="flex justify-between items-center">
+    <div>
+      <h1 class="font-black text-xl text-zinc-900">Belanja Kulakan</h1>
+      <p class="text-xs text-zinc-400">Daftar kebutuhan restock toko</p>
+    </div>
 
+    <div class="flex gap-2">
+      <button 
+        @click="handleExportCopy" 
+        title="Salin Daftar Belanja"
+        class="p-2.5 bg-white border border-zinc-200 text-zinc-700 rounded-2xl font-bold text-xs flex items-center justify-center hover:bg-zinc-50 active:scale-95 transition shadow-sm"
+      >
+        <Share2 class="w-4 h-4" />
+      </button>
+
+      <button 
+        @click="openModal" 
+        class="bg-zinc-900 text-white px-3.5 py-2.5 rounded-2xl font-bold text-xs flex items-center gap-1.5 active:scale-95 transition shadow-sm"
+      >
+        <Plus class="w-4 h-4" /> Tambah
+      </button>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-3 gap-2">
+    <div class="bg-white border border-zinc-100 p-3 rounded-2xl shadow-sm flex flex-col justify-between">
+      <span class="text-[9px] font-black text-zinc-400 uppercase tracking-wider">Total Item</span>
+      <div class="text-base font-black text-zinc-900 mt-1">
+        {{ totalItems }} <span class="text-[10px] font-bold text-zinc-400">item</span>
+      </div>
+    </div>
+
+    <div class="bg-emerald-50 border border-emerald-100 p-3 rounded-2xl shadow-sm flex flex-col justify-between">
+      <span class="text-[9px] font-black text-emerald-600 uppercase tracking-wider">Selesai Dibeli</span>
+      <div class="text-base font-black text-emerald-700 mt-1">
+        {{ boughtItemsCount }}/{{ totalItems }}
+      </div>
+    </div>
+
+    <div class="bg-amber-50 border border-amber-100 p-3 rounded-2xl shadow-sm flex flex-col justify-between">
+      <span class="text-[9px] font-black text-amber-600 uppercase tracking-wider">Est. Modal</span>
+      <div class="text-xs font-black text-amber-700 mt-1 truncate">
+        Rp {{ formatRibuan(estimatedTotalCost) }}
+      </div>
+    </div>
+  </div>
+
+  <div class="bg-zinc-900 text-white p-4 rounded-3xl flex items-center justify-between gap-3 shadow-md">
+    <div class="flex items-center gap-3">
+      <div class="w-10 h-10 bg-amber-500/20 text-amber-400 rounded-2xl flex items-center justify-center shrink-0">
+        <Sparkles class="w-5 h-5" />
+      </div>
+      <div>
+        <div class="font-black text-xs text-white">Rekomendasi Restock Otomatis</div>
+        <div class="text-[10px] text-zinc-400">Tambah produk dengan stok tipis (<= min stock)</div>
+      </div>
+    </div>
+    <button 
+      @click="triggerAutoRestock" 
+      :disabled="loading"
+      class="px-3.5 py-2 bg-amber-500 hover:bg-amber-400 active:scale-95 text-zinc-950 rounded-xl font-black text-[11px] shrink-0 transition"
+    >
+      + Barang Tipis
+    </button>
+  </div>
+
+  <div class="space-y-2">
+    <div class="relative">
+      <Search class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+      <input 
+        v-model="searchQuery" 
+        placeholder="Cari barang belanjaan..." 
+        class="w-full pl-11 pr-4 py-3 bg-white border border-zinc-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"
+      />
+      <button v-if="searchQuery" @click="searchQuery=''" class="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 bg-zinc-100 rounded-full text-zinc-400">
+        <X class="w-3 h-3" />
+      </button>
+    </div>
+
+    <div class="flex items-center justify-between gap-2">
+      <!-- Filter Segmented Control -->
+      <div class="flex bg-zinc-100 p-1 rounded-2xl gap-1 flex-1">
+        <button 
+          v-for="f in filterOptions" 
+          :key="f.value"
+          @click="activeFilter = f.value"
+          :class="[
+            'flex-1 py-2 rounded-xl text-[11px] font-bold transition',
+            activeFilter === f.value ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500'
+          ]"
+        >
+          {{ f.label }}
+        </button>
+      </div>
+
+      <!-- Clear Completed Button -->
+      <button 
+        v-if="boughtItemsCount > 0"
+        @click="clearCompletedItems"
+        title="Hapus yang sudah dibeli"
+        class="p-2.5 text-zinc-400 hover:text-red-500 hover:bg-red-50 border border-zinc-200 rounded-2xl transition shrink-0"
+      >
+        <Trash2 class="w-4 h-4" />
+      </button>
+    </div>
+  </div>
+
+  <div v-if="filteredItems.length === 0" class="py-16 text-center text-zinc-400 text-xs bg-white rounded-3xl border border-zinc-100 p-6">
+    <ShoppingBag class="w-10 h-10 text-zinc-300 mx-auto mb-2" />
+    <div class="font-bold text-zinc-500 text-sm">Tidak ada barang belanjaan</div>
+    <p class="text-[11px] text-zinc-400 mt-1">Klik "+ Barang Tipis" untuk otomatis mengambil produk dari master</p>
+  </div>
+
+  <div v-else class="space-y-2">
+    <div 
+      v-for="item in filteredItems" 
+      :key="item.id"
+      :class="[
+        'p-4 rounded-3xl border transition flex items-center justify-between gap-3 shadow-sm',
+        item.isBought 
+          ? 'bg-zinc-50/80 border-zinc-200/60 opacity-60' 
+          : 'bg-white border border-zinc-100 hover:border-zinc-300'
+      ]"
+    >
+      <!-- Checkbox & Detail Item -->
+      <div class="flex items-center gap-3 flex-1 min-w-0">
+        <button 
+          @click="toggleBought(item)"
+          :class="[
+            'w-7 h-7 rounded-xl flex items-center justify-center shrink-0 transition',
+            item.isBought ? 'bg-emerald-500 text-white' : 'bg-zinc-100 text-transparent border border-zinc-300'
+          ]"
+        >
+          <Check class="w-4 h-4 stroke-[3]" />
+        </button>
+
+        <div class="min-w-0 flex-1">
+          <div :class="['font-bold text-sm text-zinc-900 truncate', item.isBought && 'line-through text-zinc-400']">
+            {{ item.name }}
+          </div>
+          <div class="flex items-center gap-1.5 text-[11px] text-zinc-400 mt-0.5">
+            <span class="px-1.5 py-0.5 bg-zinc-100 rounded text-zinc-600 font-semibold text-[10px]">{{ item.category || 'Umum' }}</span>
+            <span>Qty: <strong class="text-zinc-800">{{ item.qty }} {{ item.unit }}</strong></span>
+            <span v-if="item.estimatedPrice > 0">• Est: <strong class="text-amber-600">Rp {{ formatRibuan(item.estimatedPrice) }}</strong></span>
+          </div>
+          <div v-if="item.notes" class="text-[10px] text-amber-600/90 font-medium italic mt-0.5">
+            {{ item.notes }}
+          </div>
+        </div>
+      </div>
+
+      <!-- Delete Action -->
+      <button 
+        @click="deleteItem(item.id)" 
+        class="p-2 text-zinc-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition shrink-0"
+      >
+        <X class="w-4 h-4" />
+      </button>
+    </div>
+  </div>
+
+  <div v-if="showAddModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+    <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl max-h-[85vh] flex flex-col animate-in slide-in-from-bottom duration-200">
+      <div class="flex justify-between items-center mb-4 shrink-0">
+        <div>
+          <h2 class="font-black text-base text-zinc-900">Tambah Belanjaan</h2>
+          <p class="text-xs text-zinc-400">Pilih dari master produk atau input manual</p>
+        </div>
+        <button @click="showAddModal = false" class="p-2 bg-zinc-100 rounded-xl">
+          <X class="w-4 h-4" />
+        </button>
+      </div>
+
+      <!-- Modal Toggle Mode -->
+      <div class="flex bg-zinc-100 p-1 rounded-xl mb-4 shrink-0">
+        <button 
+          @click="isCustomItem = false" 
+          :class="['flex-1 py-2 text-xs font-bold rounded-lg transition', !isCustomItem ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500']"
+        >
+          Dari Master Produk
+        </button>
+        <button 
+          @click="isCustomItem = true" 
+          :class="['flex-1 py-2 text-xs font-bold rounded-lg transition', isCustomItem ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500']"
+        >
+          Input Manual
+        </button>
+      </div>
+
+      <div class="overflow-auto flex-1 space-y-3 pr-1">
+        <!-- MODE 1: PILIH DARI MASTER PRODUK -->
+        <div v-if="!isCustomItem" class="space-y-3">
+          <div class="relative">
+            <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+            <input 
+              v-model="productSearch" 
+              placeholder="Cari master produk..." 
+              class="w-full pl-9 pr-3 py-2.5 bg-zinc-50 border rounded-xl text-xs font-bold"
+            />
+          </div>
+
+          <div class="max-h-[160px] overflow-auto border border-zinc-100 rounded-xl divide-y">
+            <div 
+              v-for="p in filteredMasterProducts" 
+              :key="p.id"
+              @click="selectProductForAdd(p)"
+              :class="['p-2.5 text-xs flex justify-between items-center cursor-pointer hover:bg-zinc-50 transition', form.productId === p.id && 'bg-amber-50 font-bold border-l-4 border-amber-500']"
+            >
+              <div>
+                <div class="font-bold text-zinc-900">{{ p.name }}</div>
+                <div class="text-[10px] text-zinc-400">Stok sisa: {{ p.qty }} • Rp {{ formatRibuan(p.price_modal) }}</div>
+              </div>
+              <span class="text-[10px] bg-zinc-100 px-2 py-0.5 rounded font-black text-zinc-600">Pilih</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- FORM INPUT UTAMA -->
+        <form @submit.prevent="saveItem" class="space-y-3">
+          <div>
+            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Nama Barang *</label>
+            <input 
+              v-model="form.name" 
+              required 
+              placeholder="Nama barang / produk" 
+              class="w-full px-4 py-2.5 bg-zinc-50 border rounded-xl text-sm font-bold" 
+            />
+          </div>
+
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Jumlah Belanja *</label>
+              <input 
+                v-model.number="form.qty" 
+                type="number" 
+                min="1" 
+                required 
+                class="w-full px-4 py-2.5 bg-zinc-50 border rounded-xl text-sm font-bold" 
+              />
+            </div>
+            <div>
+              <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Satuan</label>
+              <input 
+                v-model="form.unit" 
+                placeholder="pcs / dus / slop" 
+                class="w-full px-4 py-2.5 bg-zinc-50 border rounded-xl text-sm font-bold" 
+              />
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Est. Total Modal (Rp)</label>
+              <input 
+                :value="formatRp(form.estimatedPrice)" 
+                @input="e => form.estimatedPrice = toNumber(e.target.value)" 
+                type="text" 
+                inputmode="numeric" 
+                placeholder="Rp 0" 
+                class="w-full px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-sm font-black text-zinc-900" 
+              />
+            </div>
+            <div>
+              <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Kategori</label>
+              <select v-model="form.category" class="w-full px-3 py-2.5 bg-zinc-50 border rounded-xl text-xs font-bold">
+                <option v-for="c in categories" :key="c.id" :value="c.name">{{ c.name }}</option>
+                <option value="Umum">Umum</option>
+              </select>
+            </div>
+          </div>
+
+          <div>
+            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Catatan Tambahan</label>
+            <input 
+              v-model="form.notes" 
+              placeholder="Misal: Beli rasa cokelat & keju" 
+              class="w-full px-4 py-2.5 bg-zinc-50 border rounded-xl text-xs font-bold" 
+            />
+          </div>
+
+          <div class="flex gap-2 pt-2">
+            <button type="button" @click="showAddModal = false" class="flex-1 py-3 bg-zinc-100 font-bold text-xs rounded-xl">Batal</button>
+            <button type="submit" class="flex-1 py-3 bg-zinc-900 text-white font-bold text-xs rounded-xl shadow-md">Simpan Belanjaan</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+</template>
+
+<script setup>
+import { ref, computed, onMounted } from 'vue'
+import { Plus, Search, Trash2, X, Check, ShoppingBag, Sparkles, Share2 } from 'lucide-vue-next'
+import { useShopping } from '../composables/useShopping.js'
+import { formatRibuan, formatRp, toNumber } from '../utils/formatters/currency.js'
+
+const {
+  products,
+  categories,
+  searchQuery,
+  activeFilter,
+  loading,
+  showAddModal,
+  isCustomItem,
+  form,
+  totalItems,
+  boughtItemsCount,
+  estimatedTotalCost,
+  filteredItems,
+  loadData,
+  handleAutoRestock,
+  toggleBought,
+  openModal,
+  selectProductForAdd,
+  saveItem,
+  deleteItem,
+  clearCompletedItems,
+  exportShoppingListText
+} = useShopping()
+
+const productSearch = ref('')
+
+const filterOptions = [
+  { label: 'Semua', value: 'ALL' },
+  { label: 'Belum', value: 'PENDING' },
+  { label: 'Selesai', value: 'BOUGHT' }
+]
+
+const filteredMasterProducts = computed(() => {
+  const q = productSearch.value.toLowerCase().trim()
+  if (!q) return products.value.slice(0, 8)
+  return products.value
+    .filter(p => p.name.toLowerCase().includes(q) || (p.code || '').toLowerCase().includes(q))
+    .slice(0, 10)
+})
+
+const triggerAutoRestock = async () => {
+  const count = await handleAutoRestock()
+  if (count > 0) {
+    alert(`Berhasil menambahkan ${count} produk tipis ke daftar belanja!`)
+  } else {
+    alert('Tidak ada produk baru bersisa stok tipis untuk ditambahkan.')
+  }
+}
+
+const handleExportCopy = () => {
+  const text = exportShoppingListText()
+  if (!text) {
+    alert('Belum ada item yang perlu dibeli.')
+    return
+  }
+
+  // Gunakan metode standar browser yang kompatibel
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(text).then(() => {
+      alert('Daftar belanja berhasil disalin ke clipboard!')
+    }).catch(() => {
+      copyFallback(text)
+    })
+  } else {
+    copyFallback(text)
+  }
+}
+
+const copyFallback = (text) => {
+  const textarea = document.createElement('textarea')
+  textarea.value = text
+  document.body.appendChild(textarea)
+  textarea.select()
+  document.execCommand('copy')
+  document.body.removeChild(textarea)
+  alert('Daftar belanja berhasil disalin!')
+}
+
+onMounted(() => {
+  loadData()
+})
+</script>
+```
 ===== src/views/Reports.vue =====
 
 ===== src/views/Expenses.vue =====
@@ -2265,17 +3073,37 @@ import ProductForm from '../components/product/ProductForm.vue'
 ===== src/views/Categories.vue =====
 <template>
   <div class="flex-1 overflow-auto p-4 pb-24">
-    <!-- Header ringkas + Tombol Tambah -->
+    <!-- Header ringkas -->
     <div class="flex justify-between items-center mb-4">
       <div>
-        <h1 class="font-black text-xl">Kategori Barang</h1>
-        <p class="text-xs text-zinc-400">Total {{ categories.length }} kategori</p>
+        <h1 class="font-black text-xl text-zinc-900">
+          {{ activeTab === 'category' ? 'Kategori Barang' : 'Satuan Barang' }}
+        </h1>
+        <p class="text-xs text-zinc-400">
+          {{ activeTab === 'category' ? `Total ${categories.length} kategori` : `Total ${units.length} satuan` }}
+        </p>
       </div>
       <button 
         @click="openModal()" 
-        class="bg-zinc-900 text-white px-4 py-2.5 rounded-2xl font-bold text-xs flex items-center gap-2 active:scale-95 transition"
+        class="bg-zinc-900 text-white px-4 py-2.5 rounded-2xl font-bold text-xs flex items-center gap-2 active:scale-95 transition shadow-sm"
       >
         <Plus class="w-4 h-4" /> Tambah
+      </button>
+    </div>
+
+    <!-- Tab Navigasi -->
+    <div class="flex bg-zinc-100 p-1 rounded-2xl gap-1 mb-4">
+      <button 
+        @click="activeTab = 'category'" 
+        :class="['flex-1 py-2.5 rounded-xl text-xs font-bold transition', activeTab === 'category' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500']"
+      >
+        Kategori Barang
+      </button>
+      <button 
+        @click="activeTab = 'unit'" 
+        :class="['flex-1 py-2.5 rounded-xl text-xs font-bold transition', activeTab === 'unit' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500']"
+      >
+        Satuan Barang
       </button>
     </div>
 
@@ -2284,83 +3112,110 @@ import ProductForm from '../components/product/ProductForm.vue'
       <Search class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
       <input 
         v-model="searchQuery" 
-        placeholder="Cari kategori..." 
+        :placeholder="activeTab === 'category' ? 'Cari kategori...' : 'Cari satuan...'" 
         class="w-full pl-11 pr-4 py-3 bg-white border border-zinc-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"
       />
     </div>
 
-    <!-- Daftar Kategori -->
-    <div v-if="filteredCategories.length === 0" class="py-12 text-center text-zinc-400 text-xs">
-      Belum ada kategori
-    </div>
+    <!-- TAB 1: KATEGORI BARANG -->
+    <div v-if="activeTab === 'category'">
+      <div v-if="filteredCategories.length === 0" class="py-12 text-center text-zinc-400 text-xs bg-white rounded-2xl border border-zinc-100">
+        Belum ada kategori
+      </div>
 
-    <div v-else class="space-y-2">
-      <div 
-        v-for="cat in filteredCategories" 
-        :key="cat.id" 
-        class="p-4 bg-white rounded-2xl border border-zinc-100 shadow-sm flex items-center justify-between"
-      >
-        <div class="flex items-center gap-3">
-          <div class="w-10 h-10 bg-zinc-100 text-zinc-900 rounded-xl flex items-center justify-center font-black text-sm">
-            {{ cat.name.charAt(0).toUpperCase() }}
+      <div v-else class="space-y-2">
+        <div 
+          v-for="cat in filteredCategories" 
+          :key="cat.id" 
+          class="p-4 bg-white rounded-2xl border border-zinc-100 shadow-sm flex items-center justify-between"
+        >
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 bg-zinc-100 text-zinc-900 rounded-xl flex items-center justify-center font-black text-sm">
+              {{ cat.name.charAt(0).toUpperCase() }}
+            </div>
+            <div>
+              <div class="font-bold text-sm text-zinc-900">{{ cat.name }}</div>
+              <div class="text-[10px] text-zinc-400">ID: {{ cat.id.slice(0, 8) }}...</div>
+            </div>
           </div>
-          <div>
-            <div class="font-bold text-sm text-zinc-900">{{ cat.name }}</div>
-            <div class="text-[10px] text-zinc-400">ID: {{ cat.id.slice(0, 8) }}...</div>
-          </div>
-        </div>
 
-        <div class="flex items-center gap-1">
-          <button 
-            @click="openModal(cat)" 
-            class="p-2 text-zinc-600 hover:bg-zinc-100 rounded-xl transition"
-          >
-            <Pencil class="w-4 h-4" />
-          </button>
-          <button 
-            @click="deleteCategory(cat)" 
-            class="p-2 text-red-500 hover:bg-red-50 rounded-xl transition"
-          >
-            <Trash2 class="w-4 h-4" />
-          </button>
+          <div class="flex items-center gap-1">
+            <button @click="openModal(cat)" class="p-2 text-zinc-600 hover:bg-zinc-100 rounded-xl transition">
+              <Pencil class="w-4 h-4" />
+            </button>
+            <button @click="deleteCategory(cat)" class="p-2 text-red-500 hover:bg-red-50 rounded-xl transition">
+              <Trash2 class="w-4 h-4" />
+            </button>
+          </div>
         </div>
       </div>
     </div>
 
-    <!-- Modal Form (Tambah / Edit) -->
+    <!-- TAB 2: SATUAN BARANG -->
+    <div v-if="activeTab === 'unit'">
+      <div v-if="filteredUnits.length === 0" class="py-12 text-center text-zinc-400 text-xs bg-white rounded-2xl border border-zinc-100">
+        Belum ada satuan kustom
+      </div>
+
+      <div v-else class="space-y-2">
+        <div 
+          v-for="u in filteredUnits" 
+          :key="u.id" 
+          class="p-4 bg-white rounded-2xl border border-zinc-100 shadow-sm flex items-center justify-between"
+        >
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 bg-amber-50 text-amber-700 border border-amber-100 rounded-xl flex items-center justify-center font-black text-xs uppercase">
+              {{ u.name.slice(0, 3) }}
+            </div>
+            <div>
+              <div class="font-bold text-sm text-zinc-900">{{ u.name }}</div>
+              <div class="text-[10px] text-zinc-400">Satuan Master</div>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-1">
+            <button @click="openModal(u)" class="p-2 text-zinc-600 hover:bg-zinc-100 rounded-xl transition">
+              <Pencil class="w-4 h-4" />
+            </button>
+            <button @click="handleDeleteUnit(u)" class="p-2 text-red-500 hover:bg-red-50 rounded-xl transition">
+              <Trash2 class="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal Form (Tambah / Edit Kategori atau Satuan) -->
     <div v-if="showModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl animate-in slide-in-from-bottom duration-200">
         <div class="flex justify-between items-center mb-4">
-          <h2 class="font-black text-base">{{ editingId ? 'Edit Kategori' : 'Tambah Kategori Baru' }}</h2>
+          <h2 class="font-black text-base">
+            {{ editingId ? 'Edit' : 'Tambah' }} {{ activeTab === 'category' ? 'Kategori' : 'Satuan' }} Baru
+          </h2>
           <button @click="showModal = false" class="p-2 bg-zinc-100 rounded-xl">
             <X class="w-4 h-4" />
           </button>
         </div>
 
-        <form @submit.prevent="saveCategory" class="space-y-4">
+        <form @submit.prevent="handleSubmit" class="space-y-4">
           <div>
-            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Nama Kategori *</label>
+            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">
+              Nama {{ activeTab === 'category' ? 'Kategori' : 'Satuan' }} *
+            </label>
             <input 
               v-model="formName" 
               ref="inputRef" 
-              placeholder="Contoh: Minuman, Sembako, Rokok..." 
+              :placeholder="activeTab === 'category' ? 'Contoh: Minuman, Sembako...' : 'Contoh: pcs, bungkus, renteng...'" 
               required 
               class="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900"
             />
           </div>
 
           <div class="flex gap-2 pt-2">
-            <button 
-              type="button" 
-              @click="showModal = false" 
-              class="flex-1 py-3 bg-zinc-100 font-bold text-xs rounded-xl"
-            >
+            <button type="button" @click="showModal = false" class="flex-1 py-3 bg-zinc-100 font-bold text-xs rounded-xl">
               Batal
             </button>
-            <button 
-              type="submit" 
-              class="flex-1 py-3 bg-zinc-900 text-white font-bold text-xs rounded-xl shadow-md"
-            >
+            <button type="submit" class="flex-1 py-3 bg-zinc-900 text-white font-bold text-xs rounded-xl shadow-md">
               {{ editingId ? 'Simpan' : 'Tambah' }}
             </button>
           </div>
@@ -2371,9 +3226,14 @@ import ProductForm from '../components/product/ProductForm.vue'
 </template>
 
 <script setup>
-import { onMounted } from 'vue'
+import { ref, computed, onMounted, nextTick } from 'vue'
 import { Plus, Search, Pencil, Trash2, X } from 'lucide-vue-next'
 import { useCategories } from '../composables/useCategories.js'
+import { unitRepo } from '../db/repositories/unitRepository.js'
+import { syncRealtime } from '../services/syncService.js'
+
+const activeTab = ref('category')
+const units = ref([])
 
 const {
   categories,
@@ -2384,13 +3244,67 @@ const {
   editingId,
   inputRef,
   loadCategories,
-  openModal,
+  openModal: openCatModal,
   saveCategory,
   deleteCategory
 } = useCategories()
 
+const filteredUnits = computed(() => {
+  const q = searchQuery.value.toLowerCase().trim()
+  if (!q) return units.value
+  return units.value.filter(u => u.name.toLowerCase().includes(q))
+})
+
+const loadUnits = async () => {
+  units.value = await unitRepo.getAll()
+}
+
+const openModal = (item = null) => {
+  if (activeTab.value === 'category') {
+    openCatModal(item)
+  } else {
+    if (item) {
+      editingId.value = item.id
+      formName.value = item.name
+    } else {
+      editingId.value = null
+      formName.value = ''
+    }
+    showModal.value = true
+    nextTick(() => inputRef.value?.focus())
+  }
+}
+
+const handleSubmit = async () => {
+  if (!formName.value.trim()) return
+
+  if (activeTab.value === 'category') {
+    await saveCategory()
+  } else {
+    if (editingId.value) {
+      await unitRepo.update(editingId.value, formName.value.trim())
+    } else {
+      await unitRepo.create(formName.value.trim())
+    }
+    showModal.value = false
+    formName.value = ''
+    editingId.value = null
+    await loadUnits()
+    syncRealtime.pushLocalToCloud()
+  }
+}
+
+const handleDeleteUnit = async (u) => {
+  if (confirm(`Hapus satuan "${u.name}"?`)) {
+    await unitRepo.delete(u.id)
+    await loadUnits()
+    syncRealtime.pushLocalToCloud()
+  }
+}
+
 onMounted(() => {
   loadCategories()
+  loadUnits()
 })
 </script>
 
@@ -2946,7 +3860,8 @@ export const productSchema = z.object({
   name: z.string().min(3, 'Nama minimal 3 huruf'),
   code: z.string().optional(),
   category: z.string().default('Umum'),
-  purchasePackName: z.string().optional(), // nama satuan: dus/slop
+  unit: z.string().default('pcs'),
+  purchasePackName: z.string().optional(), // nama satuan grosir: dus/slop
   packPrice: z.coerce.number().optional().default(0),
   packQty: z.coerce.number().optional().default(0),
   price_modal: z.coerce.number().min(1, 'Modal/pcs wajib'),
@@ -2954,6 +3869,7 @@ export const productSchema = z.object({
   qty: z.coerce.number().min(0).default(0),
   minStock: z.coerce.number().min(1).default(5)
 })
+
 ===== src/stores/productStore.js =====
 // src/stores/productStore.js
 import { defineStore } from 'pinia'

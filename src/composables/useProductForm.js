@@ -3,6 +3,7 @@ import { ref } from 'vue'
 import { useForm, useField } from 'vee-validate'
 import { productSchema } from '../schemas/product.schema.js'
 import { categoryRepo } from '../db/repositories/categoryRepository.js'
+import { unitRepo } from '../db/repositories/unitRepository.js'
 
 function toTypedSchema(zodSchema) {
   return {
@@ -18,6 +19,7 @@ function toTypedSchema(zodSchema) {
 
 export function useProductForm() {
   const categories = ref([])
+  const units = ref([])
 
   const { handleSubmit, errors, isSubmitting } = useForm({
     validationSchema: toTypedSchema(productSchema),
@@ -25,6 +27,7 @@ export function useProductForm() {
       name: '',
       code: '',
       category: 'Umum',
+      unit: '',
       purchasePackName: '',
       packPrice: '',
       packQty: '',
@@ -38,6 +41,7 @@ export function useProductForm() {
   const { value: name } = useField('name')
   const { value: code } = useField('code')
   const { value: category } = useField('category')
+  const { value: unit } = useField('unit')
   const { value: purchasePackName } = useField('purchasePackName')
   const { value: packPrice } = useField('packPrice')
   const { value: packQty } = useField('packQty')
@@ -50,10 +54,15 @@ export function useProductForm() {
     categories.value = await categoryRepo.getAll()
   }
 
+  const loadUnits = async () => {
+    units.value = await unitRepo.getAll()
+  }
+
   return {
     name,
     code,
     category,
+    unit,
     purchasePackName,
     packPrice,
     packQty,
@@ -62,7 +71,9 @@ export function useProductForm() {
     qty,
     minStock,
     categories,
+    units,
     loadCategories,
+    loadUnits,
     handleSubmit,
     errors,
     isSubmitting

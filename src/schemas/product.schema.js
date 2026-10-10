@@ -4,7 +4,8 @@ export const productSchema = z.object({
   name: z.string().min(3, 'Nama minimal 3 huruf'),
   code: z.string().optional(),
   category: z.string().default('Umum'),
-  purchasePackName: z.string().optional(), // nama satuan: dus/slop
+  unit: z.string().min(1, 'Satuan wajib dipilih'), // Validasi wajib diisi
+  purchasePackName: z.string().optional(),
   packPrice: z.coerce.number().optional().default(0),
   packQty: z.coerce.number().optional().default(0),
   price_modal: z.coerce.number().min(1, 'Modal/pcs wajib'),
