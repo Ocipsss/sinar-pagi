@@ -1,5 +1,290 @@
 ===== src/App.vue =====
 <template><router-view/></template>
+===== src/composables/useProductForm.js =====
+import { useForm, useField } from 'vee-validate'
+import { productSchema } from '../schemas/product.schema.js'
+
+function toTypedSchema(zodSchema) {
+  return {
+    parse(values) {
+      const r = zodSchema.safeParse(values)
+      if (r.success) return {}
+      const errs = {}
+      r.error.issues.forEach(i => { errs[i.path.join('.')] = i.message })
+      return errs
+    }
+  }
+}
+
+export function useProductForm() {
+  const { handleSubmit, errors, isSubmitting } = useForm({
+    validationSchema: toTypedSchema(productSchema),
+    initialValues: {
+      name: '',
+      code: '',
+      category: 'Umum',
+      purchasePackName: '',
+      packPrice: '',
+      packQty: '',
+      price_modal: '',
+      price_sell: '',
+      qty: '',
+      minStock: 5
+    }
+  })
+
+  const { value: name } = useField('name')
+  const { value: code } = useField('code')
+  const { value: purchasePackName } = useField('purchasePackName')
+  const { value: packPrice } = useField('packPrice')
+  const { value: packQty } = useField('packQty')
+  const { value: price_modal } = useField('price_modal')
+  const { value: price_sell } = useField('price_sell')
+  const { value: qty } = useField('qty')
+  const { value: minStock } = useField('minStock')
+
+  return { name, code, purchasePackName, packPrice, packQty, price_modal, price_sell, qty, minStock, handleSubmit, errors, isSubmitting }
+}
+===== src/composables/useProductCalculator.js =====
+import { computed } from 'vue'
+import { calcModalDariPack, calcMargin } from '../utils/calculator/product.js'
+
+export function useProductCalculator(packPriceRef, packQtyRef, priceSellRef = { value: 0 }) {
+  const modalPerPcs = computed(() =>
+    calcModalDariPack(packPriceRef.value, packQtyRef.value)
+  )
+  const marginPersen = computed(() =>
+    calcMargin(priceSellRef.value, modalPerPcs.value)
+  )
+  return { modalPerPcs, marginPersen }
+}
+===== src/composables/useProductScanner.js =====
+import { ref } from 'vue'
+import { Html5Qrcode } from 'html5-qrcode'
+
+export function useProductScanner() {
+  const isScanning = ref(false)
+  let qr = null
+
+  const start = async (onDetected) => {
+    isScanning.value = true
+    qr = new Html5Qrcode("reader")
+    await qr.start({ facingMode: "environment" }, { fps: 10, qrbox: 250 },
+      (decoded) => { onDetected(decoded); stop() }, null)
+  }
+  const stop = async () => { try{ await qr?.stop() }catch{} isScanning.value=false }
+
+  return { isScanning, start, stop }
+}
+===== src/composables/useRupiah.js =====
+import { computed } from 'vue'
+import { formatRp, formatRibuan, toNumber } from '../utils/formatters/currency.js'
+
+export function useRupiah(fieldRef, withPrefix = true) {
+  const display = computed(() => {
+    return withPrefix ? formatRp(fieldRef.value) : formatRibuan(fieldRef.value)
+  })
+
+  const onInput = (e) => {
+    const raw = toNumber(e.target.value)
+    fieldRef.value = raw
+    // paksa tampil Rp di input nya langsung
+    e.target.value = withPrefix ? formatRp(raw) : formatRibuan(raw)
+  }
+
+  return { display, onInput, toNumber, formatRp, formatRibuan }
+}
+===== src/composables/useHeaderAction.js =====
+import { ref } from 'vue'
+
+const headerAction = ref(null) // { label, icon, to, onClick }
+
+export function useHeaderAction() {
+  const setAction = (action) => {
+    headerAction.value = action
+  }
+  const clearAction = () => {
+    headerAction.value = null
+  }
+  return { headerAction, setAction, clearAction }
+}
+===== src/composables/useDashboard.js =====
+import { ref } from 'vue'
+import { dashboardService } from '../services/dashboardService.js'
+
+export function useDashboard() {
+  const stats = ref({ totalProducts:0, lowStock:0, trxHariIni:0, omzetHariIni:0, totalPiutang:0, memberBerutang:0 })
+  const lowProducts = ref([])
+  const chartRaw = ref([])
+  const loading = ref(true)
+
+  const load = async () => {
+    loading.value = true
+    const data = await dashboardService.getDashboardData()
+    stats.value = data.stats
+    lowProducts.value = data.tipis.slice(0,6)
+    chartRaw.value = data.chartRaw
+    loading.value = false
+  }
+
+  return { stats, lowProducts, chartRaw, loading, load }
+}
+===== src/composables/useKasir.js =====
+import { ref, computed } from 'vue'
+import { kasirService } from '../services/kasirService.js'
+import { formatRibuan } from '../utils/formatters/currency.js'
+
+export function useKasir() {
+  const products = ref([])
+  const members = ref([])
+  const q = ref('')
+  const memberQ = ref('')
+  const cart = ref([])
+  const paymentMethod = ref('CASH')
+  const selectedMember = ref(null)
+  const bayarNominal = ref(0)
+  const showSearch = ref(false)
+
+  const total = computed(() => cart.value.reduce((s, c) => s + c.price_sell * c.cartQty, 0))
+  const kembalian = computed(() => Math.max(0, (bayarNominal.value || 0) - total.value))
+  const kurangBayar = computed(() => Math.max(0, total.value - (bayarNominal.value || 0)))
+
+  const bayarDisplay = computed({
+    get: () => bayarNominal.value? formatRibuan(bayarNominal.value) : '',
+    set: (val) => {
+      const num = parseInt(String(val).replace(/\D/g, '') || '0', 10)
+      bayarNominal.value = num
+    }
+  })
+
+  const filteredProducts = computed(() => {
+    const qq = q.value.toLowerCase().trim()
+    if (!qq) return products.value.slice(0, 15)
+    return products.value.filter(p => p.name.toLowerCase().includes(qq) || (p.code || '').toLowerCase().includes(qq)).slice(0, 20)
+  })
+
+  const filteredMembers = computed(() => {
+    const qq = memberQ.value.toLowerCase().trim()
+    if (!qq) return members.value.slice(0, 20)
+    return members.value.filter(m => m.name.toLowerCase().includes(qq) || (m.phone || '').includes(qq)).slice(0, 20)
+  })
+
+  const load = async () => {
+    const data = await kasirService.getInitialData()
+    products.value = data.products
+    members.value = data.members
+  }
+
+  const addToCart = (p) => {
+    const idx = cart.value.findIndex(c => c.id === p.id)
+    if (idx > -1) {
+      cart.value[idx].cartQty++
+      const item = cart.value.splice(idx, 1)[0]
+      cart.value.unshift(item)
+    } else {
+      cart.value.unshift({...p, cartQty: 1 })
+    }
+    q.value = ''
+    showSearch.value = false
+  }
+
+  const inc = (i) => {
+    cart.value[i].cartQty++
+  }
+
+  const dec = (i) => {
+    cart.value[i].cartQty--
+    if (cart.value[i].cartQty <= 0) cart.value.splice(i, 1)
+  }
+
+  const checkout = async () => {
+    if (paymentMethod.value === 'TEMPO' &&!selectedMember.value) throw new Error('Pilih member untuk TEMPO')
+    if (paymentMethod.value === 'CASH' && bayarNominal.value < total.value) throw new Error('Nominal kurang')
+
+    const res = await kasirService.checkout({
+      cart: cart.value,
+      member: selectedMember.value,
+      paymentMethod: paymentMethod.value,
+      amountPaid: paymentMethod.value === 'TEMPO'? 0 : paymentMethod.value === 'QRIS'? total.value : bayarNominal.value
+    })
+    cart.value = []
+    bayarNominal.value = 0
+    return res
+  }
+
+  return {
+    q, memberQ, products, filteredProducts, filteredMembers,
+    cart, total, kembalian, kurangBayar, bayarNominal, bayarDisplay,
+    paymentMethod, selectedMember, showSearch,
+    load, addToCart, inc, dec, checkout
+  }
+}
+===== src/utils/formatters/currency.js =====
+export const toNumber = (v) => Number(String(v?? '').replace(/[^0-9]/g, '')) || 0
+
+export const formatRp = (v) => {
+  const n = toNumber(v)
+  if (!n) return ''
+  return `Rp ${n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.')}`
+}
+
+export const formatRibuan = (v) => {
+  const n = toNumber(v)
+  if (!n) return ''
+  return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.')
+}
+===== src/utils/calculator/product.js =====
+import Big from 'big.js'
+
+// Helper buat ubah "12.000" atau "Rp 1.250.000" jadi 12000
+const toNumber = (v) => {
+  if (typeof v === 'number') return v
+  if (!v) return 0
+  const cleaned = String(v).replace(/[^0-9]/g, '') // hapus titik, koma, Rp
+  return Number(cleaned) || 0
+}
+
+export const calcModalDariPack = (packPrice, packQty) => {
+  const price = toNumber(packPrice)
+  const qty = toNumber(packQty)
+  if (!price || !qty) return 0
+  try {
+    return Number(Big(price).div(qty).round(0))
+  } catch { return 0 }
+}
+
+export const calcMargin = (jual, modal) => {
+  const j = toNumber(jual)
+  const m = toNumber(modal)
+  if (!m || !j) return 0
+  try {
+    return Number(Big(j).minus(m).div(m).times(100).round(0))
+  } catch { return 0 }
+}
+
+export const getBarangTipis = (products) =>
+  products.filter(p => (p.qty || 0) <= (p.minStock || 5))
+===== src/main.js =====
+import { createApp } from 'vue'
+import { createPinia } from 'pinia'
+import piniaPluginPersistedstate from 'pinia-plugin-persistedstate'
+import './style.css'
+import App from './App.vue'
+import { router } from './router/index.js'
+import { syncRealtime as syncService } from './services/syncService.js'
+
+const app = createApp(App)
+const pinia = createPinia()
+pinia.use(piniaPluginPersistedstate)
+app.use(pinia)
+app.use(router)
+app.mount('#app')
+
+try { syncService.init() } catch (e) {
+  console.error('Sync gagal init, jalan offline dulu:', e)
+}
+===== src/style.css =====
+@import "tailwindcss";
 ===== src/db/index.js =====
 import Dexie from 'dexie'
 
@@ -51,73 +336,20 @@ export const productRepo = {
     synced: 0
   })
 }
-===== src/layouts/MainLayout.vue =====
-<template>
-<div class="min-h-screen bg-zinc-50">
-  <header class="sticky top-0 bg-white border-b px-4 py-3 flex justify-between items-center">
-    <div class="font-black tracking-tight">SINAR PAGI</div>
-    <router-link to="/add-products" class="bg-zinc-900 text-white px-3 py-1.5 rounded-xl text-xs font-bold">+ Barang</router-link>
-  </header>
-  <main class="max-w-xl mx-auto">
-    <router-view />
-  </main>
-  <nav class="fixed bottom-0 left-0 right-0 bg-white border-t flex justify-around p-2 pb-6 max-w-xl mx-auto">
-    <router-link to="/products" class="text-xs font-bold px-4 py-2 rounded-xl" active-class="bg-zinc-900 text-white">Barang</router-link>
-    <router-link to="/kasir" class="text-xs font-bold px-4 py-2 rounded-xl text-zinc-400">Kasir</router-link>
-    <router-link to="/shopping" class="text-xs font-bold px-4 py-2 rounded-xl text-zinc-400">Belanja</router-link>
-  </nav>
-</div>
-</template>
-===== src/main.js =====
-import { createApp } from 'vue'
-import { createPinia } from 'pinia'
-import piniaPluginPersistedstate from 'pinia-plugin-persistedstate'
-import './style.css'
-import App from './App.vue'
-import { router } from './router/index.js'
-import { syncRealtime as syncService } from './services/syncService.js'
-
-const app = createApp(App)
-const pinia = createPinia()
-pinia.use(piniaPluginPersistedstate)
-app.use(pinia)
-app.use(router)
-app.mount('#app')
-
-try { syncService.init() } catch (e) {
-  console.error('Sync gagal init, jalan offline dulu:', e)
+===== src/db/repositories/transactionRepository.js =====
+import { db } from '../index.js'
+import dayjs from 'dayjs'
+export const transactionRepo = {
+  getAll: () => db.transactions.toArray(),
+  getToday: () => db.transactions.where('date').aboveOrEqual(dayjs().startOf('day').toISOString()).toArray(),
+  create: (data) => db.transactions.add(data),
 }
-===== src/router/index.js =====
-import { createRouter, createWebHistory } from 'vue-router'
-import MainLayout from '../layouts/MainLayout.vue'
-import ProductsList from '../views/ProductsList.vue'
-import ProductsAdd from '../views/ProductsAdd.vue'
-
-export const router = createRouter({
-  history: createWebHistory(),
-  routes: [
-    {
-      path: '/',
-      component: MainLayout,
-      children: [
-        { path: '', redirect: '/products' },
-        { 
-          path: 'products', 
-          name: 'ProductsList',
-          component: ProductsList 
-        },
-        { 
-          path: 'add-products', 
-          name: 'ProductsAdd',
-          component: ProductsAdd 
-        },
-        // placeholder buat sesi v.2 nanti
-        { path: 'kasir', name: 'Kasir', component: () => import('../views/Kasir.vue') },
-        { path: 'shopping', name: 'Shopping', component: () => import('../views/Shopping.vue') }
-      ]
-    }
-  ]
-})
+===== src/db/repositories/memberRepository.js =====
+import { db } from '../index.js'
+export const memberRepo = {
+  getAll: () => db.members.toArray(),
+  getById: (id) => db.members.get(id),
+}
 ===== src/services/firebase.js =====
 import { initializeApp } from 'firebase/app'
 import { getFirestore } from 'firebase/firestore'
@@ -343,223 +575,93 @@ export const productService = {
     })
   }
 }
-===== src/stores/productStore.js =====
-import { defineStore } from 'pinia'
-import { productRepo } from '../db/repositories/productRepository.js'
+===== src/services/kasirService.js =====
+import { db } from '../db/index.js'
+import dayjs from 'dayjs'
 
-export const useProductsStore = defineStore('products', {
-  state: () => ({ list: [], loading: false }),
-  actions: {
-    async fetch() { this.loading=true; this.list = await productRepo.getAll(); this.loading=false },
-    async add(payload) { await productRepo.create(payload); await this.fetch() }
+export const kasirService = {
+  async checkout({ cart, member, paymentMethod }) {
+    const now = dayjs().toISOString()
+    const id = crypto.randomUUID()
+    const total = cart.reduce((s,c)=> s + (c.price_sell * c.cartQty), 0)
+    const isTempo = paymentMethod === 'TEMPO'
+
+    if(isTempo &&!member) throw new Error('Member wajib untuk TEMPO')
+
+    await db.transactions.add({
+      id, date: now, total, memberId: member?.id || null,
+      paymentMethod, amountPaid: isTempo?0:total, paidAmount: isTempo?0:total,
+      remaining: isTempo?total:0, status: isTempo?'unpaid':'paid',
+      dueDate: isTempo? dayjs().add(7,'day').toISOString():null,
+      updatedAt: now, synced: 0
+    })
+
+    for(const c of cart){
+      await db.transaction_items.add({
+        id: crypto.randomUUID(), transactionId: id, productId: c.id,
+        serviceId: null, qty: c.cartQty, price: c.price_sell,
+        subtotal: c.price_sell * c.cartQty, updatedAt: now, synced:0
+      })
+      await db.products.update(c.id, { qty: (c.qty||0) - c.cartQty, updatedAt: now, synced:0 })
+    }
+
+    if(isTempo){
+      await db.members.update(member.id, { debt: (member.debt||0)+total, updatedAt: now, synced:0 })
+    }
+
+    return { id, total }
   },
-  persist: true
-})
-===== src/style.css =====
-@import "tailwindcss";
-===== src/views/Dashboard.vue =====
 
-===== src/views/Expenses.vue =====
-
-===== src/views/Kasir.vue =====
-
-===== src/views/Members.vue =====
-
-===== src/views/Operators.vue =====
-
-===== src/views/ProductsAdd.vue =====
-<template>
-  <div class="max-w-xl mx-auto p-4 pb-24">
-    <ProductForm />
-  </div>
-</template>
-<script setup>
-import ProductForm from '../components/product/ProductForm.vue'
-</script>
-===== src/views/ProductsDigital.vue =====
-
-===== src/views/ProductsList.vue =====
-<template>
-<div class="max-w-xl mx-auto p-4 pb-24">
-  <h1 class="font-black text-xl mb-4">Daftar Barang ({{store.list.length}})</h1>
-  <input v-model="q" placeholder="Cari..." class="w-full px-4 py-3 bg-white border rounded-2xl mb-4 text-sm"/>
-  <div v-for="p in filtered" :key="p.id" class="p-4 bg-white rounded-2xl border mb-2 flex justify-between">
-    <div>
-      <div class="font-bold text-sm">{{p.name}}</div>
-      <div class="text-[11px] text-zinc-400">{{p.code}} | Stok {{p.qty}} | Modal Rp {{p.price_modal}}</div>
-    </div>
-    <span v-if="p.qty <= p.minStock" class="text-[10px] bg-red-100 text-red-600 px-2 py-1 rounded-full h-fit">TIPIS</span>
-  </div>
-</div>
-</template>
-<script setup>
-import { ref, computed, onMounted } from 'vue'
-import { useProductsStore } from '../stores/productStore.js'
-const store = useProductsStore()
-const q = ref('')
-const filtered = computed(()=> store.list.filter(p=> p.name.toLowerCase().includes(q.value.toLowerCase())))
-onMounted(()=> store.fetch())
-</script>
-===== src/views/Reports.vue =====
-
-===== src/views/Settings.vue =====
-
-===== src/views/Shopping.vue =====
-
-===== src/composables/useProductScanner.js =====
-import { ref } from 'vue'
-import { Html5Qrcode } from 'html5-qrcode'
-
-export function useProductScanner() {
-  const isScanning = ref(false)
-  let qr = null
-
-  const start = async (onDetected) => {
-    isScanning.value = true
-    qr = new Html5Qrcode("reader")
-    await qr.start({ facingMode: "environment" }, { fps: 10, qrbox: 250 },
-      (decoded) => { onDetected(decoded); stop() }, null)
+  async getInitialData() {
+    const [products, members] = await Promise.all([db.products.toArray(), db.members.toArray()])
+    return { products, members }
   }
-  const stop = async () => { try{ await qr?.stop() }catch{} isScanning.value=false }
-
-  return { isScanning, start, stop }
 }
-===== src/composables/useProductForm.js =====
-import { useForm, useField } from 'vee-validate'
-import { productSchema } from '../schemas/product.schema.js'
+===== src/services/dashboardService.js =====
+import { productRepo } from '../db/repositories/productRepository.js'
+import { transactionRepo } from '../db/repositories/transactionRepository.js'
+import { memberRepo } from '../db/repositories/memberRepository.js'
+import { getBarangTipis } from '../utils/calculator/product.js'
+import dayjs from 'dayjs'
 
-function toTypedSchema(zodSchema) {
-  return {
-    parse(values) {
-      const r = zodSchema.safeParse(values)
-      if (r.success) return {}
-      const errs = {}
-      r.error.issues.forEach(i => { errs[i.path.join('.')] = i.message })
-      return errs
+export const dashboardService = {
+  async getDashboardData() {
+    const [products, transactions, members] = await Promise.all([
+      productRepo.getAll(),
+      transactionRepo.getAll(),
+      memberRepo.getAll()
+    ])
+
+    const tipis = getBarangTipis(products)
+    const startToday = dayjs().startOf('day').toISOString()
+    const trxToday = transactions.filter(t => t.date >= startToday)
+
+    const days = Array.from({length:7}, (_,i) => dayjs().subtract(6-i,'day'))
+    const chartRaw = days.map(d => {
+      const start = d.startOf('day').toISOString()
+      const end = d.endOf('day').toISOString()
+      const total = transactions.filter(t=> t.date>=start && t.date<=end).reduce((s,t)=>s+(t.total||0),0)
+      return { label: d.format('DD MMM'), value: total, date: d }
+    })
+
+    return {
+      products,
+      tipis,
+      trxToday,
+      transactions,
+      members,
+      stats: {
+        totalProducts: products.length,
+        lowStock: tipis.length,
+        trxHariIni: trxToday.length,
+        omzetHariIni: trxToday.reduce((s,t)=>s+(t.total||0),0),
+        totalPiutang: transactions.filter(t=>(t.remaining||0)>0).reduce((s,t)=>s+t.remaining,0),
+        memberBerutang: members.filter(m=>(m.debt||0)>0).length
+      },
+      chartRaw
     }
   }
 }
-
-export function useProductForm() {
-  const { handleSubmit, errors, isSubmitting } = useForm({
-    validationSchema: toTypedSchema(productSchema),
-    initialValues: {
-      name: '',
-      code: '',
-      category: 'Umum',
-      purchasePackName: '',
-      packPrice: '',
-      packQty: '',
-      price_modal: '',
-      price_sell: '',
-      qty: '',
-      minStock: 5
-    }
-  })
-
-  const { value: name } = useField('name')
-  const { value: code } = useField('code')
-  const { value: purchasePackName } = useField('purchasePackName')
-  const { value: packPrice } = useField('packPrice')
-  const { value: packQty } = useField('packQty')
-  const { value: price_modal } = useField('price_modal')
-  const { value: price_sell } = useField('price_sell')
-  const { value: qty } = useField('qty')
-  const { value: minStock } = useField('minStock')
-
-  return { name, code, purchasePackName, packPrice, packQty, price_modal, price_sell, qty, minStock, handleSubmit, errors, isSubmitting }
-}
-===== src/composables/useProductCalculator.js =====
-import { computed } from 'vue'
-import { calcModalDariPack, calcMargin } from '../utils/calculator/product.js'
-
-export function useProductCalculator(packPriceRef, packQtyRef, priceSellRef = { value: 0 }) {
-  const modalPerPcs = computed(() =>
-    calcModalDariPack(packPriceRef.value, packQtyRef.value)
-  )
-  const marginPersen = computed(() =>
-    calcMargin(priceSellRef.value, modalPerPcs.value)
-  )
-  return { modalPerPcs, marginPersen }
-}
-===== src/composables/useRupiah.js =====
-import { computed } from 'vue'
-import { formatRp, formatRibuan, toNumber } from '../utils/formatters/currency.js'
-
-export function useRupiah(fieldRef, withPrefix = true) {
-  const display = computed(() => {
-    return withPrefix ? formatRp(fieldRef.value) : formatRibuan(fieldRef.value)
-  })
-
-  const onInput = (e) => {
-    const raw = toNumber(e.target.value)
-    fieldRef.value = raw
-    // paksa tampil Rp di input nya langsung
-    e.target.value = withPrefix ? formatRp(raw) : formatRibuan(raw)
-  }
-
-  return { display, onInput, toNumber, formatRp, formatRibuan }
-}
-===== src/utils/calculator/product.js =====
-import Big from 'big.js'
-
-// Helper buat ubah "12.000" atau "Rp 1.250.000" jadi 12000
-const toNumber = (v) => {
-  if (typeof v === 'number') return v
-  if (!v) return 0
-  const cleaned = String(v).replace(/[^0-9]/g, '') // hapus titik, koma, Rp
-  return Number(cleaned) || 0
-}
-
-export const calcModalDariPack = (packPrice, packQty) => {
-  const price = toNumber(packPrice)
-  const qty = toNumber(packQty)
-  if (!price || !qty) return 0
-  try {
-    return Number(Big(price).div(qty).round(0))
-  } catch { return 0 }
-}
-
-export const calcMargin = (jual, modal) => {
-  const j = toNumber(jual)
-  const m = toNumber(modal)
-  if (!m || !j) return 0
-  try {
-    return Number(Big(j).minus(m).div(m).times(100).round(0))
-  } catch { return 0 }
-}
-
-export const getBarangTipis = (products) =>
-  products.filter(p => (p.qty || 0) <= (p.minStock || 5))
-===== src/utils/formatters/currency.js =====
-export const toNumber = (v) => Number(String(v?? '').replace(/[^0-9]/g, '')) || 0
-
-export const formatRp = (v) => {
-  const n = toNumber(v)
-  if (!n) return ''
-  return `Rp ${n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.')}`
-}
-
-export const formatRibuan = (v) => {
-  const n = toNumber(v)
-  if (!n) return ''
-  return n.toString().replace(/\B(?=(\d{3})+(?!\d))/g, '.')
-}
-===== src/schemas/product.schema.js =====
-import * as z from 'zod'
-
-export const productSchema = z.object({
-  name: z.string().min(3, 'Nama minimal 3 huruf'),
-  code: z.string().optional(),
-  category: z.string().default('Umum'),
-  purchasePackName: z.string().optional(), // nama satuan: dus/slop
-  packPrice: z.coerce.number().optional().default(0),
-  packQty: z.coerce.number().optional().default(0),
-  price_modal: z.coerce.number().min(1, 'Modal/pcs wajib'),
-  price_sell: z.coerce.number().min(1, 'Harga jual wajib'),
-  qty: z.coerce.number().min(0).default(0),
-  minStock: z.coerce.number().min(1).default(5)
-})
 ===== src/components/product/ProductForm.vue =====
 <template>
 <form @submit.prevent="onSubmit" class="bg-white p-5 rounded-3xl border flex flex-col gap-4 shadow-sm">
@@ -670,3 +772,333 @@ const onSubmit = handleSubmit(async (vals) => {
   router.push('/products')
 })
 </script>
+===== src/components/Sidebar.vue =====
+<script setup>
+import { X } from 'lucide-vue-next'
+defineProps({ groups: Array, activePage: String })
+defineEmits(['select-page','close'])
+</script>
+
+<template>
+<div class="h-full bg-zinc-900 text-white flex flex-col p-6">
+  <div class="flex justify-between items-center mb-8">
+    <span class="font-black text-lg tracking-tight">SINAR PAGI</span>
+    <button @click="$emit('close')" class="p-2 bg-zinc-800 rounded-xl"><X class="w-4 h-4"/></button>
+  </div>
+
+  <div v-for="group in groups" :key="group.title" class="mb-6">
+    <div class="text-[10px] font-black tracking-widest text-zinc-500 uppercase mb-3">{{ group.title }}</div>
+    <ul class="flex flex-col gap-1">
+      <li v-for="m in group.items" :key="m.name" @click="$emit('select-page', m)"
+        :class="['px-4 py-3 rounded-2xl text-sm font-bold flex items-center gap-3 cursor-pointer transition', activePage===m.name? 'bg-white text-zinc-900' : 'text-zinc-400 hover:bg-zinc-800 hover:text-white']">
+        <component :is="m.icon" class="w-4 h-4"/> <span>{{ m.name }}</span>
+      </li>
+    </ul>
+  </div>
+  <div class="mt-auto pt-6 border-t border-zinc-800 text-[10px] text-zinc-500 font-bold">Sesi v1.1</div>
+</div>
+</template>
+===== src/layouts/MainLayout.vue =====
+<template>
+<div class="min-h-screen bg-zinc-900 overflow-hidden">
+  <aside :class="['fixed top-0 left-0 h-full w-[280px] z-[60] transition-transform duration-300', isOpen? 'translate-x-0' : '-translate-x-full']">
+    <SidebarComponent :groups="groups" :activePage="activePage" @select-page="handleSelect" @close="isOpen=false" />
+  </aside>
+  <div v-if="isOpen" @click="isOpen=false" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50"></div>
+
+  <div :class="['min-h-screen bg-zinc-50 flex flex-col overflow-hidden transition-all duration-300', isOpen? 'translate-x-[280px] scale-[0.92] rounded-l-[2rem] shadow-[-20px_0_60px_rgba(0,0,0,0.35)] h-screen' : 'h-screen']">
+
+    <!-- HEADER FIXED GLOBAL -->
+    <header class="shrink-0 h-[56px] w-full bg-white border-b border-zinc-100 px-4 flex justify-between items-center z-40">
+      <button @click="isOpen=!isOpen" class="p-2.5 bg-zinc-900 text-white rounded-xl"><Menu v-if="!isOpen" class="w-5 h-5"/><X v-else class="w-5 h-5"/></button>
+      <div class="font-black text-sm">{{ activePage }}</div>
+      <router-link v-if="!isKasirPage" to="/kasir" class="p-2.5 bg-zinc-900 text-white rounded-xl"><Store class="w-5 h-5"/></router-link>
+      <button v-else @click="openMember" class="p-2.5 bg-zinc-900 text-white rounded-xl"><Users class="w-5 h-5"/></button>
+    </header>
+
+    <!-- MAIN - TIDAK BOLEH SCROLL, YANG SCROLL CUMA DALAM VIEW -->
+    <main class="flex-1 overflow-hidden flex flex-col max-w-xl mx-auto w-full">
+      <router-view />
+    </main>
+
+  </div>
+</div>
+</template>
+
+<script setup>
+import { ref, computed } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
+import { Menu, X, Package, Store, LayoutDashboard, Plus, Users, ShoppingCart } from 'lucide-vue-next'
+import SidebarComponent from '../components/Sidebar.vue'
+const isOpen = ref(false)
+const route = useRoute()
+const router = useRouter()
+const activePage = computed(() => route.meta.title || 'Barang')
+const isKasirPage = computed(() => route.path.startsWith('/kasir'))
+const groups = ref([
+  { title: 'MASTER DATA', items: [{ name: 'Dashboard', icon: LayoutDashboard, to: '/dashboard' },{ name: 'Barang', icon: Package, to: '/products' },{ name: 'Tambah Barang', icon: Plus, to: '/add-products' }]},
+  { title: 'TRANSAKSI', items: [{ name: 'Kasir', icon: Store, to: '/kasir' },{ name: 'Belanja', icon: ShoppingCart, to: '/shopping' }]}
+])
+const handleSelect = (m) => { isOpen.value=false; router.push(m.to) }
+const openMember = () => window.dispatchEvent(new CustomEvent('open-member-picker'))
+</script>
+===== src/views/Dashboard.vue =====
+<template>
+<div class="flex-1 overflow-auto p-4 space-y-4 pb-24">
+  <div class="bg-zinc-900 rounded-[2rem] p-6 text-white"><div class="text-[10px] font-black tracking-widest text-zinc-500 uppercase">Sinar Pagi • Dashboard</div><div class="text-xl font-black mt-1 capitalize">{{ today }}</div></div>
+  <div class="grid grid-cols-2 gap-3"><div class="bg-white rounded-[1.5rem] border p-4"><div class="text-[10px] text-zinc-400 font-black">Omzet Hari Ini</div><div class="font-black text-lg mt-1">Rp {{ formatRibuan(stats.omzetHariIni) }}</div></div><div class="bg-white rounded-[1.5rem] border p-4"><div class="text-[10px] text-zinc-400 font-black">Piutang</div><div class="font-black text-lg mt-1 text-amber-600">Rp {{ formatRibuan(stats.totalPiutang) }}</div></div></div>
+  <div class="bg-white rounded-[1.5rem] border p-5"><div class="font-black text-sm mb-4">Omzet 7 Hari</div><div class="h-[180px]"><Line v-if="chartReady" :data="chartData" :options="chartOptions"/></div></div>
+  <div class="bg-white rounded-[1.5rem] border p-5"><div class="font-black text-sm mb-3">Perlu Restock ({{ stats.lowStock }})</div><div v-for="p in lowProducts" :key="p.id" class="py-2 border-b last:border-0 flex justify-between"><span class="text-sm font-bold">{{ p.name }}</span><span class="text-xs">Sisa {{ p.qty }}</span></div></div>
+</div>
+</template>
+<script setup>
+import { ref, onMounted } from 'vue'
+import { Line } from 'vue-chartjs'
+import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler } from 'chart.js'
+import { useDashboard } from '../composables/useDashboard.js'
+import { formatRibuan } from '../utils/formatters/currency.js'
+ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler)
+const { stats, lowProducts, chartRaw, loading, load } = useDashboard()
+const today = new Date().toLocaleDateString('id-ID', { weekday:'long', day:'numeric', month:'long' })
+const chartReady = ref(false)
+const chartData = ref({ labels:[], datasets:[] })
+const chartOptions = { responsive:true, maintainAspectRatio:false, plugins:{legend:{display:false}}, scales:{y:{display:false}, x:{grid:{display:false}}} }
+onMounted(async ()=>{ await load(); chartData.value = { labels: chartRaw.value.map(c=>c.label), datasets: [{ data: chartRaw.value.map(c=>c.value), borderColor:'#18181b', backgroundColor:'rgba(24,24,27,0.1)', fill:true, tension:0.4 }] }; chartReady.value=true })
+</script>
+===== src/views/Kasir.vue =====
+<template>
+<div class="flex flex-col flex-1 h-full overflow-hidden">
+  <div class="p-4 shrink-0">
+    <div class="relative">
+      <div class="relative">
+        <Search class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400"/>
+        <input v-model="q" @focus="showSearch=true" placeholder="Ketik nama / barcode..." class="w-full pl-11 pr-11 py-4 bg-white border border-zinc-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"/>
+        <button v-if="q" @click="q=''" class="absolute right-3 top-1/2 -translate-y-1/2 p-2 bg-zinc-100 rounded-full"><X class="w-3 h-3"/></button>
+      </div>
+      <div v-if="showSearch && q.length>0" class="absolute z-30 w-full mt-2 bg-white border border-zinc-100 rounded-2xl shadow-xl max-h-[320px] overflow-auto">
+        <div v-if="filteredProducts.length===0" class="p-4 text-center text-xs text-zinc-400">Barang tidak ditemukan</div>
+        <div v-for="p in filteredProducts" :key="p.id" @click="addToCart(p)" class="p-4 border-b last:border-0 border-zinc-50 flex justify-between active:bg-zinc-50 cursor-pointer">
+          <div><div class="font-bold text-sm">{{ p.name }}</div><div class="text-[11px] text-zinc-500">Stok {{ p.qty }} • Rp {{ formatRibuan(p.price_sell) }}</div></div>
+          <div class="text-[10px] bg-zinc-900 text-white px-2.5 py-1 rounded-full h-fit font-black">+</div>
+        </div>
+      </div>
+    </div>
+    <div v-if="selectedMember" class="mt-3 text-[10px] bg-zinc-900 text-white px-2.5 py-1.5 rounded-full font-black w-fit flex items-center gap-2">
+      {{ selectedMember.name }} <button @click="selectedMember=null" class="bg-white/20 rounded-full w-4 h-4 flex items-center justify-center">✕</button>
+    </div>
+  </div>
+  <div class="flex-1 overflow-auto px-4 pb-4">
+    <div class="bg-white border border-zinc-100 rounded-[1.5rem] p-4">
+      <div class="font-black text-[10px] text-zinc-400 tracking-widest mb-3 uppercase">Keranjang • {{ cart.length }} item</div>
+      <div v-if="cart.length===0" class="py-24 text-center"><ShoppingBag class="w-8 h-8 text-zinc-300 mx-auto mb-2"/><div class="text-sm font-bold text-zinc-400">Kosong</div><div class="text-[11px] text-zinc-400">Ketik nama barang di atas</div></div>
+      <div v-else class="space-y-1">
+        <div v-for="(c,i) in cart" :key="c.id" class="flex gap-3 py-3 border-b border-zinc-50 last:border-0">
+          <div class="flex-1"><div class="font-bold text-[13px] leading-tight">{{ c.name }}</div><div class="text-[11px] text-zinc-500">Rp {{ formatRibuan(c.price_sell) }} x {{ c.cartQty }}</div></div>
+          <div class="flex items-center gap-2"><button @click="dec(i)" class="w-8 h-8 bg-zinc-100 rounded-full font-black">-</button><span class="w-6 text-center text-sm font-black">{{ c.cartQty }}</span><button @click="inc(i)" class="w-8 h-8 bg-zinc-900 text-white rounded-full font-black">+</button></div>
+          <div class="w-[80px] text-right font-black text-[13px]">Rp {{ formatRibuan(c.price_sell * c.cartQty) }}</div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div v-if="cart.length>0" class="shrink-0 bg-zinc-900 rounded-t-[2rem] p-5 pb-7 shadow-[0_-20px_60px_rgba(0,0,0,0.35)]">
+    <div class="w-10 h-1 bg-white/20 rounded-full mx-auto mb-4"></div>
+    <div class="grid grid-cols-3 gap-2 mb-4">
+      <button v-for="m in ['CASH','QRIS','TEMPO']" :key="m" @click="handleMethod(m)" :class="['py-2.5 rounded-xl text-[11px] font-black border transition', paymentMethod===m? 'bg-white text-zinc-900 border-white' : 'bg-zinc-800 border-zinc-700 text-zinc-400']">{{ m }}</button>
+    </div>
+    <div v-if="paymentMethod==='CASH'" class="space-y-3">
+      <div class="flex justify-between items-center"><span class="text-zinc-400 text-xs">Total</span><span class="font-black text-xl text-white">Rp {{ formatRibuan(total) }}</span></div>
+      <div class="relative"><span class="absolute left-4 top-1/2 -translate-y-1/2 font-black text-zinc-500 text-sm">Rp</span><input :value="bayarDisplay" @input="e => bayarDisplay = e.target.value" type="text" inputmode="numeric" placeholder="0" class="w-full pl-12 pr-4 py-3.5 bg-white text-zinc-900 rounded-2xl font-black text-lg focus:outline-none"/></div>
+      <button @click="bayarNominal=total" class="w-full py-2.5 bg-white/10 border border-white/10 text-white rounded-xl text-[11px] font-black">UANG PAS Rp {{ formatRibuan(total) }}</button>
+      <div v-if="bayarNominal>0" class="flex justify-between text-xs pt-2 border-t border-zinc-800"><span class="text-zinc-400">Kembalian</span><span :class="['font-black', kurangBayar>0?'text-red-400':'text-green-400']">{{ kurangBayar>0? `Kurang Rp ${formatRibuan(kurangBayar)}` : `Rp ${formatRibuan(kembalian)}` }}</span></div>
+    </div>
+    <div v-if="paymentMethod==='QRIS'" class="mb-4"><div class="flex justify-between items-center"><span class="text-zinc-400 text-xs">Total Bayar</span><span class="font-black text-xl text-white">Rp {{ formatRibuan(total) }}</span></div></div>
+    <div v-if="paymentMethod==='TEMPO'" class="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 text-[11px] font-black text-amber-400 mb-4">TEMPO → {{ selectedMember?.name || 'Pilih member' }}</div>
+    <button v-if="paymentMethod==='QRIS' || paymentMethod==='TEMPO' || (paymentMethod==='CASH' && bayarNominal>0)" :disabled="(paymentMethod==='CASH' && bayarNominal < total) || (paymentMethod==='TEMPO' &&!selectedMember)" @click="onCheckout" class="w-full bg-white disabled:bg-zinc-700 disabled:text-zinc-500 text-zinc-900 py-4 rounded-2xl font-black text-sm mt-2">{{ paymentMethod==='QRIS'? 'Bayar dengan QRIS' : `Bayar Rp ${formatRibuan(total)}` }}</button>
+  </div>
+</div>
+<div v-if="showMemberPicker" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end"><div class="w-full max-w-xl mx-auto bg-white rounded-t-[2rem] p-5 max-h-[80vh] flex flex-col"><div class="flex justify-between items-center mb-4"><div class="font-black text-sm">{{ paymentMethod==='TEMPO'? 'Wajib Pilih Member' : 'Pilih Member' }}</div><button @click="showMemberPicker=false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button></div><input v-model="memberQ" placeholder="Cari nama / hp..." class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm mb-3"/><div class="flex-1 overflow-auto"><div v-for="m in filteredMembers" :key="m.id" @click="selectMember(m)" class="p-3 border-b border-zinc-50 flex justify-between"><div><div class="font-bold text-sm">{{ m.name }}</div><div class="text-[11px] text-zinc-500">Utang Rp {{ formatRibuan(m.debt||0) }}</div></div><span class="text-xs font-black">Pilih</span></div></div></div></div>
+<div v-if="showSearch" @click="showSearch=false" class="fixed inset-0 z-20"></div>
+</template>
+<script setup>
+import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { Search, X, ShoppingBag } from 'lucide-vue-next'
+import { useKasir } from '../composables/useKasir.js'
+import { formatRibuan } from '../utils/formatters/currency.js'
+const { q, memberQ, filteredProducts, filteredMembers, cart, total, kembalian, kurangBayar, bayarNominal, bayarDisplay, paymentMethod, selectedMember, showSearch, load, addToCart, inc, dec, checkout } = useKasir()
+const showMemberPicker = ref(false)
+const handleMethod = (m) => { paymentMethod.value=m; if(m==='QRIS') bayarNominal.value=total.value; if(m==='TEMPO'&&!selectedMember.value) showMemberPicker.value=true }
+const selectMember = (m) => { selectedMember.value=m; showMemberPicker.value=false }
+const onCheckout = async () => { try{ await checkout(); alert('Berhasil') }catch(e){ alert(e.message) } }
+watch(total, t => { if(paymentMethod.value==='QRIS') bayarNominal.value=t })
+const openMemberHandler = () => showMemberPicker.value=true
+onMounted(()=>{ load(); window.addEventListener('open-member-picker', openMemberHandler) })
+onUnmounted(()=> window.removeEventListener('open-member-picker', openMemberHandler))
+</script>
+===== src/views/Members.vue =====
+
+===== src/views/Shopping.vue =====
+
+===== src/views/Reports.vue =====
+
+===== src/views/Expenses.vue =====
+
+===== src/views/ProductsList.vue =====
+<template>
+<div class="flex-1 overflow-auto p-4 pb-24">
+  <h1 class="font-black text-xl mb-4">Daftar Barang ({{store.list.length}})</h1>
+  <input v-model="q" placeholder="Cari..." class="w-full px-4 py-3 bg-white border rounded-2xl mb-4 text-sm"/>
+  <div v-for="p in filtered" :key="p.id" class="p-4 bg-white rounded-2xl border mb-2 flex justify-between">
+    <div><div class="font-bold text-sm">{{p.name}}</div><div class="text-[11px] text-zinc-400">{{p.code}} | Stok {{p.qty}}</div></div>
+    <span v-if="p.qty <= p.minStock" class="text-[10px] bg-red-100 text-red-600 px-2 py-1 rounded-full h-fit">TIPIS</span>
+  </div>
+</div>
+</template>
+<script setup>
+import { ref, computed, onMounted } from 'vue'
+import { useProductsStore } from '../stores/productStore.js'
+const store = useProductsStore()
+const q = ref('')
+const filtered = computed(()=> store.list.filter(p=> p.name.toLowerCase().includes(q.value.toLowerCase())))
+onMounted(()=> store.fetch())
+</script>
+===== src/views/ProductsAdd.vue =====
+<template>
+  <div class="flex-1 overflow-auto p-4 pb-24">
+    <ProductForm />
+  </div>
+</template>
+<script setup>
+import ProductForm from '../components/product/ProductForm.vue'
+</script>
+===== src/views/Operators.vue =====
+
+===== src/views/Settings.vue =====
+
+===== src/views/ProductsDigital.vue =====
+
+===== src/router/index.js =====
+import { createRouter, createWebHistory } from 'vue-router'
+import MainLayout from '../layouts/MainLayout.vue'
+import ProductsList from '../views/ProductsList.vue'
+import ProductsAdd from '../views/ProductsAdd.vue'
+
+export const router = createRouter({
+  history: createWebHistory(),
+  routes: [
+    {
+      path: '/',
+      component: MainLayout,
+      children: [
+        { path: '', redirect: '/products' },
+        { 
+          path: 'products', 
+          name: 'ProductsList',
+          component: ProductsList,
+          meta: { title: 'Barang' }
+        },
+        { 
+          path: 'add-products', 
+          name: 'ProductsAdd',
+          component: ProductsAdd,
+          meta: { title: 'Tambah Barang' }
+        },
+        { 
+          path: 'edit-product/:id', 
+          name: 'ProductsEdit',
+          component: ProductsAdd, // pakai form yang sama buat edit
+          meta: { title: 'Tambah Barang' }
+        },
+        { 
+          path: 'dashboard', 
+          name: 'Dashboard', 
+          component: () => import('../views/Dashboard.vue'),
+          meta: { title: 'Dashboard' }
+        },
+        { 
+          path: 'kasir', 
+          name: 'Kasir', 
+          component: () => import('../views/Kasir.vue'),
+          meta: { title: 'Kasir' }
+        },
+        { 
+          path: 'shopping', 
+          name: 'Shopping', 
+          component: () => import('../views/Shopping.vue'),
+          meta: { title: 'Belanja' }
+        },
+      ]
+    }
+  ]
+})
+===== src/schemas/product.schema.js =====
+import * as z from 'zod'
+
+export const productSchema = z.object({
+  name: z.string().min(3, 'Nama minimal 3 huruf'),
+  code: z.string().optional(),
+  category: z.string().default('Umum'),
+  purchasePackName: z.string().optional(), // nama satuan: dus/slop
+  packPrice: z.coerce.number().optional().default(0),
+  packQty: z.coerce.number().optional().default(0),
+  price_modal: z.coerce.number().min(1, 'Modal/pcs wajib'),
+  price_sell: z.coerce.number().min(1, 'Harga jual wajib'),
+  qty: z.coerce.number().min(0).default(0),
+  minStock: z.coerce.number().min(1).default(5)
+})
+===== src/stores/productStore.js =====
+import { defineStore } from 'pinia'
+import { productRepo } from '../db/repositories/productRepository.js'
+
+export const useProductsStore = defineStore('products', {
+  state: () => ({ list: [], loading: false }),
+  actions: {
+    async fetch() { this.loading=true; this.list = await productRepo.getAll(); this.loading=false },
+    async add(payload) { await productRepo.create(payload); await this.fetch() }
+  },
+  persist: true
+})
+===== src/package.json.txt =====
+{
+  "name": "sinar-pagi",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@headlessui/vue": "^1.7.23",
+    "big.js": "^7.0.1",
+    "bootstrap-icons": "^1.13.2",
+    "chart.js": "^4.5.1",
+    "dayjs": "^1.11.23",
+    "dexie": "^4.4.6",
+    "esc-pos-encoder": "^3.0.0",
+    "firebase": "^13.0.0",
+    "html5-qrcode": "^2.3.8",
+    "jspdf": "^4.2.1",
+    "lucide-vue-next": "^1.0.0",
+    "pinia": "^4.0.3",
+    "pinia-plugin-persistedstate": "^4.7.1",
+    "v-money3": "^3.26.1",
+    "vee-validate": "^4.15.1",
+    "vue": "^3.5.42",
+    "vue-chartjs": "^5.3.4",
+    "vue-router": "^5.4.0",
+    "vue-sonner": "^2.0.9",
+    "xlsx": "^0.18.5",
+    "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@vitejs/plugin-vue": "^6.0.8",
+    "autoprefixer": "^10.6.1",
+    "postcss": "^8.5.29",
+    "tailwindcss": "^4.3.3",
+    "vite": "^8.3.0",
+    "vite-plugin-pwa": "^2.0.0"
+  }
+}
+

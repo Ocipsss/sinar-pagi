@@ -14,16 +14,39 @@ export const router = createRouter({
         { 
           path: 'products', 
           name: 'ProductsList',
-          component: ProductsList 
+          component: ProductsList,
+          meta: { title: 'Barang' }
         },
         { 
           path: 'add-products', 
           name: 'ProductsAdd',
-          component: ProductsAdd 
+          component: ProductsAdd,
+          meta: { title: 'Tambah Barang' }
         },
-        // placeholder buat sesi v.2 nanti
-        { path: 'kasir', name: 'Kasir', component: () => import('../views/Kasir.vue') },
-        { path: 'shopping', name: 'Shopping', component: () => import('../views/Shopping.vue') }
+        { 
+          path: 'edit-product/:id', 
+          name: 'ProductsEdit',
+          component: ProductsAdd, // pakai form yang sama buat edit
+          meta: { title: 'Tambah Barang' }
+        },
+        { 
+          path: 'dashboard', 
+          name: 'Dashboard', 
+          component: () => import('../views/Dashboard.vue'),
+          meta: { title: 'Dashboard' }
+        },
+        { 
+          path: 'kasir', 
+          name: 'Kasir', 
+          component: () => import('../views/Kasir.vue'),
+          meta: { title: 'Kasir' }
+        },
+        { 
+          path: 'shopping', 
+          name: 'Shopping', 
+          component: () => import('../views/Shopping.vue'),
+          meta: { title: 'Belanja' }
+        },
       ]
     }
   ]

@@ -1,5 +1,5 @@
 <template>
-  <div class="max-w-xl mx-auto p-4 pb-24">
+  <div class="flex-1 overflow-auto p-4 pb-24">
     <ProductForm />
   </div>
 </template>
