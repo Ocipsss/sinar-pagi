@@ -31,6 +31,7 @@ db.version(1).stores({
   digital_transactions: 'id, date, type, provider, nominal, adminFee, adminPaymentMethod, totalReceived, profit, updatedAt, synced',
   services: 'id, name, price, updatedAt, synced',
   units: 'id, name, updatedAt, synced',
+  operators: 'id, name, role, pin, updatedAt, synced',
   settings: 'id'
 })
 

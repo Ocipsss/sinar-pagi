@@ -6,6 +6,8 @@ import CategoriesView from '../views/Categories.vue'
 import MembersView from '../views/Members.vue'
 import SalesHistoryView from '../views/SalesHistory.vue'
 import SettingsMenu from '../views/SettingsMenu.vue'
+import Operators from '../views/Operators.vue'
+import ProductsDigital from '../views/ProductsDigital.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -21,6 +23,12 @@ export const router = createRouter({
           component: ProductsList,
           meta: { title: 'Barang' }
         },
+        { 
+  path: 'operators', 
+  name: 'Operators',
+  component: () => import('../views/Operators.vue'),
+  meta: { title: 'Operator / Kasir' }
+},
         { 
           path: 'categories', 
           name: 'Categories',
@@ -51,6 +59,12 @@ export const router = createRouter({
           component: () => import('../views/Kasir.vue'),
           meta: { title: 'Kasir' }
         },
+        { 
+  path: 'digital', 
+  name: 'ProductsDigital',
+  component: () => import('../views/ProductsDigital.vue'),
+  meta: { title: 'Transaksi Digital' }
+},
         { 
           path: 'sales-history', 
           name: 'SalesHistory',

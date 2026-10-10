@@ -30,7 +30,7 @@ export function useProductForm() {
       name: '',
       code: '',
       category: 'Umum',
-      unit: 'pcs',
+      unit: '',
       purchasePackName: '',
       packPrice: '',
       packQty: '',
@@ -792,6 +792,188 @@ export function useShopping() {
     exportShoppingListText
   }
 }
+===== src/composables/useOperators.js =====
+// src/composables/useOperators.js
+import { ref, computed } from 'vue'
+import { operatorRepo } from '../db/repositories/operatorRepository.js'
+import { syncRealtime } from '../services/syncService.js'
+
+export function useOperators() {
+  const operators = ref([])
+  const searchQuery = ref('')
+  const showModal = ref(false)
+  const editingId = ref(null)
+  const form = ref({ name: '', role: 'Kasir', pin: '' })
+
+  const filteredOperators = computed(() => {
+    const q = searchQuery.value.toLowerCase().trim()
+    if (!q) return operators.value
+    return operators.value.filter(o => 
+      o.name.toLowerCase().includes(q) || 
+      (o.role || '').toLowerCase().includes(q)
+    )
+  })
+
+  const loadOperators = async () => {
+    operators.value = await operatorRepo.getAll()
+  }
+
+  const openModal = (op = null) => {
+    if (op) {
+      editingId.value = op.id
+      form.value = { name: op.name, role: op.role || 'Kasir', pin: op.pin || '' }
+    } else {
+      editingId.value = null
+      form.value = { name: '', role: 'Kasir', pin: '' }
+    }
+    showModal.value = true
+  }
+
+  const saveOperator = async () => {
+    if (!form.value.name.trim()) return
+
+    if (editingId.value) {
+      await operatorRepo.update(editingId.value, form.value)
+    } else {
+      await operatorRepo.create(form.value)
+    }
+
+    showModal.value = false
+    await loadOperators()
+    syncRealtime.pushLocalToCloud()
+  }
+
+  const deleteOperator = async (op) => {
+    if (confirm(`Hapus operator / kasir "${op.name}"?`)) {
+      await operatorRepo.delete(op.id)
+      await loadOperators()
+      syncRealtime.pushLocalToCloud()
+    }
+  }
+
+  return {
+    operators,
+    searchQuery,
+    filteredOperators,
+    showModal,
+    editingId,
+    form,
+    loadOperators,
+    openModal,
+    saveOperator,
+    deleteOperator
+  }
+}
+
+===== src/composables/useProductsDigital.js =====
+import { ref, computed } from 'vue'
+import { digitalTransactionRepo } from '../db/repositories/digitalTransactionRepository.js'
+import { syncRealtime } from '../services/syncService.js'
+
+export function useProductsDigital() {
+  const transactions = ref([])
+  const searchQuery = ref('')
+  const loading = ref(false)
+  const showModal = ref(false)
+
+  const form = ref({
+    type: 'PULSA',
+    provider: 'Telkomsel',
+    targetNumber: '',
+    nominal: 0,
+    costPrice: 0,
+    sellingPrice: 0,
+    adminFee: 0,
+    adminPaymentMethod: 'CASH',
+    status: 'SUCCESS'
+  })
+
+  const typeOptions = ['PULSA', 'PAKET DATA', 'PLN', 'E-WALLET', 'VOUCHER GAME', 'LAINNYA']
+  const paymentMethods = ['CASH', 'QRIS']
+
+  const loadTransactions = async () => {
+    loading.value = true
+    try {
+      transactions.value = await digitalTransactionRepo.getAll()
+    } finally {
+      loading.value = false
+    }
+  }
+
+  const filteredTransactions = computed(() => {
+    const q = searchQuery.value.toLowerCase().trim()
+    if (!q) return transactions.value
+    return transactions.value.filter(t => 
+      t.provider.toLowerCase().includes(q) || 
+      t.type.toLowerCase().includes(q) ||
+      (t.targetNumber || '').includes(q)
+    )
+  })
+
+  const totalOmzetHariIni = computed(() => {
+    const today = new Date().toISOString().slice(0, 10)
+    return transactions.value
+      .filter(t => t.date.startsWith(today))
+      .reduce((sum, t) => sum + (t.totalReceived || 0), 0)
+  })
+
+  const totalProfitHariIni = computed(() => {
+    const today = new Date().toISOString().slice(0, 10)
+    return transactions.value
+      .filter(t => t.date.startsWith(today))
+      .reduce((sum, t) => sum + (t.profit || 0), 0)
+  })
+
+  const openModal = () => {
+    form.value = {
+      type: 'PULSA',
+      provider: 'Telkomsel',
+      targetNumber: '',
+      nominal: 0,
+      costPrice: 0,
+      sellingPrice: 0,
+      adminFee: 0,
+      adminPaymentMethod: 'CASH',
+      status: 'SUCCESS'
+    }
+    showModal.value = true
+  }
+
+  const saveTransaction = async () => {
+    if (!form.value.provider || !form.value.sellingPrice) return
+
+    await digitalTransactionRepo.create(form.value)
+    showModal.value = false
+    await loadTransactions()
+    syncRealtime.pushLocalToCloud()
+  }
+
+  const deleteTransaction = async (t) => {
+    if (confirm(`Hapus catatan transaksi ${t.provider} - ${t.targetNumber}?`)) {
+      await digitalTransactionRepo.delete(t.id)
+      await loadTransactions()
+      syncRealtime.pushLocalToCloud()
+    }
+  }
+
+  return {
+    transactions,
+    searchQuery,
+    loading,
+    showModal,
+    form,
+    typeOptions,
+    paymentMethods,
+    filteredTransactions,
+    totalOmzetHariIni,
+    totalProfitHariIni,
+    loadTransactions,
+    openModal,
+    saveTransaction,
+    deleteTransaction
+  }
+}
+
 ===== src/utils/formatters/currency.js =====
 export const toNumber = (v) => Number(String(v?? '').replace(/[^0-9]/g, '')) || 0
 
@@ -892,6 +1074,7 @@ db.version(1).stores({
   digital_transactions: 'id, date, type, provider, nominal, adminFee, adminPaymentMethod, totalReceived, profit, updatedAt, synced',
   services: 'id, name, price, updatedAt, synced',
   units: 'id, name, updatedAt, synced',
+  operators: 'id, name, role, pin, updatedAt, synced',
   settings: 'id'
 })
 
@@ -1197,6 +1380,72 @@ export const shoppingRepository = {
     return ids.length
   }
 }
+===== src/db/repositories/operatorRepository.js =====
+// src/db/repositories/operatorRepository.js
+import { db } from '../index.js'
+import dayjs from 'dayjs'
+
+export const operatorRepo = {
+  getAll: () => (db.operators ? db.operators.toArray() : db.table('operators').toArray()),
+  getById: (id) => (db.operators ? db.operators.get(id) : db.table('operators').get(id)),
+  create: async (data) => {
+    const id = crypto.randomUUID()
+    const now = dayjs().toISOString()
+    const item = { 
+      id, 
+      name: data.name,
+      role: data.role || 'Kasir',
+      pin: data.pin || '',
+      updatedAt: now, 
+      synced: 0 
+    }
+    const table = db.operators || db.table('operators')
+    await table.add(item)
+    return id
+  },
+  update: async (id, data) => {
+    const now = dayjs().toISOString()
+    const table = db.operators || db.table('operators')
+    await table.update(id, { ...data, updatedAt: now, synced: 0 })
+  },
+  delete: (id) => (db.operators || db.table('operators')).delete(id)
+}
+
+===== src/db/repositories/digitalTransactionRepository.js =====
+import { db } from '../index.js'
+import dayjs from 'dayjs'
+
+export const digitalTransactionRepo = {
+  getAll: () => (db.digital_transactions ? db.digital_transactions.orderBy('date').reverse().toArray() : db.table('digital_transactions').orderBy('date').reverse().toArray()),
+  
+  create: async (data) => {
+    const id = crypto.randomUUID()
+    const now = dayjs().toISOString()
+    const item = {
+      id,
+      date: now,
+      type: data.type || 'PULSA',
+      provider: data.provider || '',
+      targetNumber: data.targetNumber || '',
+      nominal: Number(data.nominal) || 0,
+      costPrice: Number(data.costPrice) || 0,
+      sellingPrice: Number(data.sellingPrice) || 0,
+      adminFee: Number(data.adminFee) || 0,
+      adminPaymentMethod: data.adminPaymentMethod || 'CASH',
+      totalReceived: Number(data.sellingPrice || 0) + Number(data.adminFee || 0),
+      profit: (Number(data.sellingPrice || 0) + Number(data.adminFee || 0)) - Number(data.costPrice || 0),
+      status: data.status || 'SUCCESS',
+      updatedAt: now,
+      synced: 0
+    }
+    const table = db.digital_transactions || db.table('digital_transactions')
+    await table.add(item)
+    return id
+  },
+
+  delete: (id) => (db.digital_transactions || db.table('digital_transactions')).delete(id)
+}
+
 ===== src/services/firebase.js =====
 import { initializeApp } from 'firebase/app'
 import { getFirestore } from 'firebase/firestore'
@@ -1675,7 +1924,7 @@ export const shoppingService = {
   </div>
   <div id="reader" class="w-full rounded-xl overflow-hidden"></div>
 
-  <!-- Kategori & Satuan (Bersebelahan di Luar Grosir) -->
+  <!-- Kategori & Nama Satuan Utama -->
   <div class="grid grid-cols-2 gap-2">
     <div class="flex flex-col gap-1">
       <label class="text-[10px] text-zinc-500 font-bold uppercase">Kategori</label>
@@ -1688,50 +1937,58 @@ export const shoppingService = {
     </div>
 
     <div class="flex flex-col gap-1">
-      <label class="text-[10px] text-zinc-500 font-bold uppercase">Satuan Eceran *</label>
+      <label class="text-[10px] text-zinc-500 font-bold uppercase">Nama Satuan *</label>
       <select v-model="unit" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold">
-        <option value="pcs">pcs</option>
-        <option value="bungkus">bungkus</option>
-
-        <option value="renteng">renteng</option>
-        <option value="pack">pack</option>
-        <option value="botol">botol</option>
-        <option value="sachet">sachet</option>
+        <option value="" disabled>-- Pilih Satuan --</option>
         <option v-for="u in units" :key="u.id" :value="u.name">
           {{ u.name }}
         </option>
       </select>
+      <span v-if="errors.unit" class="text-[10px] text-red-500">{{ errors.unit }}</span>
     </div>
   </div>
 
   <!-- Kalkulator Grosir -->
   <div class="p-4 bg-blue-50 rounded-2xl border border-blue-100 flex flex-col gap-3">
     <div class="text-[10px] font-black text-blue-600 uppercase">Kalkulator Grosir</div>
+    
     <div class="grid grid-cols-3 gap-2">
       <div class="col-span-2 flex flex-col gap-1">
-        <label class="text-[10px] text-zinc-500">Harga Per Pak/Dus</label>
+        <label class="text-[10px] text-zinc-500 font-bold uppercase">Harga Kulakan</label>
         <input :value="formatRp(packPrice)" @input="onPackPriceInput" inputmode="numeric" placeholder="Rp 0" class="w-full px-3 py-2.5 bg-white border rounded-xl text-sm font-bold"/>
       </div>
       <div class="flex flex-col gap-1">
-        <label class="text-[10px] text-zinc-500">Isi / Pak</label>
+        <label class="text-[10px] text-zinc-500 font-bold uppercase">Isi / Pak</label>
         <input v-model.number="packQty" type="number" inputmode="numeric" placeholder="12" class="w-full px-3 py-2.5 bg-white border rounded-xl text-sm font-bold"/>
       </div>
     </div>
-    <div v-if="toNumber(packPrice) > 0" class="flex flex-col gap-1">
-      <input v-model="purchasePackName" placeholder="Nama kemasan grosir: dus, slop, bal..." class="px-3 py-2.5 bg-white border rounded-xl text-sm"/>
-      <div class="text-[11px] text-blue-600 bg-white p-2 rounded-xl border font-semibold">Auto modal / {{ unit || 'pcs' }}: {{ formatRp(autoModal) }}</div>
+
+    <div v-if="toNumber(packPrice) > 0" class="flex flex-col gap-2">
+      <div class="flex flex-col gap-1">
+        <label class="text-[10px] text-zinc-500 font-bold uppercase">Nama Satuan Grosir</label>
+        <select v-model="purchasePackName" class="px-3 py-2.5 bg-white border rounded-xl text-sm font-bold">
+          <option value="">-- Pilih Satuan Grosir --</option>
+          <option v-for="u in units" :key="u.id" :value="u.name">
+            {{ u.name }}
+          </option>
+        </select>
+      </div>
+
+      <div class="text-[11px] text-blue-600 bg-white p-2.5 rounded-xl border font-semibold">
+        Auto modal / {{ unit || 'satuan' }}: {{ formatRp(autoModal) }}
+      </div>
     </div>
   </div>
 
   <!-- Modal + Jual bersebelahan -->
   <div class="grid grid-cols-2 gap-2">
     <div class="flex flex-col gap-1">
-      <label class="text-[10px] text-zinc-500 font-bold uppercase">Modal / {{ unit || 'pcs' }} *</label>
+      <label class="text-[10px] text-zinc-500 font-bold uppercase">Modal / {{ unit || 'satuan' }} *</label>
       <input :value="formatRp(price_modal)" @input="onModalInput" inputmode="numeric" placeholder="Rp 0" class="w-full px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-sm font-bold"/>
       <span v-if="errors.price_modal" class="text-[10px] text-red-500">{{ errors.price_modal }}</span>
     </div>
     <div class="flex flex-col gap-1">
-      <label class="text-[10px] text-zinc-500 font-bold uppercase">Harga Jual / {{ unit || 'pcs' }} *</label>
+      <label class="text-[10px] text-zinc-500 font-bold uppercase">Harga Jual / {{ unit || 'satuan' }} *</label>
       <input :value="formatRp(price_sell)" @input="onJualInput" inputmode="numeric" placeholder="Rp 0" class="w-full px-3 py-2.5 bg-green-50 border border-green-200 rounded-xl text-sm font-bold"/>
       <span class="text-[10px] text-green-600 font-bold">Margin {{ marginPersen }}%</span>
     </div>
@@ -1740,7 +1997,7 @@ export const shoppingService = {
   <!-- Stok Awal + Min Stok bersebelahan -->
   <div class="grid grid-cols-2 gap-2">
     <div class="flex flex-col gap-1">
-      <label class="text-[10px] text-zinc-500 font-bold uppercase">Stok Awal ({{ unit || 'pcs' }})</label>
+      <label class="text-[10px] text-zinc-500 font-bold uppercase">Stok Awal ({{ unit || 'satuan' }})</label>
       <input v-model.number="qty" type="number" placeholder="0" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold"/>
     </div>
     <div class="flex flex-col gap-1">
@@ -1805,7 +2062,7 @@ const onSubmit = handleSubmit(async (vals) => {
     name: vals.name,
     code: vals.code || '',
     category: category.value || 'Umum',
-    unit: unit.value || 'pcs',
+    unit: unit.value || '',
     purchasePackName: purchasePackName.value || '',
     packPrice: toNumber(packPrice.value),
     packQty: toNumber(packQty.value),
@@ -1895,7 +2152,7 @@ defineEmits(['select-page','close'])
 <script setup>
 import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Menu, X, Package, Store, LayoutDashboard, Plus, Users, ShoppingCart, Tags, History, Coffee } from 'lucide-vue-next'
+import { Menu, X, Package, Store, LayoutDashboard, Plus, Users, ShoppingCart, Tags, History, Coffee,Smartphone } from 'lucide-vue-next'
 import SidebarComponent from '../components/Sidebar.vue'
 const isOpen = ref(false)
 const route = useRoute()
@@ -1912,6 +2169,7 @@ const groups = ref([
       { name: 'Atur Rokok & Seduh', icon: Coffee, to: '/settings-menu' },
       { name: 'Member', icon: Users, to: '/members' },
       { name: 'Tambah Barang', icon: Plus, to: '/add-products' },
+      { name: 'Operator', icon: Users, to: '/operators' },
       
     ]
   },
@@ -1919,6 +2177,7 @@ const groups = ref([
     title: 'TRANSAKSI', 
     items: [
       { name: 'Kasir', icon: Store, to: '/kasir' },
+      { name: 'Produk Digital', icon: Smartphone, to: '/digital' },
       { name: 'Riwayat Penjualan', icon: History, to: '/sales-history' },
       { name: 'Belanja', icon: ShoppingCart, to: '/shopping' }
     ]
@@ -3067,6 +3326,133 @@ onMounted(() => {
 import ProductForm from '../components/product/ProductForm.vue'
 </script>
 ===== src/views/Operators.vue =====
+<template>
+  <div class="flex-1 overflow-auto p-4 pb-24">
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-4">
+      <div>
+        <h1 class="font-black text-xl text-zinc-900">Data Operator & Kasir</h1>
+        <p class="text-xs text-zinc-400">Total {{ operators.length }} operator terdaftar</p>
+      </div>
+      <button 
+        @click="openModal()" 
+        class="bg-zinc-900 text-white px-4 py-2.5 rounded-2xl font-bold text-xs flex items-center gap-2 active:scale-95 transition shadow-sm"
+      >
+        <UserPlus class="w-4 h-4" /> Tambah
+      </button>
+    </div>
+
+    <!-- Search Bar -->
+    <div class="relative mb-4">
+      <Search class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+      <input 
+        v-model="searchQuery" 
+        placeholder="Cari nama operator atau peran..." 
+        class="w-full pl-11 pr-4 py-3 bg-white border border-zinc-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"
+      />
+    </div>
+
+    <!-- Empty State -->
+    <div v-if="filteredOperators.length === 0" class="py-12 text-center text-zinc-400 text-xs bg-white rounded-2xl border border-zinc-100">
+      Belum ada operator terdaftar
+    </div>
+
+    <!-- Daftar Operator Card -->
+    <div v-else class="space-y-3">
+      <div 
+        v-for="op in filteredOperators" 
+        :key="op.id" 
+        class="p-4 bg-white rounded-2xl border border-zinc-100 shadow-sm flex items-center justify-between"
+      >
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 bg-zinc-900 text-white rounded-xl flex items-center justify-center font-black text-sm shrink-0">
+            {{ op.name.charAt(0).toUpperCase() }}
+          </div>
+          <div>
+            <div class="font-bold text-sm text-zinc-900 flex items-center gap-2">
+              <span>{{ op.name }}</span>
+              <span class="px-2 py-0.5 bg-zinc-100 text-zinc-700 rounded-md text-[9px] font-black uppercase">
+                {{ op.role }}
+              </span>
+            </div>
+            <div class="text-[11px] text-zinc-400 mt-0.5">
+              PIN: {{ op.pin ? '••••' : 'Tanpa PIN' }}
+            </div>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-1">
+          <button @click="openModal(op)" class="p-2 text-zinc-600 hover:bg-zinc-100 rounded-xl transition">
+            <Pencil class="w-4 h-4" />
+          </button>
+          <button @click="deleteOperator(op)" class="p-2 text-red-500 hover:bg-red-50 rounded-xl transition">
+            <Trash2 class="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal Form (Tambah / Edit Operator) -->
+    <div v-if="showModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl animate-in slide-in-from-bottom duration-200">
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="font-black text-base">{{ editingId ? 'Edit Operator' : 'Tambah Operator Baru' }}</h2>
+          <button @click="showModal = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4" /></button>
+        </div>
+
+        <form @submit.prevent="saveOperator" class="space-y-3">
+          <div>
+            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Nama Operator / Kasir *</label>
+            <input v-model="form.name" required placeholder="Contoh: Kasir A, Budi" class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold" />
+          </div>
+
+          <div>
+            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Peran / Jabatan</label>
+            <select v-model="form.role" class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold">
+              <option value="Kasir">Kasir</option>
+              <option value="Admin">Admin / Owner</option>
+              <option value="Shift Pagi">Shift Pagi</option>
+              <option value="Shift Malam">Shift Malam</option>
+            </select>
+          </div>
+
+          <div>
+            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">PIN Otorisasi (Opsional)</label>
+            <input v-model="form.pin" type="password" maxlength="6" placeholder="Misal: 1234" class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold" />
+          </div>
+
+          <div class="flex gap-2 pt-2">
+            <button type="button" @click="showModal = false" class="flex-1 py-3 bg-zinc-100 font-bold text-xs rounded-xl">Batal</button>
+            <button type="submit" class="flex-1 py-3 bg-zinc-900 text-white font-bold text-xs rounded-xl shadow-md">{{ editingId ? 'Simpan' : 'Tambah' }}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { onMounted } from 'vue'
+import { UserPlus, Search, Pencil, Trash2, X } from 'lucide-vue-next'
+import { useOperators } from '../composables/useOperators.js'
+
+const {
+  operators,
+  searchQuery,
+  filteredOperators,
+  showModal,
+  editingId,
+  form,
+  loadOperators,
+  openModal,
+  saveOperator,
+  deleteOperator
+} = useOperators()
+
+onMounted(() => {
+  loadOperators()
+})
+</script>
 
 ===== src/views/Settings.vue =====
 
@@ -3493,6 +3879,211 @@ onMounted(() => {
 </script>
 
 ===== src/views/ProductsDigital.vue =====
+<template>
+  <div class="flex-1 overflow-auto p-4 pb-24 space-y-4">
+    <!-- Header -->
+    <div class="flex justify-between items-center">
+      <div>
+        <h1 class="font-black text-xl text-zinc-900">Transaksi Digital</h1>
+        <p class="text-xs text-zinc-400">Pulsa, PLN, E-Wallet & PPOB</p>
+      </div>
+      <button 
+        @click="openModal" 
+        class="bg-zinc-900 text-white px-4 py-2.5 rounded-2xl font-bold text-xs flex items-center gap-2 active:scale-95 transition shadow-sm"
+      >
+        <Plus class="w-4 h-4" /> Transaksi
+      </button>
+    </div>
+
+    <!-- Stats Ringkas -->
+    <div class="grid grid-cols-2 gap-3">
+      <div class="bg-white border border-zinc-100 p-3.5 rounded-2xl shadow-sm">
+        <div class="text-[10px] font-black text-zinc-400 uppercase">Omzet Digital Hari Ini</div>
+        <div class="text-base font-black text-zinc-900 mt-0.5">Rp {{ formatRibuan(totalOmzetHariIni) }}</div>
+      </div>
+      <div class="bg-emerald-50 border border-emerald-100 p-3.5 rounded-2xl shadow-sm">
+        <div class="text-[10px] font-black text-emerald-600 uppercase">Profit Digital Hari Ini</div>
+        <div class="text-base font-black text-emerald-700 mt-0.5">Rp {{ formatRibuan(totalProfitHariIni) }}</div>
+      </div>
+    </div>
+
+    <!-- Search Input -->
+    <div class="relative">
+      <Search class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+      <input 
+        v-model="searchQuery" 
+        placeholder="Cari provider / no tujuan..." 
+        class="w-full pl-11 pr-4 py-3 bg-white border border-zinc-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"
+      />
+    </div>
+
+    <!-- Empty State -->
+    <div v-if="filteredTransactions.length === 0" class="py-16 text-center text-zinc-400 text-xs bg-white rounded-3xl border border-zinc-100 p-6">
+      <Smartphone class="w-10 h-10 text-zinc-300 mx-auto mb-2" />
+      <div class="font-bold text-zinc-500 text-sm">Belum ada transaksi digital</div>
+      <p class="text-[11px] text-zinc-400 mt-1">Klik "+ Transaksi" untuk mencatat penjualan pulsa / PPOB baru</p>
+    </div>
+
+    <!-- Daftar Transaksi Digital -->
+    <div v-else class="space-y-2">
+      <div 
+        v-for="t in filteredTransactions" 
+        :key="t.id"
+        class="p-4 bg-white rounded-2xl border border-zinc-100 shadow-sm flex items-center justify-between gap-3"
+      >
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="px-2 py-0.5 bg-blue-50 text-blue-700 font-black text-[9px] rounded-md uppercase">
+              {{ t.type }}
+            </span>
+            <span class="font-bold text-sm text-zinc-900 truncate">{{ t.provider }}</span>
+          </div>
+          <div class="text-xs font-semibold text-zinc-600 mt-1">
+            {{ t.targetNumber || 'Tanpa No. Tujuan' }}
+          </div>
+          <div class="text-[10px] text-zinc-400 mt-0.5">
+            Modal: Rp {{ formatRibuan(t.costPrice) }} • Profit: <strong class="text-emerald-600">Rp {{ formatRibuan(t.profit) }}</strong>
+          </div>
+        </div>
+
+        <div class="text-right shrink-0">
+          <div class="text-xs font-black text-zinc-900">Rp {{ formatRibuan(t.totalReceived) }}</div>
+          <div class="text-[9px] text-zinc-400 font-bold uppercase mt-0.5">{{ t.adminPaymentMethod }}</div>
+          <button @click="deleteTransaction(t)" class="p-1 text-red-400 hover:text-red-600 mt-1">
+            <Trash2 class="w-3.5 h-3.5 ml-auto" />
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal Form Tambah Transaksi Digital -->
+    <div v-if="showModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl max-h-[85vh] flex flex-col animate-in slide-in-from-bottom duration-200">
+        <div class="flex justify-between items-center mb-4 shrink-0">
+          <div>
+            <h2 class="font-black text-base text-zinc-900">Catat Transaksi Digital</h2>
+            <p class="text-xs text-zinc-400">Pulsa, PLN, E-Wallet & PPOB</p>
+          </div>
+          <button @click="showModal = false" class="p-2 bg-zinc-100 rounded-xl">
+            <X class="w-4 h-4" />
+          </button>
+        </div>
+
+        <form @submit.prevent="saveTransaction" class="space-y-3 overflow-auto flex-1 pr-1">
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Jenis Produk</label>
+              <select v-model="form.type" class="w-full px-3 py-2.5 bg-zinc-50 border rounded-xl text-xs font-bold">
+                <option v-for="opt in typeOptions" :key="opt" :value="opt">{{ opt }}</option>
+              </select>
+            </div>
+
+            <div>
+              <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Provider / Produk *</label>
+              <input v-model="form.provider" required placeholder="Telkomsel, PLN, Dana" class="w-full px-3 py-2.5 bg-zinc-50 border rounded-xl text-xs font-bold" />
+            </div>
+          </div>
+
+          <div>
+            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">No. Tujuan / Pelanggan</label>
+            <input v-model="form.targetNumber" placeholder="0812xxx / ID Pelanggan" class="w-full px-4 py-2.5 bg-zinc-50 border rounded-xl text-xs font-bold" />
+          </div>
+
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Harga Modal Agen (Rp) *</label>
+              <input 
+                :value="formatRp(form.costPrice)" 
+                @input="e => form.costPrice = toNumber(e.target.value)" 
+                type="text" 
+                inputmode="numeric" 
+                required 
+                placeholder="Rp 0" 
+                class="w-full px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-xs font-black text-zinc-900" 
+              />
+            </div>
+
+            <div>
+              <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Harga Jual (Rp) *</label>
+              <input 
+                :value="formatRp(form.sellingPrice)" 
+                @input="e => form.sellingPrice = toNumber(e.target.value)" 
+                type="text" 
+                inputmode="numeric" 
+                required 
+                placeholder="Rp 0" 
+                class="w-full px-3 py-2.5 bg-green-50 border border-green-200 rounded-xl text-xs font-black text-zinc-900" 
+              />
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Biaya Admin (Rp)</label>
+              <input 
+                :value="formatRp(form.adminFee)" 
+                @input="e => form.adminFee = toNumber(e.target.value)" 
+                type="text" 
+                inputmode="numeric" 
+                placeholder="Rp 0" 
+                class="w-full px-3 py-2.5 bg-zinc-50 border rounded-xl text-xs font-bold" 
+              />
+            </div>
+
+            <div>
+              <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Pembayaran</label>
+              <select v-model="form.adminPaymentMethod" class="w-full px-3 py-2.5 bg-zinc-50 border rounded-xl text-xs font-bold">
+                <option v-for="m in paymentMethods" :key="m" :value="m">{{ m }}</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="bg-zinc-900 text-white p-3 rounded-xl text-xs space-y-1">
+            <div class="flex justify-between">
+              <span class="text-zinc-400">Total Diterima:</span>
+              <span class="font-black">Rp {{ formatRibuan((Number(form.sellingPrice) || 0) + (Number(form.adminFee) || 0)) }}</span>
+            </div>
+            <div class="flex justify-between text-emerald-400">
+              <span>Estimasi Profit:</span>
+              <span class="font-black">Rp {{ formatRibuan(((Number(form.sellingPrice) || 0) + (Number(form.adminFee) || 0)) - (Number(form.costPrice) || 0)) }}</span>
+            </div>
+          </div>
+
+          <div class="flex gap-2 pt-2">
+            <button type="button" @click="showModal = false" class="flex-1 py-3 bg-zinc-100 font-bold text-xs rounded-xl">Batal</button>
+            <button type="submit" class="flex-1 py-3 bg-zinc-900 text-white font-bold text-xs rounded-xl shadow-md">Simpan Transaksi</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { onMounted } from 'vue'
+import { Plus, Search, Trash2, X, Smartphone } from 'lucide-vue-next'
+import { formatRibuan, formatRp, toNumber } from '../utils/formatters/currency.js'
+import { useProductsDigital } from '../composables/useProductsDigital.js'
+
+const {
+  searchQuery,
+  showModal,
+  form,
+  typeOptions,
+  paymentMethods,
+  filteredTransactions,
+  totalOmzetHariIni,
+  totalProfitHariIni,
+  loadTransactions,
+  openModal,
+  saveTransaction,
+  deleteTransaction
+} = useProductsDigital()
+
+onMounted(() => {
+  loadTransactions()
+})
+</script>
 
 ===== src/views/SettingsMenu.vue =====
 <template>
@@ -3785,6 +4376,8 @@ import CategoriesView from '../views/Categories.vue'
 import MembersView from '../views/Members.vue'
 import SalesHistoryView from '../views/SalesHistory.vue'
 import SettingsMenu from '../views/SettingsMenu.vue'
+import Operators from '../views/Operators.vue'
+import ProductsDigital from '../views/ProductsDigital.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -3800,6 +4393,12 @@ export const router = createRouter({
           component: ProductsList,
           meta: { title: 'Barang' }
         },
+        { 
+  path: 'operators', 
+  name: 'Operators',
+  component: () => import('../views/Operators.vue'),
+  meta: { title: 'Operator / Kasir' }
+},
         { 
           path: 'categories', 
           name: 'Categories',
@@ -3831,6 +4430,12 @@ export const router = createRouter({
           meta: { title: 'Kasir' }
         },
         { 
+  path: 'digital', 
+  name: 'ProductsDigital',
+  component: () => import('../views/ProductsDigital.vue'),
+  meta: { title: 'Transaksi Digital' }
+},
+        { 
           path: 'sales-history', 
           name: 'SalesHistory',
           component: SalesHistoryView,
@@ -3860,8 +4465,8 @@ export const productSchema = z.object({
   name: z.string().min(3, 'Nama minimal 3 huruf'),
   code: z.string().optional(),
   category: z.string().default('Umum'),
-  unit: z.string().default('pcs'),
-  purchasePackName: z.string().optional(), // nama satuan grosir: dus/slop
+  unit: z.string().min(1, 'Satuan wajib dipilih'), // Validasi wajib diisi
+  purchasePackName: z.string().optional(),
   packPrice: z.coerce.number().optional().default(0),
   packQty: z.coerce.number().optional().default(0),
   price_modal: z.coerce.number().min(1, 'Modal/pcs wajib'),
