@@ -1,27 +1,25 @@
 import { ref, computed } from 'vue'
 import { kasirService } from '../services/kasirService.js'
 import { formatRibuan } from '../utils/formatters/currency.js'
+import { useKasirStore } from '../stores/kasirStore.js'
 
 export function useKasir() {
+  const store = useKasirStore()
   const products = ref([])
   const members = ref([])
   const q = ref('')
   const memberQ = ref('')
-  const cart = ref([])
-  const paymentMethod = ref('CASH')
-  const selectedMember = ref(null)
-  const bayarNominal = ref(0)
   const showSearch = ref(false)
 
-  const total = computed(() => cart.value.reduce((s, c) => s + c.price_sell * c.cartQty, 0))
-  const kembalian = computed(() => Math.max(0, (bayarNominal.value || 0) - total.value))
-  const kurangBayar = computed(() => Math.max(0, total.value - (bayarNominal.value || 0)))
+  const total = computed(() => store.cart.reduce((s, c) => s + c.price_sell * c.cartQty, 0))
+  const kembalian = computed(() => Math.max(0, (store.bayarNominal || 0) - total.value))
+  const kurangBayar = computed(() => Math.max(0, total.value - (store.bayarNominal || 0)))
 
   const bayarDisplay = computed({
-    get: () => bayarNominal.value? formatRibuan(bayarNominal.value) : '',
+    get: () => store.bayarNominal ? formatRibuan(store.bayarNominal) : '',
     set: (val) => {
       const num = parseInt(String(val).replace(/\D/g, '') || '0', 10)
-      bayarNominal.value = num
+      store.bayarNominal = num
     }
   })
 
@@ -44,46 +42,29 @@ export function useKasir() {
   }
 
   const addToCart = (p) => {
-    const idx = cart.value.findIndex(c => c.id === p.id)
-    if (idx > -1) {
-      cart.value[idx].cartQty++
-      const item = cart.value.splice(idx, 1)[0]
-      cart.value.unshift(item)
-    } else {
-      cart.value.unshift({...p, cartQty: 1 })
-    }
+    store.addToCart(p)
     q.value = ''
     showSearch.value = false
   }
 
-  const inc = (i) => {
-    cart.value[i].cartQty++
-  }
-
-  const dec = (i) => {
-    cart.value[i].cartQty--
-    if (cart.value[i].cartQty <= 0) cart.value.splice(i, 1)
-  }
-
   const checkout = async () => {
-    if (paymentMethod.value === 'TEMPO' &&!selectedMember.value) throw new Error('Pilih member untuk TEMPO')
-    if (paymentMethod.value === 'CASH' && bayarNominal.value < total.value) throw new Error('Nominal kurang')
+    if (store.paymentMethod === 'TEMPO' && !store.selectedMember) throw new Error('Pilih member untuk TEMPO')
+    if (store.paymentMethod === 'CASH' && store.bayarNominal < total.value) throw new Error('Nominal kurang')
 
     const res = await kasirService.checkout({
-      cart: cart.value,
-      member: selectedMember.value,
-      paymentMethod: paymentMethod.value,
-      amountPaid: paymentMethod.value === 'TEMPO'? 0 : paymentMethod.value === 'QRIS'? total.value : bayarNominal.value
+      cart: store.cart,
+      member: store.selectedMember,
+      paymentMethod: store.paymentMethod,
+      amountPaid: store.paymentMethod === 'TEMPO' ? 0 : store.paymentMethod === 'QRIS' ? total.value : store.bayarNominal
     })
-    cart.value = []
-    bayarNominal.value = 0
+    store.clearCart()
     return res
   }
 
   return {
+    store,
     q, memberQ, products, filteredProducts, filteredMembers,
-    cart, total, kembalian, kurangBayar, bayarNominal, bayarDisplay,
-    paymentMethod, selectedMember, showSearch,
-    load, addToCart, inc, dec, checkout
+    total, kembalian, kurangBayar, bayarDisplay, showSearch,
+    load, addToCart, checkout
   }
 }

@@ -3,6 +3,7 @@ import MainLayout from '../layouts/MainLayout.vue'
 import ProductsList from '../views/ProductsList.vue'
 import ProductsAdd from '../views/ProductsAdd.vue'
 import CategoriesView from '../views/Categories.vue'
+import MembersView from '../views/Members.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -42,6 +43,12 @@ export const router = createRouter({
           component: () => import('../views/Dashboard.vue'),
           meta: { title: 'Dashboard' }
         },
+        { 
+  path: 'members', 
+  name: 'Members',
+  component: MembersView,
+  meta: { title: 'Daftar Member' }
+},
         { 
           path: 'kasir', 
           name: 'Kasir', 

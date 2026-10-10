@@ -62,6 +62,7 @@ const groups = ref([
       { name: 'Dashboard', icon: LayoutDashboard, to: '/dashboard' },
       { name: 'Barang', icon: Package, to: '/products' },
       { name: 'Kategori', icon: Tags, to: '/categories' },
+      { name: 'Member', icon: Users, to: '/members' },
       { name: 'Tambah Barang', icon: Plus, to: '/add-products' }
     ]
   },

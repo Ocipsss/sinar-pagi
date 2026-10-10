@@ -35,6 +35,7 @@ export function useProductForm() {
 
   const { value: name } = useField('name')
   const { value: code } = useField('code')
+  const { value: category } = useField('category') // Tambahkan ini
   const { value: purchasePackName } = useField('purchasePackName')
   const { value: packPrice } = useField('packPrice')
   const { value: packQty } = useField('packQty')
@@ -43,8 +44,9 @@ export function useProductForm() {
   const { value: qty } = useField('qty')
   const { value: minStock } = useField('minStock')
 
-  return { name, code, purchasePackName, packPrice, packQty, price_modal, price_sell, qty, minStock, handleSubmit, errors, isSubmitting }
+  return { name, code, category, purchasePackName, packPrice, packQty, price_modal, price_sell, qty, minStock, handleSubmit, errors, isSubmitting }
 }
+
 ===== src/composables/useProductCalculator.js =====
 import { computed } from 'vue'
 import { calcModalDariPack, calcMargin } from '../utils/calculator/product.js'
@@ -133,27 +135,25 @@ export function useDashboard() {
 import { ref, computed } from 'vue'
 import { kasirService } from '../services/kasirService.js'
 import { formatRibuan } from '../utils/formatters/currency.js'
+import { useKasirStore } from '../stores/kasirStore.js'
 
 export function useKasir() {
+  const store = useKasirStore()
   const products = ref([])
   const members = ref([])
   const q = ref('')
   const memberQ = ref('')
-  const cart = ref([])
-  const paymentMethod = ref('CASH')
-  const selectedMember = ref(null)
-  const bayarNominal = ref(0)
   const showSearch = ref(false)
 
-  const total = computed(() => cart.value.reduce((s, c) => s + c.price_sell * c.cartQty, 0))
-  const kembalian = computed(() => Math.max(0, (bayarNominal.value || 0) - total.value))
-  const kurangBayar = computed(() => Math.max(0, total.value - (bayarNominal.value || 0)))
+  const total = computed(() => store.cart.reduce((s, c) => s + c.price_sell * c.cartQty, 0))
+  const kembalian = computed(() => Math.max(0, (store.bayarNominal || 0) - total.value))
+  const kurangBayar = computed(() => Math.max(0, total.value - (store.bayarNominal || 0)))
 
   const bayarDisplay = computed({
-    get: () => bayarNominal.value? formatRibuan(bayarNominal.value) : '',
+    get: () => store.bayarNominal ? formatRibuan(store.bayarNominal) : '',
     set: (val) => {
       const num = parseInt(String(val).replace(/\D/g, '') || '0', 10)
-      bayarNominal.value = num
+      store.bayarNominal = num
     }
   })
 
@@ -176,49 +176,33 @@ export function useKasir() {
   }
 
   const addToCart = (p) => {
-    const idx = cart.value.findIndex(c => c.id === p.id)
-    if (idx > -1) {
-      cart.value[idx].cartQty++
-      const item = cart.value.splice(idx, 1)[0]
-      cart.value.unshift(item)
-    } else {
-      cart.value.unshift({...p, cartQty: 1 })
-    }
+    store.addToCart(p)
     q.value = ''
     showSearch.value = false
   }
 
-  const inc = (i) => {
-    cart.value[i].cartQty++
-  }
-
-  const dec = (i) => {
-    cart.value[i].cartQty--
-    if (cart.value[i].cartQty <= 0) cart.value.splice(i, 1)
-  }
-
   const checkout = async () => {
-    if (paymentMethod.value === 'TEMPO' &&!selectedMember.value) throw new Error('Pilih member untuk TEMPO')
-    if (paymentMethod.value === 'CASH' && bayarNominal.value < total.value) throw new Error('Nominal kurang')
+    if (store.paymentMethod === 'TEMPO' && !store.selectedMember) throw new Error('Pilih member untuk TEMPO')
+    if (store.paymentMethod === 'CASH' && store.bayarNominal < total.value) throw new Error('Nominal kurang')
 
     const res = await kasirService.checkout({
-      cart: cart.value,
-      member: selectedMember.value,
-      paymentMethod: paymentMethod.value,
-      amountPaid: paymentMethod.value === 'TEMPO'? 0 : paymentMethod.value === 'QRIS'? total.value : bayarNominal.value
+      cart: store.cart,
+      member: store.selectedMember,
+      paymentMethod: store.paymentMethod,
+      amountPaid: store.paymentMethod === 'TEMPO' ? 0 : store.paymentMethod === 'QRIS' ? total.value : store.bayarNominal
     })
-    cart.value = []
-    bayarNominal.value = 0
+    store.clearCart()
     return res
   }
 
   return {
+    store,
     q, memberQ, products, filteredProducts, filteredMembers,
-    cart, total, kembalian, kurangBayar, bayarNominal, bayarDisplay,
-    paymentMethod, selectedMember, showSearch,
-    load, addToCart, inc, dec, checkout
+    total, kembalian, kurangBayar, bayarDisplay, showSearch,
+    load, addToCart, checkout
   }
 }
+
 ===== src/utils/formatters/currency.js =====
 export const toNumber = (v) => Number(String(v?? '').replace(/[^0-9]/g, '')) || 0
 
@@ -346,10 +330,71 @@ export const transactionRepo = {
 }
 ===== src/db/repositories/memberRepository.js =====
 import { db } from '../index.js'
+import dayjs from 'dayjs'
+
 export const memberRepo = {
   getAll: () => db.members.toArray(),
   getById: (id) => db.members.get(id),
+  
+  create: async (data) => {
+    const id = crypto.randomUUID()
+    const now = dayjs().toISOString()
+    await db.members.add({
+      id,
+      name: data.name,
+      phone: data.phone || '',
+      address: data.address || '',
+      total_spending: 0,
+      points: 0,
+      debt: 0,
+      updatedAt: now,
+      synced: 0
+    })
+    return id
+  },
+
+  update: async (id, data) => {
+    const now = dayjs().toISOString()
+    await db.members.update(id, {
+      ...data,
+      updatedAt: now,
+      synced: 0
+    })
+  },
+
+  delete: (id) => db.members.delete(id),
+
+  // Fungsi bayar cicilan utang
+  payDebt: async (memberId, amount, paymentMethod = 'CASH') => {
+    const now = dayjs().toISOString()
+    const member = await db.members.get(memberId)
+    if (!member) throw new Error('Member tidak ditemukan')
+
+    const newDebt = Math.max(0, (member.debt || 0) - amount)
+    
+    // Catat histori pembayaran utang
+    await db.debt_payments.add({
+      id: crypto.randomUUID(),
+      memberId,
+      transactionId: null,
+      date: now,
+      amount,
+      paymentMethod,
+      updatedAt: now,
+      synced: 0
+    })
+
+    // Update utang member
+    await db.members.update(memberId, {
+      debt: newDebt,
+      updatedAt: now,
+      synced: 0
+    })
+
+    return newDebt
+  }
 }
+
 ===== src/db/repositories/categoryRepository.js =====
 import { db } from '../index.js'
 import dayjs from 'dayjs'
@@ -612,30 +657,70 @@ export const kasirService = {
   async checkout({ cart, member, paymentMethod }) {
     const now = dayjs().toISOString()
     const id = crypto.randomUUID()
-    const total = cart.reduce((s,c)=> s + (c.price_sell * c.cartQty), 0)
+    const total = cart.reduce((s, c) => s + (c.price_sell * c.cartQty), 0)
     const isTempo = paymentMethod === 'TEMPO'
 
-    if(isTempo &&!member) throw new Error('Member wajib untuk TEMPO')
+    if (isTempo && !member) throw new Error('Member wajib untuk TEMPO')
+
+    let totalProfit = 0
 
     await db.transactions.add({
-      id, date: now, total, memberId: member?.id || null,
-      paymentMethod, amountPaid: isTempo?0:total, paidAmount: isTempo?0:total,
-      remaining: isTempo?total:0, status: isTempo?'unpaid':'paid',
-      dueDate: isTempo? dayjs().add(7,'day').toISOString():null,
-      updatedAt: now, synced: 0
+      id, 
+      date: now, 
+      total, 
+      memberId: member?.id || null,
+      paymentMethod, 
+      amountPaid: isTempo ? 0 : total, 
+      paidAmount: isTempo ? 0 : total,
+      remaining: isTempo ? total : 0, 
+      status: isTempo ? 'unpaid' : 'paid',
+      dueDate: isTempo ? dayjs().add(7, 'day').toISOString() : null,
+      updatedAt: now, 
+      synced: 0
     })
 
-    for(const c of cart){
+    for (const c of cart) {
+      const modal = c.price_modal || 0
+      const itemProfit = (c.price_sell - modal) * c.cartQty
+      totalProfit += Math.max(0, itemProfit)
+
       await db.transaction_items.add({
-        id: crypto.randomUUID(), transactionId: id, productId: c.id,
-        serviceId: null, qty: c.cartQty, price: c.price_sell,
-        subtotal: c.price_sell * c.cartQty, updatedAt: now, synced:0
+        id: crypto.randomUUID(), 
+        transactionId: id, 
+        productId: c.id,
+        serviceId: null, 
+        qty: c.cartQty, 
+        price: c.price_sell,
+        subtotal: c.price_sell * c.cartQty, 
+        updatedAt: now, 
+        synced: 0
       })
-      await db.products.update(c.id, { qty: (c.qty||0) - c.cartQty, updatedAt: now, synced:0 })
+
+      await db.products.update(c.id, { 
+        qty: (c.qty || 0) - c.cartQty, 
+        updatedAt: now, 
+        synced: 0 
+      })
     }
 
-    if(isTempo){
-      await db.members.update(member.id, { debt: (member.debt||0)+total, updatedAt: now, synced:0 })
+    // Jika transaksi dikaitkan ke Member:
+    if (member) {
+      const currentMember = await db.members.get(member.id)
+      if (currentMember) {
+        // Hitung poin: 1% dari total profit transaksi
+        const earnedPoints = Math.floor(totalProfit * 0.01)
+        const updatedPoints = (currentMember.points || 0) + earnedPoints
+        const updatedSpending = (currentMember.total_spending || 0) + total
+        const updatedDebt = isTempo ? (currentMember.debt || 0) + total : (currentMember.debt || 0)
+
+        await db.members.update(member.id, {
+          points: updatedPoints,
+          total_spending: updatedSpending,
+          debt: updatedDebt,
+          updatedAt: now,
+          synced: 0
+        })
+      }
     }
 
     return { id, total }
@@ -646,6 +731,7 @@ export const kasirService = {
     return { products, members }
   }
 }
+
 ===== src/services/dashboardService.js =====
 import { productRepo } from '../db/repositories/productRepository.js'
 import { transactionRepo } from '../db/repositories/transactionRepository.js'
@@ -705,6 +791,17 @@ export const dashboardService = {
   </div>
   <div id="reader" class="w-full rounded-xl overflow-hidden"></div>
 
+  <!-- Pilihan Kategori -->
+  <div class="flex flex-col gap-1">
+    <label class="text-[10px] text-zinc-500">Kategori</label>
+    <select v-model="category" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold">
+      <option value="Umum">Umum</option>
+      <option v-for="cat in categories" :key="cat.id" :value="cat.name">
+        {{ cat.name }}
+      </option>
+    </select>
+  </div>
+
   <!-- Kalkulator Grosir -->
   <div class="p-4 bg-blue-50 rounded-2xl border border-blue-100 flex flex-col gap-3">
     <div class="text-[10px] font-black text-blue-600 uppercase">Kalkulator Grosir</div>
@@ -755,7 +852,7 @@ export const dashboardService = {
 </template>
 
 <script setup>
-import { computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { ScanLine } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 import { useProductForm } from '../../composables/useProductForm.js'
@@ -763,15 +860,21 @@ import { useProductScanner } from '../../composables/useProductScanner.js'
 import { calcModalDariPack, calcMargin } from '../../utils/calculator/product.js'
 import { formatRp, toNumber } from '../../utils/formatters/currency.js'
 import { productService } from '../../services/productService.js'
+import { categoryRepo } from '../../db/repositories/categoryRepository.js'
 
-const { name, code, purchasePackName, packPrice, packQty, price_modal, price_sell, qty, minStock, handleSubmit, errors, isSubmitting } = useProductForm()
+const { name, code, category, purchasePackName, packPrice, packQty, price_modal, price_sell, qty, minStock, handleSubmit, errors, isSubmitting } = useProductForm()
 const { start } = useProductScanner()
 const router = useRouter()
+
+const categories = ref([])
 
 const autoModal = computed(() => calcModalDariPack(packPrice.value, packQty.value))
 const marginPersen = computed(() => calcMargin(price_sell.value, price_modal.value))
 
-// Input handler biar ada Rp + titik ribuan + gak jadi 010
+onMounted(async () => {
+  categories.value = await categoryRepo.getAll()
+})
+
 const onPackPriceInput = (e) => {
   const raw = toNumber(e.target.value)
   packPrice.value = raw
@@ -792,15 +895,22 @@ watch(autoModal, (val) => { if (val > 0) price_modal.value = val })
 
 const onSubmit = handleSubmit(async (vals) => {
   await productService.createProduct({
-    name: vals.name, code: vals.code || '', category: 'Umum',
+    name: vals.name,
+    code: vals.code || '',
+    category: category.value || 'Umum',
     purchasePackName: purchasePackName.value || '',
-    packPrice: toNumber(packPrice.value), packQty: toNumber(packQty.value),
-    price_modal: toNumber(price_modal.value), price_sell: toNumber(price_sell.value),
-    qty: toNumber(qty.value), minStock: toNumber(minStock.value) || 5, unit: 'pcs'
+    packPrice: toNumber(packPrice.value),
+    packQty: toNumber(packQty.value),
+    price_modal: toNumber(price_modal.value),
+    price_sell: toNumber(price_sell.value),
+    qty: toNumber(qty.value),
+    minStock: toNumber(minStock.value) || 5,
+    unit: 'pcs'
   }, toNumber(price_modal.value))
   router.push('/products')
 })
 </script>
+
 ===== src/components/Sidebar.vue =====
 <script setup>
 import { X } from 'lucide-vue-next'
@@ -892,6 +1002,7 @@ const groups = ref([
       { name: 'Dashboard', icon: LayoutDashboard, to: '/dashboard' },
       { name: 'Barang', icon: Package, to: '/products' },
       { name: 'Kategori', icon: Tags, to: '/categories' },
+      { name: 'Member', icon: Users, to: '/members' },
       { name: 'Tambah Barang', icon: Plus, to: '/add-products' }
     ]
   },
@@ -932,14 +1043,31 @@ onMounted(async ()=>{ await load(); chartData.value = { labels: chartRaw.value.m
 ===== src/views/Kasir.vue =====
 <template>
 <div class="flex flex-col flex-1 h-full overflow-hidden">
+  <!-- Search & Bar Atas -->
   <div class="p-4 shrink-0">
-    <div class="relative">
-      <div class="relative">
+    <div class="relative flex gap-2">
+      <div class="relative flex-1">
         <Search class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400"/>
         <input v-model="q" @focus="showSearch=true" placeholder="Ketik nama / barcode..." class="w-full pl-11 pr-11 py-4 bg-white border border-zinc-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"/>
         <button v-if="q" @click="q=''" class="absolute right-3 top-1/2 -translate-y-1/2 p-2 bg-zinc-100 rounded-full"><X class="w-3 h-3"/></button>
       </div>
-      <div v-if="showSearch && q.length>0" class="absolute z-30 w-full mt-2 bg-white border border-zinc-100 rounded-2xl shadow-xl max-h-[320px] overflow-auto">
+
+      <!-- Tombol Lihat Transaksi Tertunda (Pending) -->
+      <button 
+        @click="showPendingModal = true" 
+        class="relative px-4 bg-amber-500 text-white rounded-2xl font-bold text-xs flex items-center justify-center gap-1.5 shrink-0 active:scale-95 transition"
+      >
+        <Clock class="w-4 h-4"/>
+        <span class="hidden sm:inline">Pending</span>
+        <span v-if="store.pendingCarts.length > 0" class="absolute -top-1 -right-1 bg-red-600 text-white text-[10px] w-5 h-5 rounded-full flex items-center justify-center font-black border-2 border-white">
+          {{ store.pendingCarts.length }}
+        </span>
+      </button>
+    </div>
+
+    <!-- Dropdown Rekomendasi Barang -->
+    <div v-if="showSearch && q.length>0" class="relative">
+      <div class="absolute z-30 w-full mt-2 bg-white border border-zinc-100 rounded-2xl shadow-xl max-h-[320px] overflow-auto">
         <div v-if="filteredProducts.length===0" class="p-4 text-center text-xs text-zinc-400">Barang tidak ditemukan</div>
         <div v-for="p in filteredProducts" :key="p.id" @click="addToCart(p)" class="p-4 border-b last:border-0 border-zinc-50 flex justify-between active:bg-zinc-50 cursor-pointer">
           <div><div class="font-bold text-sm">{{ p.name }}</div><div class="text-[11px] text-zinc-500">Stok {{ p.qty }} • Rp {{ formatRibuan(p.price_sell) }}</div></div>
@@ -947,58 +1075,436 @@ onMounted(async ()=>{ await load(); chartData.value = { labels: chartRaw.value.m
         </div>
       </div>
     </div>
-    <div v-if="selectedMember" class="mt-3 text-[10px] bg-zinc-900 text-white px-2.5 py-1.5 rounded-full font-black w-fit flex items-center gap-2">
-      {{ selectedMember.name }} <button @click="selectedMember=null" class="bg-white/20 rounded-full w-4 h-4 flex items-center justify-center">✕</button>
+
+    <!-- Pilihan Member Aktif -->
+    <div v-if="store.selectedMember" class="mt-3 text-[10px] bg-zinc-900 text-white px-2.5 py-1.5 rounded-full font-black w-fit flex items-center gap-2">
+      Member: {{ store.selectedMember.name }} 
+      <button @click="store.selectedMember=null" class="bg-white/20 rounded-full w-4 h-4 flex items-center justify-center">✕</button>
     </div>
   </div>
+
+  <!-- Area Keranjang Belanja -->
   <div class="flex-1 overflow-auto px-4 pb-4">
     <div class="bg-white border border-zinc-100 rounded-[1.5rem] p-4">
-      <div class="font-black text-[10px] text-zinc-400 tracking-widest mb-3 uppercase">Keranjang • {{ cart.length }} item</div>
-      <div v-if="cart.length===0" class="py-24 text-center"><ShoppingBag class="w-8 h-8 text-zinc-300 mx-auto mb-2"/><div class="text-sm font-bold text-zinc-400">Kosong</div><div class="text-[11px] text-zinc-400">Ketik nama barang di atas</div></div>
+      <div class="flex justify-between items-center mb-3">
+        <div class="font-black text-[10px] text-zinc-400 tracking-widest uppercase">
+          Keranjang • {{ store.cart.length }} item
+        </div>
+        <!-- Tombol Tunda Transaksi ini -->
+        <button 
+          v-if="store.cart.length > 0" 
+          @click="store.holdCurrentCart()" 
+          class="text-[10px] bg-amber-50 text-amber-700 font-bold px-3 py-1.5 rounded-xl border border-amber-200 flex items-center gap-1 active:scale-95 transition"
+        >
+          <PauseCircle class="w-3.5 h-3.5"/> Tunda Transaksi
+        </button>
+      </div>
+
+      <div v-if="store.cart.length===0" class="py-24 text-center">
+        <ShoppingBag class="w-8 h-8 text-zinc-300 mx-auto mb-2"/>
+        <div class="text-sm font-bold text-zinc-400">Keranjang Kosong</div>
+        <div class="text-[11px] text-zinc-400">Ketik nama barang di atas</div>
+      </div>
+
       <div v-else class="space-y-1">
-        <div v-for="(c,i) in cart" :key="c.id" class="flex gap-3 py-3 border-b border-zinc-50 last:border-0">
-          <div class="flex-1"><div class="font-bold text-[13px] leading-tight">{{ c.name }}</div><div class="text-[11px] text-zinc-500">Rp {{ formatRibuan(c.price_sell) }} x {{ c.cartQty }}</div></div>
-          <div class="flex items-center gap-2"><button @click="dec(i)" class="w-8 h-8 bg-zinc-100 rounded-full font-black">-</button><span class="w-6 text-center text-sm font-black">{{ c.cartQty }}</span><button @click="inc(i)" class="w-8 h-8 bg-zinc-900 text-white rounded-full font-black">+</button></div>
+        <div v-for="(c,i) in store.cart" :key="c.id" class="flex gap-3 py-3 border-b border-zinc-50 last:border-0">
+          <div class="flex-1">
+            <div class="font-bold text-[13px] leading-tight">{{ c.name }}</div>
+            <div class="text-[11px] text-zinc-500">Rp {{ formatRibuan(c.price_sell) }} x {{ c.cartQty }}</div>
+          </div>
+          <div class="flex items-center gap-2">
+            <button @click="store.dec(i)" class="w-8 h-8 bg-zinc-100 rounded-full font-black">-</button>
+            <span class="w-6 text-center text-sm font-black">{{ c.cartQty }}</span>
+            <button @click="store.inc(i)" class="w-8 h-8 bg-zinc-900 text-white rounded-full font-black">+</button>
+          </div>
           <div class="w-[80px] text-right font-black text-[13px]">Rp {{ formatRibuan(c.price_sell * c.cartQty) }}</div>
         </div>
       </div>
     </div>
   </div>
-  <div v-if="cart.length>0" class="shrink-0 bg-zinc-900 rounded-t-[2rem] p-5 pb-7 shadow-[0_-20px_60px_rgba(0,0,0,0.35)]">
+
+  <!-- Area Pembayaran / Checkout -->
+  <div v-if="store.cart.length>0" class="shrink-0 bg-zinc-900 rounded-t-[2rem] p-5 pb-7 shadow-[0_-20px_60px_rgba(0,0,0,0.35)]">
     <div class="w-10 h-1 bg-white/20 rounded-full mx-auto mb-4"></div>
     <div class="grid grid-cols-3 gap-2 mb-4">
-      <button v-for="m in ['CASH','QRIS','TEMPO']" :key="m" @click="handleMethod(m)" :class="['py-2.5 rounded-xl text-[11px] font-black border transition', paymentMethod===m? 'bg-white text-zinc-900 border-white' : 'bg-zinc-800 border-zinc-700 text-zinc-400']">{{ m }}</button>
+      <button v-for="m in ['CASH','QRIS','TEMPO']" :key="m" @click="handleMethod(m)" :class="['py-2.5 rounded-xl text-[11px] font-black border transition', store.paymentMethod===m? 'bg-white text-zinc-900 border-white' : 'bg-zinc-800 border-zinc-700 text-zinc-400']">{{ m }}</button>
     </div>
-    <div v-if="paymentMethod==='CASH'" class="space-y-3">
+
+    <div v-if="store.paymentMethod==='CASH'" class="space-y-3">
       <div class="flex justify-between items-center"><span class="text-zinc-400 text-xs">Total</span><span class="font-black text-xl text-white">Rp {{ formatRibuan(total) }}</span></div>
       <div class="relative"><span class="absolute left-4 top-1/2 -translate-y-1/2 font-black text-zinc-500 text-sm">Rp</span><input :value="bayarDisplay" @input="e => bayarDisplay = e.target.value" type="text" inputmode="numeric" placeholder="0" class="w-full pl-12 pr-4 py-3.5 bg-white text-zinc-900 rounded-2xl font-black text-lg focus:outline-none"/></div>
-      <button @click="bayarNominal=total" class="w-full py-2.5 bg-white/10 border border-white/10 text-white rounded-xl text-[11px] font-black">UANG PAS Rp {{ formatRibuan(total) }}</button>
-      <div v-if="bayarNominal>0" class="flex justify-between text-xs pt-2 border-t border-zinc-800"><span class="text-zinc-400">Kembalian</span><span :class="['font-black', kurangBayar>0?'text-red-400':'text-green-400']">{{ kurangBayar>0? `Kurang Rp ${formatRibuan(kurangBayar)}` : `Rp ${formatRibuan(kembalian)}` }}</span></div>
+      <button @click="store.bayarNominal=total" class="w-full py-2.5 bg-white/10 border border-white/10 text-white rounded-xl text-[11px] font-black">UANG PAS Rp {{ formatRibuan(total) }}</button>
+      <div v-if="store.bayarNominal>0" class="flex justify-between text-xs pt-2 border-t border-zinc-800"><span class="text-zinc-400">Kembalian</span><span :class="['font-black', kurangBayar>0?'text-red-400':'text-green-400']">{{ kurangBayar>0? `Kurang Rp ${formatRibuan(kurangBayar)}` : `Rp ${formatRibuan(kembalian)}` }}</span></div>
     </div>
-    <div v-if="paymentMethod==='QRIS'" class="mb-4"><div class="flex justify-between items-center"><span class="text-zinc-400 text-xs">Total Bayar</span><span class="font-black text-xl text-white">Rp {{ formatRibuan(total) }}</span></div></div>
-    <div v-if="paymentMethod==='TEMPO'" class="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 text-[11px] font-black text-amber-400 mb-4">TEMPO → {{ selectedMember?.name || 'Pilih member' }}</div>
-    <button v-if="paymentMethod==='QRIS' || paymentMethod==='TEMPO' || (paymentMethod==='CASH' && bayarNominal>0)" :disabled="(paymentMethod==='CASH' && bayarNominal < total) || (paymentMethod==='TEMPO' &&!selectedMember)" @click="onCheckout" class="w-full bg-white disabled:bg-zinc-700 disabled:text-zinc-500 text-zinc-900 py-4 rounded-2xl font-black text-sm mt-2">{{ paymentMethod==='QRIS'? 'Bayar dengan QRIS' : `Bayar Rp ${formatRibuan(total)}` }}</button>
+
+    <div v-if="store.paymentMethod==='QRIS'" class="mb-4">
+      <div class="flex justify-between items-center"><span class="text-zinc-400 text-xs">Total Bayar</span><span class="font-black text-xl text-white">Rp {{ formatRibuan(total) }}</span></div>
+    </div>
+
+    <div v-if="store.paymentMethod==='TEMPO'" class="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 text-[11px] font-black text-amber-400 mb-4">
+      TEMPO → {{ store.selectedMember?.name || 'Pilih member' }}
+    </div>
+
+    <button v-if="store.paymentMethod==='QRIS' || store.paymentMethod==='TEMPO' || (store.paymentMethod==='CASH' && store.bayarNominal>0)" :disabled="(store.paymentMethod==='CASH' && store.bayarNominal < total) || (store.paymentMethod==='TEMPO' && !store.selectedMember)" @click="onCheckout" class="w-full bg-white disabled:bg-zinc-700 disabled:text-zinc-500 text-zinc-900 py-4 rounded-2xl font-black text-sm mt-2">
+      {{ store.paymentMethod==='QRIS'? 'Bayar dengan QRIS' : `Bayar Rp ${formatRibuan(total)}` }}
+    </button>
   </div>
 </div>
-<div v-if="showMemberPicker" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end"><div class="w-full max-w-xl mx-auto bg-white rounded-t-[2rem] p-5 max-h-[80vh] flex flex-col"><div class="flex justify-between items-center mb-4"><div class="font-black text-sm">{{ paymentMethod==='TEMPO'? 'Wajib Pilih Member' : 'Pilih Member' }}</div><button @click="showMemberPicker=false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button></div><input v-model="memberQ" placeholder="Cari nama / hp..." class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm mb-3"/><div class="flex-1 overflow-auto"><div v-for="m in filteredMembers" :key="m.id" @click="selectMember(m)" class="p-3 border-b border-zinc-50 flex justify-between"><div><div class="font-bold text-sm">{{ m.name }}</div><div class="text-[11px] text-zinc-500">Utang Rp {{ formatRibuan(m.debt||0) }}</div></div><span class="text-xs font-black">Pilih</span></div></div></div></div>
+
+<!-- Modal Member Picker -->
+<div v-if="showMemberPicker" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end">
+  <div class="w-full max-w-xl mx-auto bg-white rounded-t-[2rem] p-5 max-h-[80vh] flex flex-col">
+    <div class="flex justify-between items-center mb-4">
+      <div class="font-black text-sm">{{ store.paymentMethod==='TEMPO'? 'Wajib Pilih Member' : 'Pilih Member' }}</div>
+      <button @click="showMemberPicker=false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
+    </div>
+    <input v-model="memberQ" placeholder="Cari nama / hp..." class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm mb-3"/>
+    <div class="flex-1 overflow-auto">
+      <div v-for="m in filteredMembers" :key="m.id" @click="selectMember(m)" class="p-3 border-b border-zinc-50 flex justify-between cursor-pointer">
+        <div><div class="font-bold text-sm">{{ m.name }}</div><div class="text-[11px] text-zinc-500">Utang Rp {{ formatRibuan(m.debt||0) }}</div></div>
+        <span class="text-xs font-black">Pilih</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Modal Transaksi Pending -->
+<div v-if="showPendingModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+  <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl max-h-[80vh] flex flex-col">
+    <div class="flex justify-between items-center mb-4">
+      <div>
+        <h2 class="font-black text-base">Transaksi Ditunda</h2>
+        <p class="text-xs text-zinc-400">Total {{ store.pendingCarts.length }} transaksi tertunda</p>
+      </div>
+      <button @click="showPendingModal = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
+    </div>
+
+    <div v-if="store.pendingCarts.length === 0" class="py-12 text-center text-zinc-400 text-xs">
+      Tidak ada transaksi yang ditunda
+    </div>
+
+    <div v-else class="flex-1 overflow-auto space-y-3">
+      <div v-for="p in store.pendingCarts" :key="p.id" class="p-4 border border-zinc-100 rounded-2xl bg-zinc-50 flex justify-between items-center">
+        <div>
+          <div class="font-black text-sm text-zinc-900">{{ p.label }}</div>
+          <div class="text-[11px] text-zinc-500 mt-0.5">{{ p.createdAt }} • {{ p.cart.length }} item</div>
+          <div class="text-xs font-bold text-zinc-900 mt-1">Total: Rp {{ formatRibuan(p.cart.reduce((s,c)=>s+(c.price_sell*c.cartQty),0)) }}</div>
+        </div>
+        <div class="flex gap-1">
+          <button @click="restorePending(p.id)" class="px-3 py-2 bg-zinc-900 text-white rounded-xl font-bold text-xs">Lanjutkan</button>
+          <button @click="store.removePending(p.id)" class="p-2 text-red-500 hover:bg-red-50 rounded-xl"><Trash2 class="w-4 h-4"/></button>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div v-if="showSearch" @click="showSearch=false" class="fixed inset-0 z-20"></div>
 </template>
+
 <script setup>
 import { ref, onMounted, onUnmounted, watch } from 'vue'
-import { Search, X, ShoppingBag } from 'lucide-vue-next'
+import { Search, X, ShoppingBag, Clock, PauseCircle, Trash2 } from 'lucide-vue-next'
 import { useKasir } from '../composables/useKasir.js'
 import { formatRibuan } from '../utils/formatters/currency.js'
-const { q, memberQ, filteredProducts, filteredMembers, cart, total, kembalian, kurangBayar, bayarNominal, bayarDisplay, paymentMethod, selectedMember, showSearch, load, addToCart, inc, dec, checkout } = useKasir()
+
+const { store, q, memberQ, filteredProducts, filteredMembers, total, kembalian, kurangBayar, bayarDisplay, showSearch, load, addToCart, checkout } = useKasir()
+
 const showMemberPicker = ref(false)
-const handleMethod = (m) => { paymentMethod.value=m; if(m==='QRIS') bayarNominal.value=total.value; if(m==='TEMPO'&&!selectedMember.value) showMemberPicker.value=true }
-const selectMember = (m) => { selectedMember.value=m; showMemberPicker.value=false }
-const onCheckout = async () => { try{ await checkout(); alert('Berhasil') }catch(e){ alert(e.message) } }
-watch(total, t => { if(paymentMethod.value==='QRIS') bayarNominal.value=t })
-const openMemberHandler = () => showMemberPicker.value=true
-onMounted(()=>{ load(); window.addEventListener('open-member-picker', openMemberHandler) })
-onUnmounted(()=> window.removeEventListener('open-member-picker', openMemberHandler))
+const showPendingModal = ref(false)
+
+const handleMethod = (m) => { 
+  store.paymentMethod = m
+  if (m === 'QRIS') store.bayarNominal = total.value
+  if (m === 'TEMPO' && !store.selectedMember) showMemberPicker.value = true 
+}
+
+const selectMember = (m) => { 
+  store.selectedMember = m
+  showMemberPicker.value = false 
+}
+
+const restorePending = (pendingId) => {
+  store.resumeCart(pendingId)
+  showPendingModal.value = false
+}
+
+const onCheckout = async () => { 
+  try { 
+    await checkout()
+    alert('Berhasil') 
+  } catch(e) { 
+    alert(e.message) 
+  } 
+}
+
+watch(total, t => { if (store.paymentMethod === 'QRIS') store.bayarNominal = t })
+
+const openMemberHandler = () => showMemberPicker.value = true
+
+onMounted(() => { 
+  load()
+  window.addEventListener('open-member-picker', openMemberHandler) 
+})
+
+onUnmounted(() => window.removeEventListener('open-member-picker', openMemberHandler))
 </script>
+
 ===== src/views/Members.vue =====
+<template>
+  <div class="flex-1 overflow-auto p-4 pb-24">
+    <!-- Header -->
+    <div class="flex justify-between items-center mb-4">
+      <div>
+        <h1 class="font-black text-xl">Daftar Member</h1>
+        <p class="text-xs text-zinc-400">Total {{ members.length }} pelanggan terdaftar</p>
+      </div>
+      <button 
+        @click="openModal()" 
+        class="bg-zinc-900 text-white px-4 py-2.5 rounded-2xl font-bold text-xs flex items-center gap-2 active:scale-95 transition"
+      >
+        <UserPlus class="w-4 h-4" /> Tambah
+      </button>
+    </div>
+
+    <!-- Search Input -->
+    <div class="relative mb-4">
+      <Search class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+      <input 
+        v-model="searchQuery" 
+        placeholder="Cari nama / nomor HP..." 
+        class="w-full pl-11 pr-4 py-3 bg-white border border-zinc-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"
+      />
+    </div>
+
+    <!-- Empty State -->
+    <div v-if="filteredMembers.length === 0" class="py-12 text-center text-zinc-400 text-xs">
+      Belum ada member ditemukan
+    </div>
+
+    <!-- Member Cards -->
+    <div v-else class="space-y-3">
+      <div 
+        v-for="m in filteredMembers" 
+        :key="m.id" 
+        class="p-4 bg-white rounded-2xl border border-zinc-100 shadow-sm flex flex-col gap-3"
+      >
+        <div class="flex items-start justify-between">
+          <div class="flex items-center gap-3">
+            <div class="w-10 h-10 bg-zinc-900 text-white rounded-xl flex items-center justify-center font-black text-sm shrink-0">
+              {{ m.name.charAt(0).toUpperCase() }}
+            </div>
+            <div>
+              <div class="font-bold text-sm text-zinc-900">{{ m.name }}</div>
+              <div class="text-xs text-zinc-400">{{ m.phone || 'Tanpa No HP' }}</div>
+            </div>
+          </div>
+
+          <div class="flex items-center gap-1">
+            <button @click="openModal(m)" class="p-2 text-zinc-600 hover:bg-zinc-100 rounded-xl transition">
+              <Pencil class="w-4 h-4" />
+            </button>
+            <button @click="deleteMember(m)" class="p-2 text-red-500 hover:bg-red-50 rounded-xl transition">
+              <Trash2 class="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        <!-- Detail Poin, Total Belanja & Utang -->
+        <div class="grid grid-cols-3 gap-2 pt-2 border-t border-zinc-100 text-center">
+          <div class="bg-amber-50 p-2 rounded-xl border border-amber-100">
+            <div class="text-[9px] font-black text-amber-600 uppercase">Poin (1% Profit)</div>
+            <div class="text-xs font-black text-amber-700 mt-0.5">{{ formatRibuan(m.points || 0) }} pts</div>
+          </div>
+
+          <div class="bg-zinc-50 p-2 rounded-xl border border-zinc-100">
+            <div class="text-[9px] font-black text-zinc-400 uppercase">Total Belanja</div>
+            <div class="text-xs font-black text-zinc-900 mt-0.5">Rp {{ formatRibuan(m.total_spending || 0) }}</div>
+          </div>
+
+          <div :class="['p-2 rounded-xl border', (m.debt || 0) > 0 ? 'bg-red-50 border-red-100' : 'bg-emerald-50 border-emerald-100']">
+            <div :class="['text-[9px] font-black uppercase', (m.debt || 0) > 0 ? 'text-red-500' : 'text-emerald-600']">Utang / Piutang</div>
+            <div :class="['text-xs font-black mt-0.5', (m.debt || 0) > 0 ? 'text-red-600' : 'text-emerald-700']">
+              Rp {{ formatRibuan(m.debt || 0) }}
+            </div>
+          </div>
+        </div>
+
+        <!-- Tombol Bayar Utang jika ada sisa utang -->
+        <button 
+          v-if="(m.debt || 0) > 0" 
+          @click="openPayModal(m)"
+          class="w-full py-2.5 bg-red-600 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 active:scale-95 transition mt-1"
+        >
+          <CreditCard class="w-4 h-4" /> Bayar / Cicil Utang
+        </button>
+      </div>
+    </div>
+
+    <!-- Modal Form (Tambah / Edit Member) -->
+    <div v-if="showModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl animate-in slide-in-from-bottom duration-200">
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="font-black text-base">{{ editingId ? 'Edit Member' : 'Tambah Member Baru' }}</h2>
+          <button @click="showModal = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4" /></button>
+        </div>
+
+        <form @submit.prevent="saveMember" class="space-y-3">
+          <div>
+            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Nama Lengkap *</label>
+            <input v-model="form.name" required placeholder="Contoh: Budi Santoso" class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold" />
+          </div>
+
+          <div>
+            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">No. Telepon / WA</label>
+            <input v-model="form.phone" type="tel" placeholder="081234567890" class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold" />
+          </div>
+
+          <div>
+            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Alamat</label>
+            <textarea v-model="form.address" rows="2" placeholder="Alamat rumah / toko" class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold"></textarea>
+          </div>
+
+          <div class="flex gap-2 pt-2">
+            <button type="button" @click="showModal = false" class="flex-1 py-3 bg-zinc-100 font-bold text-xs rounded-xl">Batal</button>
+            <button type="submit" class="flex-1 py-3 bg-zinc-900 text-white font-bold text-xs rounded-xl shadow-md">{{ editingId ? 'Simpan' : 'Tambah' }}</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Modal Bayar Utang -->
+    <div v-if="showPayModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl animate-in slide-in-from-bottom duration-200">
+        <div class="flex justify-between items-center mb-4">
+          <div>
+            <h2 class="font-black text-base">Pembayaran Utang</h2>
+            <p class="text-xs text-zinc-400">{{ selectedMemberForPay?.name }}</p>
+          </div>
+          <button @click="showPayModal = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4" /></button>
+        </div>
+
+        <div class="bg-red-50 border border-red-100 p-3 rounded-xl mb-4">
+          <div class="text-[10px] text-red-500 font-black uppercase">Sisa Utang Saat Ini</div>
+          <div class="text-lg font-black text-red-600 mt-0.5">Rp {{ formatRibuan(selectedMemberForPay?.debt || 0) }}</div>
+        </div>
+
+        <form @submit.prevent="submitPayDebt" class="space-y-3">
+          <div>
+            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Nominal Bayar *</label>
+            <input 
+              :value="formatRp(payAmount)" 
+              @input="e => payAmount = toNumber(e.target.value)"
+              type="text" 
+              inputmode="numeric" 
+              placeholder="Rp 0" 
+              required 
+              class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-lg font-black text-zinc-900"
+            />
+          </div>
+
+          <button 
+            type="button" 
+            @click="payAmount = selectedMemberForPay?.debt || 0" 
+            class="w-full py-2 bg-zinc-100 border text-zinc-700 rounded-xl text-xs font-bold"
+          >
+            Pelunasan Total (Rp {{ formatRibuan(selectedMemberForPay?.debt || 0) }})
+          </button>
+
+          <div class="flex gap-2 pt-2">
+            <button type="button" @click="showPayModal = false" class="flex-1 py-3 bg-zinc-100 font-bold text-xs rounded-xl">Batal</button>
+            <button type="submit" :disabled="payAmount <= 0" class="flex-1 py-3 bg-zinc-900 disabled:bg-zinc-300 text-white font-bold text-xs rounded-xl shadow-md">Proses Bayar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, onMounted } from 'vue'
+import { UserPlus, Search, Pencil, Trash2, X, CreditCard } from 'lucide-vue-next'
+import { memberRepo } from '../db/repositories/memberRepository.js'
+import { formatRibuan, formatRp, toNumber } from '../utils/formatters/currency.js'
+import { syncRealtime } from '../services/syncService.js'
+
+const members = ref([])
+const searchQuery = ref('')
+
+// State Modal Form
+const showModal = ref(false)
+const editingId = ref(null)
+const form = ref({ name: '', phone: '', address: '' })
+
+// State Modal Pay Debt
+const showPayModal = ref(false)
+const selectedMemberForPay = ref(null)
+const payAmount = ref(0)
+
+const filteredMembers = computed(() => {
+  const q = searchQuery.value.toLowerCase().trim()
+  if (!q) return members.value
+  return members.value.filter(m => m.name.toLowerCase().includes(q) || (m.phone || '').includes(q))
+})
+
+const loadMembers = async () => {
+  members.value = await memberRepo.getAll()
+}
+
+const openModal = (m = null) => {
+  if (m) {
+    editingId.value = m.id
+    form.value = { name: m.name, phone: m.phone || '', address: m.address || '' }
+  } else {
+    editingId.value = null
+    form.value = { name: '', phone: '', address: '' }
+  }
+  showModal.value = true
+}
+
+const saveMember = async () => {
+  if (!form.value.name.trim()) return
+
+  if (editingId.value) {
+    await memberRepo.update(editingId.value, form.value)
+  } else {
+    await memberRepo.create(form.value)
+  }
+
+  showModal.value = false
+  await loadMembers()
+  syncRealtime.pushLocalToCloud()
+}
+
+const deleteMember = async (m) => {
+  if (confirm(`Hapus member "${m.name}"?`)) {
+    await memberRepo.delete(m.id)
+    await loadMembers()
+  }
+}
+
+const openPayModal = (m) => {
+  selectedMemberForPay.value = m
+  payAmount.value = m.debt || 0
+  showPayModal.value = true
+}
+
+const submitPayDebt = async () => {
+  if (!selectedMemberForPay.value || payAmount.value <= 0) return
+
+  await memberRepo.payDebt(selectedMemberForPay.value.id, payAmount.value)
+  showPayModal.value = false
+  payAmount.value = 0
+  selectedMemberForPay.value = null
+
+  await loadMembers()
+  syncRealtime.pushLocalToCloud()
+}
+
+onMounted(() => {
+  loadMembers()
+})
+</script>
 
 ===== src/views/Shopping.vue =====
 
@@ -1218,6 +1724,7 @@ import MainLayout from '../layouts/MainLayout.vue'
 import ProductsList from '../views/ProductsList.vue'
 import ProductsAdd from '../views/ProductsAdd.vue'
 import CategoriesView from '../views/Categories.vue'
+import MembersView from '../views/Members.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -1257,6 +1764,12 @@ export const router = createRouter({
           component: () => import('../views/Dashboard.vue'),
           meta: { title: 'Dashboard' }
         },
+        { 
+  path: 'members', 
+  name: 'Members',
+  component: MembersView,
+  meta: { title: 'Daftar Member' }
+},
         { 
           path: 'kasir', 
           name: 'Kasir', 
@@ -1300,6 +1813,75 @@ export const useProductsStore = defineStore('products', {
   },
   persist: true
 })
+===== src/stores/kasirStore.js =====
+import { defineStore } from 'pinia'
+
+export const useKasirStore = defineStore('kasir', {
+  state: () => ({
+    cart: [],
+    selectedMember: null,
+    paymentMethod: 'CASH',
+    bayarNominal: 0,
+    pendingCarts: [] // tempat menyimpan transaksi tertunda
+  }),
+  actions: {
+    addToCart(product) {
+      const idx = this.cart.findIndex(c => c.id === product.id)
+      if (idx > -1) {
+        this.cart[idx].cartQty++
+        const item = this.cart.splice(idx, 1)[0]
+        this.cart.unshift(item)
+      } else {
+        this.cart.unshift({ ...product, cartQty: 1 })
+      }
+    },
+    inc(index) {
+      if (this.cart[index]) this.cart[index].cartQty++
+    },
+    dec(index) {
+      if (this.cart[index]) {
+        this.cart[index].cartQty--
+        if (this.cart[index].cartQty <= 0) {
+          this.cart.splice(index, 1)
+        }
+      }
+    },
+    clearCart() {
+      this.cart = []
+      this.selectedMember = null
+      this.bayarNominal = 0
+      this.paymentMethod = 'CASH'
+    },
+    // Fitur Tunda Transaksi
+    holdCurrentCart(label = '') {
+      if (this.cart.length === 0) return
+      this.pendingCarts.push({
+        id: crypto.randomUUID(),
+        createdAt: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }),
+        label: label || this.selectedMember?.name || `Transaksi #${this.pendingCarts.length + 1}`,
+        cart: [...this.cart],
+        selectedMember: this.selectedMember,
+        paymentMethod: this.paymentMethod
+      })
+      this.clearCart()
+    },
+    // Fitur Lanjutkan Transaksi yang Ditunda
+    resumeCart(pendingId) {
+      const idx = this.pendingCarts.findIndex(p => p.id === pendingId)
+      if (idx > -1) {
+        const item = this.pendingCarts.splice(idx, 1)[0]
+        this.cart = item.cart
+        this.selectedMember = item.selectedMember
+        this.paymentMethod = item.paymentMethod || 'CASH'
+      }
+    },
+    removePending(pendingId) {
+      this.pendingCarts = this.pendingCarts.filter(p => p.id !== pendingId)
+    }
+  },
+  persist: true
+})
+
 ===== src/package.json.txt =====
 {
   "name": "sinar-pagi",
