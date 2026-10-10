@@ -32,6 +32,7 @@ export function useProductForm() {
 
   const { value: name } = useField('name')
   const { value: code } = useField('code')
+  const { value: category } = useField('category') // Tambahkan ini
   const { value: purchasePackName } = useField('purchasePackName')
   const { value: packPrice } = useField('packPrice')
   const { value: packQty } = useField('packQty')
@@ -40,5 +41,5 @@ export function useProductForm() {
   const { value: qty } = useField('qty')
   const { value: minStock } = useField('minStock')
 
-  return { name, code, purchasePackName, packPrice, packQty, price_modal, price_sell, qty, minStock, handleSubmit, errors, isSubmitting }
+  return { name, code, category, purchasePackName, packPrice, packQty, price_modal, price_sell, qty, minStock, handleSubmit, errors, isSubmitting }
 }

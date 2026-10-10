@@ -48,7 +48,7 @@
 <script setup>
 import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Menu, X, Package, Store, LayoutDashboard, Plus, Users, ShoppingCart } from 'lucide-vue-next'
+import { Menu, X, Package, Store, LayoutDashboard, Plus, Users, ShoppingCart, Tags } from 'lucide-vue-next'
 import SidebarComponent from '../components/Sidebar.vue'
 const isOpen = ref(false)
 const route = useRoute()
@@ -56,8 +56,22 @@ const router = useRouter()
 const activePage = computed(() => route.meta.title || 'Barang')
 const isKasirPage = computed(() => route.path.startsWith('/kasir'))
 const groups = ref([
-  { title: 'MASTER DATA', items: [{ name: 'Dashboard', icon: LayoutDashboard, to: '/dashboard' },{ name: 'Barang', icon: Package, to: '/products' },{ name: 'Tambah Barang', icon: Plus, to: '/add-products' }]},
-  { title: 'TRANSAKSI', items: [{ name: 'Kasir', icon: Store, to: '/kasir' },{ name: 'Belanja', icon: ShoppingCart, to: '/shopping' }]}
+  { 
+    title: 'MASTER DATA', 
+    items: [
+      { name: 'Dashboard', icon: LayoutDashboard, to: '/dashboard' },
+      { name: 'Barang', icon: Package, to: '/products' },
+      { name: 'Kategori', icon: Tags, to: '/categories' },
+      { name: 'Tambah Barang', icon: Plus, to: '/add-products' }
+    ]
+  },
+  { 
+    title: 'TRANSAKSI', 
+    items: [
+      { name: 'Kasir', icon: Store, to: '/kasir' },
+      { name: 'Belanja', icon: ShoppingCart, to: '/shopping' }
+    ]
+  }
 ])
 const handleSelect = (m) => { isOpen.value=false; router.push(m.to) }
 const openMember = () => window.dispatchEvent(new CustomEvent('open-member-picker'))

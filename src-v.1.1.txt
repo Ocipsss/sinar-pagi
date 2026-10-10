@@ -350,6 +350,35 @@ export const memberRepo = {
   getAll: () => db.members.toArray(),
   getById: (id) => db.members.get(id),
 }
+===== src/db/repositories/categoryRepository.js =====
+import { db } from '../index.js'
+import dayjs from 'dayjs'
+
+export const categoryRepo = {
+  getAll: () => db.categories.toArray(),
+  getById: (id) => db.categories.get(id),
+  create: async (name) => {
+    const id = crypto.randomUUID()
+    const now = dayjs().toISOString()
+    await db.categories.add({
+      id,
+      name,
+      updatedAt: now,
+      synced: 0
+    })
+    return id
+  },
+  update: async (id, name) => {
+    const now = dayjs().toISOString()
+    await db.categories.update(id, {
+      name,
+      updatedAt: now,
+      synced: 0
+    })
+  },
+  delete: (id) => db.categories.delete(id)
+}
+
 ===== src/services/firebase.js =====
 import { initializeApp } from 'firebase/app'
 import { getFirestore } from 'firebase/firestore'
@@ -801,34 +830,55 @@ defineEmits(['select-page','close'])
 ===== src/layouts/MainLayout.vue =====
 <template>
 <div class="min-h-screen bg-zinc-900 overflow-hidden">
-  <aside :class="['fixed top-0 left-0 h-full w-[280px] z-[60] transition-transform duration-300', isOpen? 'translate-x-0' : '-translate-x-full']">
+  <!-- SIDEBAR (Tambahkan will-change-transform & translate3d) -->
+  <aside 
+    :class="[
+      'fixed top-0 left-0 h-full w-[280px] z-[60] transition-transform duration-300 ease-in-out will-change-transform', 
+      isOpen ? 'translate-x-0' : '-translate-x-full'
+    ]"
+  >
     <SidebarComponent :groups="groups" :activePage="activePage" @select-page="handleSelect" @close="isOpen=false" />
   </aside>
+
+  <!-- BACKDROP OVERLAY -->
   <div v-if="isOpen" @click="isOpen=false" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50"></div>
 
-  <div :class="['min-h-screen bg-zinc-50 flex flex-col overflow-hidden transition-all duration-300', isOpen? 'translate-x-[280px] scale-[0.92] rounded-l-[2rem] shadow-[-20px_0_60px_rgba(0,0,0,0.35)] h-screen' : 'h-screen']">
-
-    <!-- HEADER FIXED GLOBAL -->
-    <header class="shrink-0 h-[56px] w-full bg-white border-b border-zinc-100 px-4 flex justify-between items-center z-40">
-      <button @click="isOpen=!isOpen" class="p-2.5 bg-zinc-900 text-white rounded-xl"><Menu v-if="!isOpen" class="w-5 h-5"/><X v-else class="w-5 h-5"/></button>
+  <!-- MAIN CONTAINER (Diseimbangkan agar animasi lebih ringan) -->
+  <div 
+    :class="[
+      'min-h-screen bg-zinc-50 flex flex-col overflow-hidden transition-transform duration-300 ease-in-out h-screen will-change-transform', 
+      isOpen ? 'translate-x-[280px]' : 'translate-x-0'
+    ]"
+  >
+    <!-- HEADER FIXED / STICKY DI ATAS -->
+    <header class="shrink-0 h-[56px] w-full bg-white border-b border-zinc-100 px-4 flex justify-between items-center z-40 sticky top-0">
+      <button @click="isOpen=!isOpen" class="p-2.5 bg-zinc-900 text-white rounded-xl">
+        <Menu v-if="!isOpen" class="w-5 h-5"/>
+        <X v-else class="w-5 h-5"/>
+      </button>
       <div class="font-black text-sm">{{ activePage }}</div>
-      <router-link v-if="!isKasirPage" to="/kasir" class="p-2.5 bg-zinc-900 text-white rounded-xl"><Store class="w-5 h-5"/></router-link>
-      <button v-else @click="openMember" class="p-2.5 bg-zinc-900 text-white rounded-xl"><Users class="w-5 h-5"/></button>
+      <router-link v-if="!isKasirPage" to="/kasir" class="p-2.5 bg-zinc-900 text-white rounded-xl">
+        <Store class="w-5 h-5"/>
+      </router-link>
+      <button v-else @click="openMember" class="p-2.5 bg-zinc-900 text-white rounded-xl">
+        <Users class="w-5 h-5"/>
+      </button>
     </header>
 
-    <!-- MAIN - TIDAK BOLEH SCROLL, YANG SCROLL CUMA DALAM VIEW -->
-    <main class="flex-1 overflow-hidden flex flex-col max-w-xl mx-auto w-full">
+    <!-- MAIN CONTAINER -->
+    <main class="flex-1 overflow-hidden flex flex-col max-w-xl mx-auto w-full relative">
       <router-view />
     </main>
-
   </div>
 </div>
 </template>
 
+
+
 <script setup>
 import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Menu, X, Package, Store, LayoutDashboard, Plus, Users, ShoppingCart } from 'lucide-vue-next'
+import { Menu, X, Package, Store, LayoutDashboard, Plus, Users, ShoppingCart, Tags } from 'lucide-vue-next'
 import SidebarComponent from '../components/Sidebar.vue'
 const isOpen = ref(false)
 const route = useRoute()
@@ -836,8 +886,22 @@ const router = useRouter()
 const activePage = computed(() => route.meta.title || 'Barang')
 const isKasirPage = computed(() => route.path.startsWith('/kasir'))
 const groups = ref([
-  { title: 'MASTER DATA', items: [{ name: 'Dashboard', icon: LayoutDashboard, to: '/dashboard' },{ name: 'Barang', icon: Package, to: '/products' },{ name: 'Tambah Barang', icon: Plus, to: '/add-products' }]},
-  { title: 'TRANSAKSI', items: [{ name: 'Kasir', icon: Store, to: '/kasir' },{ name: 'Belanja', icon: ShoppingCart, to: '/shopping' }]}
+  { 
+    title: 'MASTER DATA', 
+    items: [
+      { name: 'Dashboard', icon: LayoutDashboard, to: '/dashboard' },
+      { name: 'Barang', icon: Package, to: '/products' },
+      { name: 'Kategori', icon: Tags, to: '/categories' },
+      { name: 'Tambah Barang', icon: Plus, to: '/add-products' }
+    ]
+  },
+  { 
+    title: 'TRANSAKSI', 
+    items: [
+      { name: 'Kasir', icon: Store, to: '/kasir' },
+      { name: 'Belanja', icon: ShoppingCart, to: '/shopping' }
+    ]
+  }
 ])
 const handleSelect = (m) => { isOpen.value=false; router.push(m.to) }
 const openMember = () => window.dispatchEvent(new CustomEvent('open-member-picker'))
@@ -974,6 +1038,178 @@ import ProductForm from '../components/product/ProductForm.vue'
 
 ===== src/views/Settings.vue =====
 
+===== src/views/Categories.vue =====
+<template>
+  <div class="flex-1 overflow-auto p-4 pb-24">
+    <!-- Header ringkas + Tombol Tambah -->
+    <div class="flex justify-between items-center mb-4">
+      <div>
+        <h1 class="font-black text-xl">Kategori Barang</h1>
+        <p class="text-xs text-zinc-400">Total {{ categories.length }} kategori</p>
+      </div>
+      <button 
+        @click="openModal()" 
+        class="bg-zinc-900 text-white px-4 py-2.5 rounded-2xl font-bold text-xs flex items-center gap-2 active:scale-95 transition"
+      >
+        <Plus class="w-4 h-4" /> Tambah
+      </button>
+    </div>
+
+    <!-- Input Pencarian -->
+    <div class="relative mb-4">
+      <Search class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+      <input 
+        v-model="searchQuery" 
+        placeholder="Cari kategori..." 
+        class="w-full pl-11 pr-4 py-3 bg-white border border-zinc-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"
+      />
+    </div>
+
+    <!-- Daftar Kategori -->
+    <div v-if="filteredCategories.length === 0" class="py-12 text-center text-zinc-400 text-xs">
+      Belum ada kategori
+    </div>
+
+    <div v-else class="space-y-2">
+      <div 
+        v-for="cat in filteredCategories" 
+        :key="cat.id" 
+        class="p-4 bg-white rounded-2xl border border-zinc-100 shadow-sm flex items-center justify-between"
+      >
+        <div class="flex items-center gap-3">
+          <div class="w-10 h-10 bg-zinc-100 text-zinc-900 rounded-xl flex items-center justify-center font-black text-sm">
+            {{ cat.name.charAt(0).toUpperCase() }}
+          </div>
+          <div>
+            <div class="font-bold text-sm text-zinc-900">{{ cat.name }}</div>
+            <div class="text-[10px] text-zinc-400">ID: {{ cat.id.slice(0, 8) }}...</div>
+          </div>
+        </div>
+
+        <div class="flex items-center gap-1">
+          <button 
+            @click="openModal(cat)" 
+            class="p-2 text-zinc-600 hover:bg-zinc-100 rounded-xl transition"
+          >
+            <Pencil class="w-4 h-4" />
+          </button>
+          <button 
+            @click="deleteCategory(cat)" 
+            class="p-2 text-red-500 hover:bg-red-50 rounded-xl transition"
+          >
+            <Trash2 class="w-4 h-4" />
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal Form (Tambah / Edit) -->
+    <div v-if="showModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl animate-in slide-in-from-bottom duration-200">
+        <div class="flex justify-between items-center mb-4">
+          <h2 class="font-black text-base">{{ editingId ? 'Edit Kategori' : 'Tambah Kategori Baru' }}</h2>
+          <button @click="showModal = false" class="p-2 bg-zinc-100 rounded-xl">
+            <X class="w-4 h-4" />
+          </button>
+        </div>
+
+        <form @submit.prevent="saveCategory" class="space-y-4">
+          <div>
+            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Nama Kategori *</label>
+            <input 
+              v-model="formName" 
+              ref="inputRef" 
+              placeholder="Contoh: Minuman, Sembako, Rokok..." 
+              required 
+              class="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900"
+            />
+          </div>
+
+          <div class="flex gap-2 pt-2">
+            <button 
+              type="button" 
+              @click="showModal = false" 
+              class="flex-1 py-3 bg-zinc-100 font-bold text-xs rounded-xl"
+            >
+              Batal
+            </button>
+            <button 
+              type="submit" 
+              class="flex-1 py-3 bg-zinc-900 text-white font-bold text-xs rounded-xl shadow-md"
+            >
+              {{ editingId ? 'Simpan' : 'Tambah' }}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, computed, onMounted, nextTick } from 'vue'
+import { Plus, Search, Pencil, Trash2, X } from 'lucide-vue-next'
+import { categoryRepo } from '../db/repositories/categoryRepository.js'
+import { syncRealtime } from '../services/syncService.js'
+
+const categories = ref([])
+const searchQuery = ref('')
+const showModal = ref(false)
+const formName = ref('')
+const editingId = ref(null)
+const inputRef = ref(null)
+
+const filteredCategories = computed(() => {
+  const q = searchQuery.value.toLowerCase().trim()
+  if (!q) return categories.value
+  return categories.value.filter(c => c.name.toLowerCase().includes(q))
+})
+
+const loadCategories = async () => {
+  categories.value = await categoryRepo.getAll()
+}
+
+const openModal = (cat = null) => {
+  if (cat) {
+    editingId.value = cat.id
+    formName.value = cat.name
+  } else {
+    editingId.value = null
+    formName.value = ''
+  }
+  showModal.value = true
+  nextTick(() => inputRef.value?.focus())
+}
+
+const saveCategory = async () => {
+  if (!formName.value.trim()) return
+
+  if (editingId.value) {
+    await categoryRepo.update(editingId.value, formName.value.trim())
+  } else {
+    await categoryRepo.create(formName.value.trim())
+  }
+
+  showModal.value = false
+  formName.value = ''
+  editingId.value = null
+
+  await loadCategories()
+  syncRealtime.pushLocalToCloud()
+}
+
+const deleteCategory = async (cat) => {
+  if (confirm(`Hapus kategori "${cat.name}"?`)) {
+    await categoryRepo.delete(cat.id)
+    await loadCategories()
+  }
+}
+
+onMounted(() => {
+  loadCategories()
+})
+</script>
+
 ===== src/views/ProductsDigital.vue =====
 
 ===== src/router/index.js =====
@@ -981,6 +1217,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import MainLayout from '../layouts/MainLayout.vue'
 import ProductsList from '../views/ProductsList.vue'
 import ProductsAdd from '../views/ProductsAdd.vue'
+import CategoriesView from '../views/Categories.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -996,6 +1233,12 @@ export const router = createRouter({
           component: ProductsList,
           meta: { title: 'Barang' }
         },
+          { 
+        path: 'categories', 
+        name: 'Categories',
+        component: CategoriesView,
+        meta: { title: 'Kategori Barang' }
+      },
         { 
           path: 'add-products', 
           name: 'ProductsAdd',

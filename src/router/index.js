@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import MainLayout from '../layouts/MainLayout.vue'
 import ProductsList from '../views/ProductsList.vue'
 import ProductsAdd from '../views/ProductsAdd.vue'
+import CategoriesView from '../views/Categories.vue'
 
 export const router = createRouter({
   history: createWebHistory(),
@@ -17,6 +18,12 @@ export const router = createRouter({
           component: ProductsList,
           meta: { title: 'Barang' }
         },
+          { 
+        path: 'categories', 
+        name: 'Categories',
+        component: CategoriesView,
+        meta: { title: 'Kategori Barang' }
+      },
         { 
           path: 'add-products', 
           name: 'ProductsAdd',

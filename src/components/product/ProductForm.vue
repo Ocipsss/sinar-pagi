@@ -11,6 +11,17 @@
   </div>
   <div id="reader" class="w-full rounded-xl overflow-hidden"></div>
 
+  <!-- Pilihan Kategori -->
+  <div class="flex flex-col gap-1">
+    <label class="text-[10px] text-zinc-500">Kategori</label>
+    <select v-model="category" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold">
+      <option value="Umum">Umum</option>
+      <option v-for="cat in categories" :key="cat.id" :value="cat.name">
+        {{ cat.name }}
+      </option>
+    </select>
+  </div>
+
   <!-- Kalkulator Grosir -->
   <div class="p-4 bg-blue-50 rounded-2xl border border-blue-100 flex flex-col gap-3">
     <div class="text-[10px] font-black text-blue-600 uppercase">Kalkulator Grosir</div>
@@ -61,7 +72,7 @@
 </template>
 
 <script setup>
-import { computed, watch } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import { ScanLine } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 import { useProductForm } from '../../composables/useProductForm.js'
@@ -69,15 +80,21 @@ import { useProductScanner } from '../../composables/useProductScanner.js'
 import { calcModalDariPack, calcMargin } from '../../utils/calculator/product.js'
 import { formatRp, toNumber } from '../../utils/formatters/currency.js'
 import { productService } from '../../services/productService.js'
+import { categoryRepo } from '../../db/repositories/categoryRepository.js'
 
-const { name, code, purchasePackName, packPrice, packQty, price_modal, price_sell, qty, minStock, handleSubmit, errors, isSubmitting } = useProductForm()
+const { name, code, category, purchasePackName, packPrice, packQty, price_modal, price_sell, qty, minStock, handleSubmit, errors, isSubmitting } = useProductForm()
 const { start } = useProductScanner()
 const router = useRouter()
+
+const categories = ref([])
 
 const autoModal = computed(() => calcModalDariPack(packPrice.value, packQty.value))
 const marginPersen = computed(() => calcMargin(price_sell.value, price_modal.value))
 
-// Input handler biar ada Rp + titik ribuan + gak jadi 010
+onMounted(async () => {
+  categories.value = await categoryRepo.getAll()
+})
+
 const onPackPriceInput = (e) => {
   const raw = toNumber(e.target.value)
   packPrice.value = raw
@@ -98,11 +115,17 @@ watch(autoModal, (val) => { if (val > 0) price_modal.value = val })
 
 const onSubmit = handleSubmit(async (vals) => {
   await productService.createProduct({
-    name: vals.name, code: vals.code || '', category: 'Umum',
+    name: vals.name,
+    code: vals.code || '',
+    category: category.value || 'Umum',
     purchasePackName: purchasePackName.value || '',
-    packPrice: toNumber(packPrice.value), packQty: toNumber(packQty.value),
-    price_modal: toNumber(price_modal.value), price_sell: toNumber(price_sell.value),
-    qty: toNumber(qty.value), minStock: toNumber(minStock.value) || 5, unit: 'pcs'
+    packPrice: toNumber(packPrice.value),
+    packQty: toNumber(packQty.value),
+    price_modal: toNumber(price_modal.value),
+    price_sell: toNumber(price_sell.value),
+    qty: toNumber(qty.value),
+    minStock: toNumber(minStock.value) || 5,
+    unit: 'pcs'
   }, toNumber(price_modal.value))
   router.push('/products')
 })
