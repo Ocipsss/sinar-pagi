@@ -7,7 +7,7 @@ export const productService = {
     return await productRepo.create({
      ...formData,
       price_modal: modalPerPcs,
-      unit: 'pcs'
+      unit: formData.unit || 'pcs',
     })
   }
 }

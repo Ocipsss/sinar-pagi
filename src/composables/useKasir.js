@@ -50,16 +50,20 @@ export function useKasir() {
   })
 
   const load = async () => {
-    const [data, packages, services] = await Promise.all([
-      kasirService.getInitialData(),
-      packageRepository.getAll(),
-      serviceRepository.getAll()
-    ])
-    products.value = data.products
-    members.value = data.members
-    packagesList.value = packages
-    servicesList.value = services
-  }
+  const [data, packages, services] = await Promise.all([
+    kasirService.getInitialData(),
+    packageRepository.getAll(),
+    serviceRepository.getAll()
+  ])
+  products.value = data.products
+  members.value = data.members
+  packagesList.value = packages
+  servicesList.value = services
+
+  // Reset nominal bayar saat halaman kasir dimuat ulang
+  store.bayarNominal = 0
+}
+
 
   const getProductPackages = (productId) => {
     return packagesList.value.filter(pkg => pkg.productId === productId)

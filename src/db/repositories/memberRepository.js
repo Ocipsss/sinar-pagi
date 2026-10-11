@@ -33,33 +33,17 @@ export const memberRepo = {
 
   delete: (id) => db.members.delete(id),
 
-  // Fungsi bayar cicilan utang
-  payDebt: async (memberId, amount, paymentMethod = 'CASH') => {
+  // Catat riwayat pembayaran utang saja (murni DB operation)
+  addDebtPayment: async (paymentData) => {
     const now = dayjs().toISOString()
-    const member = await db.members.get(memberId)
-    if (!member) throw new Error('Member tidak ditemukan')
-
-    const newDebt = Math.max(0, (member.debt || 0) - amount)
-    
-    // Catat histori pembayaran utang
+    const id = paymentData.id || crypto.randomUUID()
     await db.debt_payments.add({
-      id: crypto.randomUUID(),
-      memberId,
-      transactionId: null,
-      date: now,
-      amount,
-      paymentMethod,
+      ...paymentData,
+      id,
+      date: paymentData.date || now,
       updatedAt: now,
       synced: 0
     })
-
-    // Update utang member
-    await db.members.update(memberId, {
-      debt: newDebt,
-      updatedAt: now,
-      synced: 0
-    })
-
-    return newDebt
+    return id
   }
 }

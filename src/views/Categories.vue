@@ -104,7 +104,7 @@
             <button @click="openModal(u)" class="p-2 text-zinc-600 hover:bg-zinc-100 rounded-xl transition">
               <Pencil class="w-4 h-4" />
             </button>
-            <button @click="handleDeleteUnit(u)" class="p-2 text-red-500 hover:bg-red-50 rounded-xl transition">
+            <button @click="deleteUnit(u)" class="p-2 text-red-500 hover:bg-red-50 rounded-xl transition">
               <Trash2 class="w-4 h-4" />
             </button>
           </div>
@@ -153,38 +153,30 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, onMounted, nextTick } from 'vue'
 import { Plus, Search, Pencil, Trash2, X } from 'lucide-vue-next'
 import { useCategories } from '../composables/useCategories.js'
-import { unitRepo } from '../db/repositories/unitRepository.js'
-import { syncRealtime } from '../services/syncService.js'
 
 const activeTab = ref('category')
-const units = ref([])
 
 const {
   categories,
+  units,
   searchQuery,
   filteredCategories,
+  filteredUnits,
   showModal,
   formName,
   editingId,
   inputRef,
   loadCategories,
+  loadUnits,
   openModal: openCatModal,
   saveCategory,
-  deleteCategory
+  deleteCategory,
+  saveUnit,
+  deleteUnit
 } = useCategories()
-
-const filteredUnits = computed(() => {
-  const q = searchQuery.value.toLowerCase().trim()
-  if (!q) return units.value
-  return units.value.filter(u => u.name.toLowerCase().includes(q))
-})
-
-const loadUnits = async () => {
-  units.value = await unitRepo.getAll()
-}
 
 const openModal = (item = null) => {
   if (activeTab.value === 'category') {
@@ -208,24 +200,7 @@ const handleSubmit = async () => {
   if (activeTab.value === 'category') {
     await saveCategory()
   } else {
-    if (editingId.value) {
-      await unitRepo.update(editingId.value, formName.value.trim())
-    } else {
-      await unitRepo.create(formName.value.trim())
-    }
-    showModal.value = false
-    formName.value = ''
-    editingId.value = null
-    await loadUnits()
-    syncRealtime.pushLocalToCloud()
-  }
-}
-
-const handleDeleteUnit = async (u) => {
-  if (confirm(`Hapus satuan "${u.name}"?`)) {
-    await unitRepo.delete(u.id)
-    await loadUnits()
-    syncRealtime.pushLocalToCloud()
+    await saveUnit()
   }
 }
 

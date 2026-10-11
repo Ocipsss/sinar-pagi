@@ -138,7 +138,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onActivated } from 'vue'
 import { RefreshCw, X } from 'lucide-vue-next'
 import { useFinance } from '../composables/useFinance.js'
 import { formatRibuan, formatRp, toNumber } from '../utils/formatters/currency.js'
@@ -165,7 +165,13 @@ const submitSetBalance = async () => {
   showModal.value = false
 }
 
+// Muat data saat komponen pertama dimuat
 onMounted(() => {
+  loadData()
+})
+
+// Muat ulang data setiap kali pengguna berpindah/membuka kembali tab Finance (KeepAlive)
+onActivated(() => {
   loadData()
 })
 </script>

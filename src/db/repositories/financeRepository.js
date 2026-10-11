@@ -135,7 +135,7 @@ export const financeRepo = {
       }
     }
 
-    // 2. Olah transaksi Produk Digital (semua saldo digital dialihkan ke acc_bank)
+        // 2. Olah transaksi Produk Digital
     for (const d of digitalTrx) {
       const isTopup = d.type === 'topup'
       const isCashAdmin = d.adminPaymentMethod === 'cash'
@@ -152,10 +152,13 @@ export const financeRepo = {
             refId: d.id
           })
         }
+
+        // Potong bank sesuai skema potong saldo (nominal - admin)
+        const bankOut = isCashAdmin ? d.nominal : Math.max(0, d.nominal - d.adminFee)
         await this.addMutation({
           accountId: 'acc_bank',
           type: 'OUT',
-          amount: d.nominal,
+          amount: bankOut,
           category: 'Transaksi Digital',
           note: `Modal Top Up ${d.provider}`,
           refId: d.id
@@ -172,15 +175,17 @@ export const financeRepo = {
             refId: d.id
           })
         }
+        
+        const bankIn = isCashAdmin ? d.nominal : d.nominal + d.adminFee
         await this.addMutation({
           accountId: 'acc_bank',
           type: 'IN',
-          amount: d.nominal,
+          amount: bankIn,
           category: 'Transaksi Digital',
           note: `Masuk Saldo Tarik Tunai ${d.provider}`,
           refId: d.id
         })
       }
     }
-  }
+}
 }

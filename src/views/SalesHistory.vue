@@ -195,7 +195,7 @@
 </template>
 
 <script setup>
-import { onMounted } from 'vue'
+import { onMounted, onActivated } from 'vue'
 import { Search, Receipt, Calendar, X } from 'lucide-vue-next'
 import { formatRibuan } from '../utils/formatters/currency.js'
 import { useSalesHistory } from '../composables/useSalesHistory.js'
@@ -212,7 +212,13 @@ const {
   formatDate
 } = useSalesHistory()
 
+// Muat data awal saat komponen pertama kali di-mount
 onMounted(() => {
+  loadHistory()
+})
+
+// Otomatis muat ulang data transaksi setiap kali pengguna masuk ke tab Riwayat Penjualan (KeepAlive)
+onActivated(() => {
   loadHistory()
 })
 </script>

@@ -1,4 +1,3 @@
-```html
 <template>
 <div class="flex-1 overflow-auto p-4 pb-28 space-y-4">
   <!-- Header Title & Quick Action -->
@@ -381,4 +380,3 @@ onMounted(() => {
   loadData()
 })
 </script>
-```

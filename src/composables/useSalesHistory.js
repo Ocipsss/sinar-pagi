@@ -1,5 +1,6 @@
+// src/composables/useSalesHistory.js
 import { ref, computed } from 'vue'
-import { transactionRepo } from '../db/repositories/transactionRepository.js'
+import { salesHistoryService } from '../services/salesHistoryService.js'
 import dayjs from 'dayjs'
 import localeId from 'dayjs/locale/id'
 
@@ -24,7 +25,7 @@ export function useSalesHistory() {
   const loadHistory = async () => {
     loading.value = true
     try {
-      transactions.value = await transactionRepo.getWithDetails()
+      transactions.value = await salesHistoryService.getCombinedHistory()
     } finally {
       loading.value = false
     }
@@ -47,23 +48,20 @@ export function useSalesHistory() {
     })
   })
 
-  // Total Omzet / Arus Kas Fisik Bersih
   const totalOmzet = computed(() => {
     return filteredTransactions.value.reduce((sum, t) => sum + (t.total || 0), 0)
   })
 
-  // Total Piutang TEMPO khusus transaksi barang
   const totalPiutang = computed(() => {
     return filteredTransactions.value
       .filter(t => t.trxType === 'BARANG' && t.paymentMethod === 'TEMPO')
       .reduce((sum, t) => sum + (t.remaining || t.total || 0), 0)
   })
 
-  // Total Keuntungan (Profit) gabungan
   const totalProfit = computed(() => {
     return filteredTransactions.value.reduce((sum, t) => {
       if (t.trxType === 'DIGITAL') return sum + (t.profit || 0)
-      return sum // Profit transaksi barang dihitung terpisah per item jika diperlukan
+      return sum
     }, 0)
   })
 

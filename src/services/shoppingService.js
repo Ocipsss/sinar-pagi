@@ -1,6 +1,6 @@
+// src/services/shoppingService.js
 import { shoppingRepository } from '../db/repositories/shoppingRepository.js'
 import { productRepo } from '../db/repositories/productRepository.js'
-import { syncRealtime } from './syncService.js'
 
 export const shoppingService = {
   async getShoppingItems() {
@@ -11,10 +11,7 @@ export const shoppingService = {
     const allProducts = await productRepo.getAll()
     const currentShoppingList = await shoppingRepository.getAll()
     
-    // Ambil produk yang stoknya <= minStock
     const lowStockProducts = allProducts.filter(p => (p.qty || 0) <= (p.minStock || 5))
-    
-    // Filter produk yang belum ada di daftar belanjaan (aktif / belum dibeli)
     const existingProductIds = new Set(
       currentShoppingList.filter(i => !i.isBought).map(i => i.productId).filter(Boolean)
     )
@@ -22,7 +19,6 @@ export const shoppingService = {
     const itemsToAdd = []
     for (const p of lowStockProducts) {
       if (!existingProductIds.has(p.id)) {
-        // Estimasi jumlah yang perlu dibeli = packQty jika ada, atau selisih ke target
         const targetQty = (p.packQty && p.packQty > 0) ? p.packQty : Math.max(10, (p.minStock || 5) * 2 - (p.qty || 0))
         
         itemsToAdd.push({
@@ -40,7 +36,7 @@ export const shoppingService = {
 
     if (itemsToAdd.length > 0) {
       await shoppingRepository.addBulk(itemsToAdd)
-      syncRealtime.pushLocalToCloud()
+      // syncRealtime.pushLocalToCloud() -> Dihapus, ditangani Dexie Hook
     }
 
     return itemsToAdd.length
@@ -50,15 +46,12 @@ export const shoppingService = {
     const newStatus = !item.isBought
     await shoppingRepository.update(item.id, { isBought: newStatus })
 
-    // Jika ditandai "Sudah Dibeli", update stok produk di master produk (jika terhubung ke productId)
     if (newStatus && item.productId) {
       const product = await productRepo.getById(item.productId)
       if (product) {
-        // Hitung penambahan stok
         const qtyToAdd = Number(item.qty) || 0
         const updatedQty = (product.qty || 0) + qtyToAdd
 
-        // Jika ada perubahan estimasi harga modal per pcs, perbarui juga jika diset
         const changes = { qty: updatedQty }
         if (item.estimatedPrice && item.qty > 0 && !product.packQty) {
           changes.price_modal = Math.round(item.estimatedPrice / item.qty)
@@ -68,7 +61,7 @@ export const shoppingService = {
       }
     }
 
-    syncRealtime.pushLocalToCloud()
+    // syncRealtime.pushLocalToCloud() -> Dihapus, ditangani Dexie Hook
     return newStatus
   },
 
@@ -84,18 +77,18 @@ export const shoppingService = {
       notes: data.notes || ''
     })
 
-    syncRealtime.pushLocalToCloud()
+    // syncRealtime.pushLocalToCloud() -> Dihapus, ditangani Dexie Hook
     return newItem
   },
 
   async removeItem(id) {
     await shoppingRepository.delete(id)
-    syncRealtime.pushLocalToCloud()
+    // syncRealtime.pushLocalToCloud() -> Dihapus, ditangani Dexie Hook
   },
 
   async clearCompleted() {
     const count = await shoppingRepository.clearBought()
-    syncRealtime.pushLocalToCloud()
+    // syncRealtime.pushLocalToCloud() -> Dihapus, ditangani Dexie Hook
     return count
   }
 }

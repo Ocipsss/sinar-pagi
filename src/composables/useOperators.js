@@ -1,7 +1,6 @@
 // src/composables/useOperators.js
 import { ref, computed } from 'vue'
 import { operatorRepo } from '../db/repositories/operatorRepository.js'
-import { syncRealtime } from '../services/syncService.js'
 
 export function useOperators() {
   const operators = ref([])
@@ -45,14 +44,14 @@ export function useOperators() {
 
     showModal.value = false
     await loadOperators()
-    syncRealtime.pushLocalToCloud()
+    // syncRealtime.pushLocalToCloud() -> Dihapus, ditangani Dexie Hook
   }
 
   const deleteOperator = async (op) => {
     if (confirm(`Hapus operator / kasir "${op.name}"?`)) {
       await operatorRepo.delete(op.id)
       await loadOperators()
-      syncRealtime.pushLocalToCloud()
+      // syncRealtime.pushLocalToCloud() -> Dihapus, ditangani Dexie Hook
     }
   }
 

@@ -137,6 +137,27 @@
         </div>
 
         <form @submit.prevent="submitPayDebt" class="space-y-3">
+          <!-- Pilihan Metode Pembayaran (CASH / QRIS) -->
+          <div>
+            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Metode Pembayaran</label>
+            <div class="grid grid-cols-2 gap-2">
+              <button 
+                type="button"
+                @click="paymentMethod = 'CASH'" 
+                :class="['py-2.5 rounded-xl text-xs font-bold border transition', paymentMethod === 'CASH' ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-zinc-50 border-zinc-200 text-zinc-600']"
+              >
+                Tunai (CASH)
+              </button>
+              <button 
+                type="button"
+                @click="paymentMethod = 'QRIS'" 
+                :class="['py-2.5 rounded-xl text-xs font-bold border transition', paymentMethod === 'QRIS' ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-zinc-50 border-zinc-200 text-zinc-600']"
+              >
+                QRIS / Bank
+              </button>
+            </div>
+          </div>
+
           <div>
             <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Nominal Bayar *</label>
             <input 
@@ -160,7 +181,9 @@
 
           <div class="flex gap-2 pt-2">
             <button type="button" @click="showPayModal = false" class="flex-1 py-3 bg-zinc-100 font-bold text-xs rounded-xl">Batal</button>
-            <button type="submit" :disabled="payAmount <= 0" class="flex-1 py-3 bg-zinc-900 disabled:bg-zinc-300 text-white font-bold text-xs rounded-xl shadow-md">Proses Bayar</button>
+            <button type="submit" :disabled="payAmount <= 0" class="flex-1 py-3 bg-zinc-900 disabled:bg-zinc-300 text-white font-bold text-xs rounded-xl shadow-md">
+              Proses Bayar ({{ paymentMethod }})
+            </button>
           </div>
         </form>
       </div>
@@ -184,6 +207,7 @@ const {
   showPayModal,
   selectedMemberForPay,
   payAmount,
+  paymentMethod,
   loadMembers,
   openModal,
   saveMember,

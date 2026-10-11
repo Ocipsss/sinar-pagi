@@ -20,7 +20,7 @@ export const productsDigitalService = {
       nominal,
       adminFee,
       adminPaymentMethod: data.adminPaymentMethod,
-      totalReceived: nominal + adminFee,
+      totalReceived: isTopup && isCashAdmin ? nominal + adminFee : nominal,
       profit: adminFee,
       synced: 0
     }
@@ -28,7 +28,8 @@ export const productsDigitalService = {
     const result = await db.digital_transactions.add(doc)
 
     if (isTopup) {
-      // 1. Uang Tunai Masuk Laci (Nominal + Fee Admin tunai)
+      // TOP UP:
+      // 1. Uang Tunai Masuk Laci (Selalu sebesar Nominal Tunai yang diterima dari pelanggan)
       const cashIn = nominal + (isCashAdmin ? adminFee : 0)
       if (cashIn > 0) {
         await financeRepo.addMutation({
@@ -41,17 +42,20 @@ export const productsDigitalService = {
         })
       }
 
-      // 2. Saldo Rekening/Bank/Digital Terpotong Nominal
+      // 2. Saldo Rekening/Bank Terpotong
+      // Jika Admin Potong Saldo: Bank terpotong = Nominal - Admin (misal 20rb - 2rb = 18rb)
+      // Jika Admin Tunai: Bank terpotong = Nominal Utuh (20rb)
+      const bankOut = isCashAdmin ? nominal : Math.max(0, nominal - adminFee)
       await financeRepo.addMutation({
         accountId: 'acc_bank',
         type: 'OUT',
-        amount: nominal,
+        amount: bankOut,
         category: 'Transaksi Digital',
         note: `Modal Top Up ${doc.provider}`,
         refId: id
       })
     } else {
-      // Tarik Tunai:
+      // TARIK TUNAI:
       // 1. Uang Tunai Keluar dari Laci
       const cashOut = nominal - (isCashAdmin ? adminFee : 0)
       if (cashOut > 0) {
@@ -65,11 +69,12 @@ export const productsDigitalService = {
         })
       }
 
-      // 2. Saldo Rekening/Bank/Digital Bertambah dari Penarikan
+      // 2. Saldo Rekening/Bank Bertambah
+      const bankIn = isCashAdmin ? nominal : nominal + adminFee
       await financeRepo.addMutation({
         accountId: 'acc_bank',
         type: 'IN',
-        amount: nominal,
+        amount: bankIn,
         category: 'Transaksi Digital',
         note: `Masuk Saldo Tarik Tunai ${doc.provider}`,
         refId: id

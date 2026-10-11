@@ -1,3 +1,4 @@
+// src/db/index.js
 import Dexie from 'dexie'
 
 export const db = new Dexie('SinarPagiDB')
@@ -35,6 +36,45 @@ db.version(1).stores({
   units: 'id, name, updatedAt, synced',
   operators: 'id, name, role, pin, updatedAt, synced',
   settings: 'id'
+})
+
+// --- DEXIE HOOKS UNTUK AUTOMATIC CLOUD SYNC ---
+// Impor dinamis untuk menghindari circular dependency saat inisialisasi DB
+let syncServiceInstance = null
+const triggerDebouncedSync = () => {
+  if (!syncServiceInstance) {
+    import('../services/syncService.js').then(module => {
+      syncServiceInstance = module.syncRealtime || module.default
+      syncServiceInstance?.pushLocalToCloud()
+    })
+  } else {
+    syncServiceInstance.pushLocalToCloud()
+  }
+}
+
+// Pasang hook pada semua tabel
+db.tables.forEach(table => {
+  table.hook('creating', function (primKey, obj, transaction) {
+    // Jalankan sync setelah transaksi database lokal sukses disimpan
+    transaction.on('complete', () => {
+      triggerDebouncedSync()
+    })
+  })
+
+  table.hook('updating', function (mods, primKey, obj, transaction) {
+    // Hanya picu sync jika pembaruan berasal dari perubahan lokal (synced: 0)
+    if (mods.synced === 0 || !('synced' in mods)) {
+      transaction.on('complete', () => {
+        triggerDebouncedSync()
+      })
+    }
+  })
+
+  table.hook('deleting', function (primKey, obj, transaction) {
+    transaction.on('complete', () => {
+      triggerDebouncedSync()
+    })
+  })
 })
 
 export default db

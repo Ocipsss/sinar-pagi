@@ -38,7 +38,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onActivated } from 'vue'
 import { Line } from 'vue-chartjs'
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler } from 'chart.js'
 import { useDashboard } from '../composables/useDashboard.js'
@@ -47,10 +47,10 @@ import { formatRibuan } from '../utils/formatters/currency.js'
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler)
 
 const { stats, lowProducts, chartRaw, loading, load } = useDashboard()
-const today = new Date().toLocaleDateString('id-ID', { weekday:'long', day:'numeric', month:'long' })
+const today = new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long' })
 
 const chartReady = ref(false)
-const chartData = ref({ labels:[], datasets:[] })
+const chartData = ref({ labels: [], datasets: [] })
 const chartOptions = { 
   responsive: true, 
   maintainAspectRatio: false, 
@@ -58,7 +58,7 @@ const chartOptions = {
   scales: { y: { display: false }, x: { grid: { display: false } } } 
 }
 
-onMounted(async () => {
+const initDashboard = async () => {
   try {
     await load()
     if (chartRaw.value && Array.isArray(chartRaw.value)) {
@@ -77,5 +77,9 @@ onMounted(async () => {
   } catch (e) {
     console.error('Gagal memuat dashboard:', e)
   }
-})
+}
+
+onMounted(initDashboard)
+// Memastikan data kembali diperbarui ketika pengguna berpindah kembali ke tab ini (KeepAlive)
+onActivated(initDashboard)
 </script>

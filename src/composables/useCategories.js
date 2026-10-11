@@ -1,10 +1,11 @@
 // src/composables/useCategories.js
 import { ref, computed, nextTick } from 'vue'
 import { categoryRepo } from '../db/repositories/categoryRepository.js'
-import { syncRealtime } from '../services/syncService.js'
+import { unitRepo } from '../db/repositories/unitRepository.js'
 
 export function useCategories() {
   const categories = ref([])
+  const units = ref([])
   const searchQuery = ref('')
   const showModal = ref(false)
   const formName = ref('')
@@ -17,8 +18,18 @@ export function useCategories() {
     return categories.value.filter(c => c.name.toLowerCase().includes(q))
   })
 
+  const filteredUnits = computed(() => {
+    const q = searchQuery.value.toLowerCase().trim()
+    if (!q) return units.value
+    return units.value.filter(u => u.name.toLowerCase().includes(q))
+  })
+
   const loadCategories = async () => {
     categories.value = await categoryRepo.getAll()
+  }
+
+  const loadUnits = async () => {
+    units.value = await unitRepo.getAll()
   }
 
   const openModal = (cat = null) => {
@@ -47,28 +58,58 @@ export function useCategories() {
     editingId.value = null
 
     await loadCategories()
-    syncRealtime.pushLocalToCloud()
+    // syncRealtime.pushLocalToCloud() -> Dihapus, ditangani Dexie Hook
   }
 
   const deleteCategory = async (cat) => {
     if (confirm(`Hapus kategori "${cat.name}"?`)) {
       await categoryRepo.delete(cat.id)
       await loadCategories()
-      syncRealtime.pushLocalToCloud()
+      // syncRealtime.pushLocalToCloud() -> Dihapus, ditangani Dexie Hook
+    }
+  }
+
+  const saveUnit = async () => {
+    if (!formName.value.trim()) return
+
+    if (editingId.value) {
+      await unitRepo.update(editingId.value, formName.value.trim())
+    } else {
+      await unitRepo.create(formName.value.trim())
+    }
+
+    showModal.value = false
+    formName.value = ''
+    editingId.value = null
+
+    await loadUnits()
+    // syncRealtime.pushLocalToCloud() -> Dihapus, ditangani Dexie Hook
+  }
+
+  const deleteUnit = async (u) => {
+    if (confirm(`Hapus satuan "${u.name}"?`)) {
+      await unitRepo.delete(u.id)
+      await loadUnits()
+      // syncRealtime.pushLocalToCloud() -> Dihapus, ditangani Dexie Hook
     }
   }
 
   return {
     categories,
+    units,
     searchQuery,
     filteredCategories,
+    filteredUnits,
     showModal,
     formName,
     editingId,
     inputRef,
     loadCategories,
+    loadUnits,
     openModal,
     saveCategory,
-    deleteCategory
+    deleteCategory,
+    saveUnit,
+    deleteUnit
   }
 }
