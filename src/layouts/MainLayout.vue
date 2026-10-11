@@ -110,18 +110,6 @@ const isKasirPage = computed(() => route.path.startsWith('/kasir'))
 
 const groups = ref([
   { 
-    title: 'MASTER DATA', 
-    items: [
-      { name: 'Dashboard', icon: LayoutDashboard, to: '/dashboard' },
-      { name: 'Barang', icon: Package, to: '/products' },
-      { name: 'Kategori & Satuan', icon: Tags, to: '/categories' },
-      { name: 'Atur Rokok & Seduh', icon: Coffee, to: '/settings-menu' },
-      { name: 'Member', icon: Users, to: '/members' },
-      { name: 'Tambah Barang', icon: Plus, to: '/add-products' },
-      { name: 'Operator / Kasir', icon: Users, to: '/operators' },
-    ]
-  },
-  { 
     title: 'TRANSAKSI', 
     items: [
       { name: 'Kasir', icon: Store, to: '/kasir' },
@@ -138,12 +126,25 @@ const groups = ref([
     ]
   },
   { 
+    title: 'MASTER DATA', 
+    items: [
+      { name: 'Dashboard', icon: LayoutDashboard, to: '/dashboard' },
+      { name: 'Barang', icon: Package, to: '/products' },
+      { name: 'Kategori & Satuan', icon: Tags, to: '/categories' },
+      { name: 'Atur Rokok & Seduh', icon: Coffee, to: '/settings-menu' },
+      { name: 'Member', icon: Users, to: '/members' },
+      { name: 'Tambah Barang', icon: Plus, to: '/add-products' },
+      { name: 'Operator / Kasir', icon: Users, to: '/operators' },
+    ]
+  },
+  { 
     title: 'PENGATURAN', 
     items: [
       { name: 'Pengaturan Toko', icon: Settings, to: '/settings' }
     ]
   }
 ])
+
 
 
 const handleSelect = (m) => {

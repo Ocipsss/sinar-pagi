@@ -30,10 +30,39 @@ export function useKasir() {
     }
   })
 
-  const filteredProducts = computed(() => {
+    const filteredProducts = computed(() => {
     const qq = q.value.toLowerCase().trim()
     if (!qq) return products.value.slice(0, 15)
-    return products.value.filter(p => p.name.toLowerCase().includes(qq) || (p.code || '').toLowerCase().includes(qq)).slice(0, 20)
+
+    return products.value
+      .filter(p => {
+        const nameMatch = p.name.toLowerCase().includes(qq)
+        const codeMatch = (p.code || '').toLowerCase().includes(qq)
+        return nameMatch || codeMatch
+      })
+      .sort((a, b) => {
+        const nameA = a.name.toLowerCase()
+        const nameB = b.name.toLowerCase()
+
+        const idxA = nameA.indexOf(qq)
+        const idxB = nameB.indexOf(qq)
+
+        // 1. Jika dua-duanya ditemukan di nama, urutkan berdasarkan posisi huruf terdepan (indexOf terkecil)
+        if (idxA !== -1 && idxB !== -1) {
+          if (idxA !== idxB) {
+            return idxA - idxB
+          }
+          // Jika posisi indeksnya sama, urutkan secara abjad
+          return nameA.localeCompare(nameB)
+        }
+
+        // 2. Jika salah satu ketemu di nama dan yang lain hanya di kode, utamakan yang di nama
+        if (idxA !== -1) return -1
+        if (idxB !== -1) return 1
+
+        return 0
+      })
+      .slice(0, 20)
   })
 
   const filteredMembers = computed(() => {

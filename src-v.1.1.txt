@@ -743,18 +743,6 @@ const isKasirPage = computed(() => route.path.startsWith('/kasir'))
 
 const groups = ref([
   { 
-    title: 'MASTER DATA', 
-    items: [
-      { name: 'Dashboard', icon: LayoutDashboard, to: '/dashboard' },
-      { name: 'Barang', icon: Package, to: '/products' },
-      { name: 'Kategori & Satuan', icon: Tags, to: '/categories' },
-      { name: 'Atur Rokok & Seduh', icon: Coffee, to: '/settings-menu' },
-      { name: 'Member', icon: Users, to: '/members' },
-      { name: 'Tambah Barang', icon: Plus, to: '/add-products' },
-      { name: 'Operator / Kasir', icon: Users, to: '/operators' },
-    ]
-  },
-  { 
     title: 'TRANSAKSI', 
     items: [
       { name: 'Kasir', icon: Store, to: '/kasir' },
@@ -771,12 +759,25 @@ const groups = ref([
     ]
   },
   { 
+    title: 'MASTER DATA', 
+    items: [
+      { name: 'Dashboard', icon: LayoutDashboard, to: '/dashboard' },
+      { name: 'Barang', icon: Package, to: '/products' },
+      { name: 'Kategori & Satuan', icon: Tags, to: '/categories' },
+      { name: 'Atur Rokok & Seduh', icon: Coffee, to: '/settings-menu' },
+      { name: 'Member', icon: Users, to: '/members' },
+      { name: 'Tambah Barang', icon: Plus, to: '/add-products' },
+      { name: 'Operator / Kasir', icon: Users, to: '/operators' },
+    ]
+  },
+  { 
     title: 'PENGATURAN', 
     items: [
       { name: 'Pengaturan Toko', icon: Settings, to: '/settings' }
     ]
   }
 ])
+
 
 
 const handleSelect = (m) => {
@@ -1691,18 +1692,81 @@ export const backupService = {
       const reader = new FileReader()
       reader.onload = async (e) => {
         try {
-          const importedData = JSON.parse(e.target.result)
-          for (const tableName of Object.keys(importedData)) {
-            if (db[tableName]) {
-              await db[tableName].clear()
-              await db[tableName].bulkPut(importedData[tableName])
+          const rawParsed = JSON.parse(e.target.result)
+          // Menangani jika data dibungkus dalam object { database: ... } atau langsung root JSON
+          const importedData = rawParsed.database || rawParsed
+
+          // Menggunakan Dexie Transaction untuk keamanan data (Atomicity)
+          await db.transaction('rw', db.tables, async () => {
+            // 1. Kosongkan semua tabel lama sebelum me-restore
+            for (const table of db.tables) {
+              await table.clear()
             }
-          }
+
+            // 2. Restore tabel biasa yang kompatibel 1-to-1
+            for (const tableName of Object.keys(importedData)) {
+              if (tableName !== 'transactions' && db[tableName]) {
+                const rows = importedData[tableName]
+                if (Array.isArray(rows) && rows.length > 0) {
+                  // Pastikan fieldSynced bernilai 0 jika belum ada agar ikut masuk antrean cloud sync
+                  const preparedRows = rows.map(item => ({
+                    ...item,
+                    synced: item.synced ?? 0
+                  }))
+                  await db[tableName].bulkPut(preparedRows)
+                }
+              }
+            }
+
+            // 3. Restrukturisasi Khusus untuk Transaksi (Ekstrak items ke transaction_items)
+            if (importedData.transactions && Array.isArray(importedData.transactions)) {
+              const transactionsToPut = []
+              const itemsToPut = []
+
+              importedData.transactions.forEach(trx => {
+                // Pisahkan array items dari objek transaksi utama
+                const { items, ...trxData } = trx
+
+                transactionsToPut.push({
+                  ...trxData,
+                  synced: trxData.synced ?? 0
+                })
+
+                // Ekstrak items ke tabel transaction_items
+                if (items && Array.isArray(items)) {
+                  items.forEach((item, index) => {
+                    itemsToPut.push({
+                      id: item.id || `${trx.id}_item_${index}`,
+                      transactionId: trx.id,
+                      productId: item.productId || item.cartId || item.id || null,
+                      serviceId: item.serviceId || (item.extraCharge ? item.id : null),
+                      name: item.name || item.productName || 'Barang',
+                      qty: Number(item.qty || item.cartQty || 1),
+                      price: Number(item.price || item.price_sell || 0),
+                      subtotal: Number(item.subtotal || (item.price_sell * (item.cartQty || item.qty))) || 0,
+                      updatedAt: item.updatedAt || trx.date || new Date().toISOString(),
+                      synced: 0
+                    })
+                  })
+                }
+              })
+
+              if (transactionsToPut.length > 0) {
+                await db.transactions.bulkPut(transactionsToPut)
+              }
+              if (itemsToPut.length > 0) {
+                await db.transaction_items.bulkPut(itemsToPut)
+              }
+            }
+          })
+
           resolve(true)
         } catch (err) {
+          console.error('Error saat impor backup:', err)
           reject(err)
         }
       }
+
       reader.onerror = () => reject(new Error('Gagal membaca file backup'))
       reader.readAsText(file)
     })
@@ -1800,17 +1864,37 @@ export const useProductsStore = defineStore('products', {
     searchQuery: '',
     loading: false 
   }),
-  getters: {
+    getters: {
     filteredProducts: (state) => {
       const q = state.searchQuery.toLowerCase().trim()
       if (!q) return state.list
-      return state.list.filter(p => 
-        p.name.toLowerCase().includes(q) || 
-        (p.code || '').toLowerCase().includes(q) ||
-        (p.category || '').toLowerCase().includes(q)
-      )
+
+      return state.list
+        .filter(p => 
+          p.name.toLowerCase().includes(q) || 
+          (p.code || '').toLowerCase().includes(q) ||
+          (p.category || '').toLowerCase().includes(q)
+        )
+        .sort((a, b) => {
+          const nameA = a.name.toLowerCase()
+          const nameB = b.name.toLowerCase()
+
+          const idxA = nameA.indexOf(q)
+          const idxB = nameB.indexOf(q)
+
+          if (idxA !== -1 && idxB !== -1) {
+            if (idxA !== idxB) return idxA - idxB
+            return nameA.localeCompare(nameB)
+          }
+
+          if (idxA !== -1) return -1
+          if (idxB !== -1) return 1
+
+          return 0
+        })
     }
   },
+
   actions: {
     async fetch() { 
       this.loading = true
@@ -2866,17 +2950,25 @@ const { form, estimasiKas, loading, saveTransaction } = useProductsDigital()
 <div class="flex-1 overflow-auto p-4 pb-24">
   <!-- HEADER -->
   <div class="flex justify-between items-center mb-4">
-    <h1 class="font-black text-xl">Daftar Barang ({{ filtered.length }})</h1>
-    <button @click="showFilter=true" class="p-2.5 bg-zinc-900 text-white rounded-xl relative">
-      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4h13M3 8h9m-9 4h6m4 0l4-4m0 0l4 4m-4-4v12"/></svg>
-      <span v-if="isFiltered" class="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full"></span>
-    </button>
+    <div>
+      <h1 class="font-black text-xl text-zinc-900">Daftar Barang ({{ filtered.length }})</h1>
+      <p class="text-xs text-zinc-400">Kelola master data produk toko</p>
+    </div>
+    <div class="flex gap-2">
+      <router-link to="/add-products" class="bg-zinc-900 text-white px-3.5 py-2.5 rounded-2xl font-bold text-xs flex items-center gap-1.5 active:scale-95 transition shadow-sm">
+        <Plus class="w-4 h-4"/> Tambah
+      </router-link>
+      <button @click="showFilter=true" class="p-2.5 bg-white border border-zinc-200 text-zinc-700 rounded-2xl relative active:scale-95 transition shadow-sm">
+        <Filter class="w-4 h-4"/>
+        <span v-if="isFiltered" class="absolute -top-1 -right-1 w-2.5 h-2.5 bg-red-500 rounded-full"></span>
+      </button>
+    </div>
   </div>
 
   <!-- SEARCH -->
   <div class="relative mb-3">
-    <input v-model="q" placeholder="Cari nama / kode..." class="w-full pl-11 pr-4 py-3 bg-white border border-zinc-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900"/>
-    <span class="absolute left-4 top-1/2 -translate-y-1/2 text-zinc-400">⌕</span>
+    <Search class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400"/>
+    <input v-model="q" placeholder="Cari nama / kode..." class="w-full pl-11 pr-4 py-3 bg-white border border-zinc-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"/>
   </div>
 
   <!-- CHIP FILTER AKTIF -->
@@ -2886,27 +2978,56 @@ const { form, estimasiKas, loading, saveTransaction } = useProductsDigital()
     <button @click="resetFilter" class="text-[10px] bg-zinc-100 px-3 py-1.5 rounded-full font-bold">Reset</button>
   </div>
 
-  <!-- LIST -->
-  <div v-for="p in filtered" :key="p.id" class="p-4 bg-white rounded-2xl border mb-2 flex justify-between active:scale-[0.98] transition">
-    <div class="flex-1">
-      <div class="font-bold text-sm">{{ p.name }}</div>
-      <div class="text-[11px] text-zinc-400 flex gap-2 mt-1">
-        <span>{{ p.code }}</span>
+  <!-- LIST BARANG -->
+  <div v-for="p in filtered" :key="p.id" class="p-4 bg-white rounded-2xl border border-zinc-100 mb-2 flex justify-between items-center shadow-sm">
+    <div class="flex-1 min-w-0 pr-2">
+      <div class="font-bold text-sm text-zinc-900 truncate">{{ p.name }}</div>
+      <div class="text-[11px] text-zinc-400 flex items-center gap-1.5 mt-0.5">
+        <span>{{ p.code || 'Tanpa Barcode' }}</span>
         <span>•</span>
-        <span :class="p.category?'text-zinc-900 font-bold':''">{{ p.category || 'Tanpa Kategori' }}</span>
+        <span class="font-bold text-zinc-700">{{ p.category || 'Umum' }}</span>
         <span>•</span>
-        <span>Stok {{ p.qty }}</span>
+        <span>Stok: <strong class="text-zinc-900">{{ p.qty }} {{ p.unit || 'pcs' }}</strong></span>
       </div>
-      <div class="text-[11px] text-zinc-500 mt-1">Modal Rp {{ formatRibuan(p.price_modal) }} → Jual Rp {{ formatRibuan(p.price_sell) }}</div>
+      <div class="text-[11px] text-zinc-500 mt-1">
+        Modal Rp {{ formatRibuan(p.price_modal) }} → <strong class="text-emerald-700">Jual Rp {{ formatRibuan(p.price_sell) }}</strong>
+      </div>
     </div>
-    <div class="ml-3 flex flex-col items-end gap-1">
-      <span v-if="p.qty===0" class="text-[10px] bg-zinc-900 text-white px-2 py-1 rounded-full font-black">HABIS</span>
-      <span v-else-if="p.qty <= p.minStock" class="text-[10px] bg-red-100 text-red-600 px-2 py-1 rounded-full font-black">TIPIS</span>
-      <span v-else class="text-[10px] bg-green-100 text-green-700 px-2 py-1 rounded-full font-black">AMAN</span>
+
+    <div class="flex flex-col items-end gap-2 shrink-0">
+      <div>
+        <span v-if="p.qty===0" class="text-[10px] bg-zinc-900 text-white px-2.5 py-1 rounded-full font-black">HABIS</span>
+        <span v-else-if="p.qty <= (p.minStock || 5)" class="text-[10px] bg-red-100 text-red-600 px-2.5 py-1 rounded-full font-black">TIPIS</span>
+        <span v-else class="text-[10px] bg-emerald-100 text-emerald-700 px-2.5 py-1 rounded-full font-black">AMAN</span>
+      </div>
+
+      <!-- AKSI EDIT & HAPUS -->
+      <div class="flex items-center gap-1">
+        <button @click="openEditModal(p)" title="Edit Barang" class="p-2 text-zinc-600 hover:bg-zinc-100 rounded-xl transition">
+          <Pencil class="w-4 h-4"/>
+        </button>
+        <button @click="handleDelete(p)" title="Hapus Barang" class="p-2 text-red-500 hover:bg-red-50 rounded-xl transition">
+          <Trash2 class="w-4 h-4"/>
+        </button>
+      </div>
     </div>
   </div>
 
   <div v-if="filtered.length===0" class="py-20 text-center text-sm text-zinc-400 font-bold">Barang tidak ditemukan</div>
+
+  <!-- MODAL EDIT BARANG (PRODUCT FORM) -->
+  <div v-if="showEditModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+    <div class="w-full max-w-lg bg-white rounded-t-[2rem] sm:rounded-[2rem] p-5 shadow-xl max-h-[90vh] flex flex-col">
+      <div class="flex justify-between items-center mb-3 shrink-0">
+        <h2 class="font-black text-base text-zinc-900">Edit Data Barang</h2>
+        <button @click="showEditModal=false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
+      </div>
+
+      <div class="overflow-auto flex-1 pr-1">
+        <ProductForm :initialData="selectedProduct" @success="handleEditSuccess" />
+      </div>
+    </div>
+  </div>
 
   <!-- MODAL FILTER -->
   <div v-if="showFilter" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end">
@@ -2955,7 +3076,10 @@ const { form, estimasiKas, loading, saveTransaction } = useProductsDigital()
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { Plus, Search, Filter, Pencil, Trash2, X } from 'lucide-vue-next'
 import { useProductsStore } from '../stores/productStore.js'
+import { formatRibuan } from '../utils/formatters/currency.js'
+import ProductForm from '../components/product/ProductForm.vue'
 
 const store = useProductsStore()
 const q = ref('')
@@ -2964,48 +3088,72 @@ const filterStok = ref('all')
 const sortBy = ref('name-asc')
 const showFilter = ref(false)
 
-const formatRibuan = (n) => new Intl.NumberFormat('id-ID').format(n||0)
+// State Modal Edit
+const showEditModal = ref(false)
+const selectedProduct = ref(null)
 
 const categories = computed(() => {
-  const cats = new Set(store.list.map(p=>p.category).filter(Boolean))
-  return ['all',...Array.from(cats)]
+  const cats = new Set(store.list.map(p => p.category).filter(Boolean))
+  return ['all', ...Array.from(cats)]
 })
 
 const stokOptions = [
-  { value:'all', label:'Semua' },
-  { value:'tipis', label:'Tipis (≤ minStok)' },
-  { value:'habis', label:'Habis (0)' },
-  { value:'aman', label:'Aman' },
+  { value: 'all', label: 'Semua' },
+  { value: 'tipis', label: 'Tipis (≤ minStok)' },
+  { value: 'habis', label: 'Habis (0)' },
+  { value: 'aman', label: 'Aman' },
 ]
 
-const labelStok = computed(()=> stokOptions.find(s=>s.value===filterStok.value)?.label || 'All')
-const isFiltered = computed(()=> filterKategori.value!=='all' || filterStok.value!=='all' || q.value)
+const labelStok = computed(() => stokOptions.find(s => s.value === filterStok.value)?.label || 'All')
+const isFiltered = computed(() => filterKategori.value !== 'all' || filterStok.value !== 'all' || q.value)
 
-const filtered = computed(()=>{
-  let list = store.list.filter(p=> {
-    const matchQ =!q.value || p.name.toLowerCase().includes(q.value.toLowerCase()) || (p.code||'').toLowerCase().includes(q.value.toLowerCase())
-    const matchCat = filterKategori.value==='all' || p.category===filterKategori.value
+const filtered = computed(() => {
+  let list = store.list.filter(p => {
+    const matchQ = !q.value || p.name.toLowerCase().includes(q.value.toLowerCase()) || (p.code || '').toLowerCase().includes(q.value.toLowerCase())
+    const matchCat = filterKategori.value === 'all' || p.category === filterKategori.value
     let matchStok = true
-    if(filterStok.value==='tipis') matchStok = p.qty <= (p.minStock||5) && p.qty>0
-    if(filterStok.value==='habis') matchStok = p.qty===0
-    if(filterStok.value==='aman') matchStok = p.qty > (p.minStock||5)
+    if (filterStok.value === 'tipis') matchStok = p.qty <= (p.minStock || 5) && p.qty > 0
+    if (filterStok.value === 'habis') matchStok = p.qty === 0
+    if (filterStok.value === 'aman') matchStok = p.qty > (p.minStock || 5)
     return matchQ && matchCat && matchStok
   })
 
-  if(sortBy.value==='name-asc') list = list.sort((a,b)=>a.name.localeCompare(b.name))
-  if(sortBy.value==='name-desc') list = list.sort((a,b)=>b.name.localeCompare(a.name))
-  if(sortBy.value==='stok-asc') list = list.sort((a,b)=>a.qty-b.qty)
-  if(sortBy.value==='stok-desc') list = list.sort((a,b)=>b.qty-a.qty)
-  if(sortBy.value==='harga-desc') list = list.sort((a,b)=>(b.price_sell||0)-(a.price_sell||0))
-  if(sortBy.value==='harga-asc') list = list.sort((a,b)=>(a.price_sell||0)-(b.price_sell||0))
+  if (sortBy.value === 'name-asc') list = list.sort((a, b) => a.name.localeCompare(b.name))
+  if (sortBy.value === 'name-desc') list = list.sort((a, b) => b.name.localeCompare(a.name))
+  if (sortBy.value === 'stok-asc') list = list.sort((a, b) => a.qty - b.qty)
+  if (sortBy.value === 'stok-desc') list = list.sort((a, b) => b.qty - a.qty)
+  if (sortBy.value === 'harga-desc') list = list.sort((a, b) => (b.price_sell || 0) - (a.price_sell || 0))
+  if (sortBy.value === 'harga-asc') list = list.sort((a, b) => (a.price_sell || 0) - (b.price_sell || 0))
 
   return list
 })
 
-const resetFilter = () => { filterKategori.value='all'; filterStok.value='all'; q.value=''; sortBy.value='name-asc' }
+const resetFilter = () => {
+  filterKategori.value = 'all'
+  filterStok.value = 'all'
+  q.value = ''
+  sortBy.value = 'name-asc'
+}
 
-onMounted(()=> store.fetch())
+const openEditModal = (p) => {
+  selectedProduct.value = p
+  showEditModal.value = true
+}
+
+const handleEditSuccess = () => {
+  showEditModal.value = false
+  selectedProduct.value = null
+}
+
+const handleDelete = async (p) => {
+  if (confirm(`Hapus barang "${p.name}"?`)) {
+    await store.remove(p.id)
+  }
+}
+
+onMounted(() => store.fetch())
 </script>
+
 ===== src/views/Reports.vue =====
 <template>
 <div class="flex-1 overflow-auto p-4 pb-28 space-y-4">
@@ -4945,10 +5093,39 @@ export function useKasir() {
     }
   })
 
-  const filteredProducts = computed(() => {
+    const filteredProducts = computed(() => {
     const qq = q.value.toLowerCase().trim()
     if (!qq) return products.value.slice(0, 15)
-    return products.value.filter(p => p.name.toLowerCase().includes(qq) || (p.code || '').toLowerCase().includes(qq)).slice(0, 20)
+
+    return products.value
+      .filter(p => {
+        const nameMatch = p.name.toLowerCase().includes(qq)
+        const codeMatch = (p.code || '').toLowerCase().includes(qq)
+        return nameMatch || codeMatch
+      })
+      .sort((a, b) => {
+        const nameA = a.name.toLowerCase()
+        const nameB = b.name.toLowerCase()
+
+        const idxA = nameA.indexOf(qq)
+        const idxB = nameB.indexOf(qq)
+
+        // 1. Jika dua-duanya ditemukan di nama, urutkan berdasarkan posisi huruf terdepan (indexOf terkecil)
+        if (idxA !== -1 && idxB !== -1) {
+          if (idxA !== idxB) {
+            return idxA - idxB
+          }
+          // Jika posisi indeksnya sama, urutkan secara abjad
+          return nameA.localeCompare(nameB)
+        }
+
+        // 2. Jika salah satu ketemu di nama dan yang lain hanya di kode, utamakan yang di nama
+        if (idxA !== -1) return -1
+        if (idxB !== -1) return 1
+
+        return 0
+      })
+      .slice(0, 20)
   })
 
   const filteredMembers = computed(() => {
@@ -5915,7 +6092,7 @@ export const productSchema = z.object({
   <!-- Stok Awal + Min Stok bersebelahan -->
   <div class="grid grid-cols-2 gap-2">
     <div class="flex flex-col gap-1">
-      <label class="text-[10px] text-zinc-500 font-bold uppercase">Stok Awal ({{ unit || 'satuan' }})</label>
+      <label class="text-[10px] text-zinc-500 font-bold uppercase">Stok ({{ unit || 'satuan' }})</label>
       <input v-model.number="qty" type="number" placeholder="0" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold"/>
     </div>
     <div class="flex flex-col gap-1">
@@ -5925,7 +6102,7 @@ export const productSchema = z.object({
   </div>
 
   <button :disabled="isSubmitting" class="w-full bg-zinc-900 text-white py-4 rounded-2xl font-black text-sm active:scale-95 transition">
-    {{ isSubmitting ? 'Menyimpan...' : 'Simpan Barang' }}
+    {{ isSubmitting ? 'Menyimpan...' : (initialData ? 'Update Barang' : 'Simpan Barang') }}
   </button>
 </form>
 </template>
@@ -5939,6 +6116,16 @@ import { useProductScanner } from '../../composables/useProductScanner.js'
 import { calcModalDariPack, calcMargin } from '../../utils/calculator/product.js'
 import { formatRp, toNumber } from '../../utils/formatters/currency.js'
 import { productService } from '../../services/productService.js'
+import { useProductsStore } from '../../stores/productStore.js'
+
+const props = defineProps({
+  initialData: {
+    type: Object,
+    default: null
+  }
+})
+
+const emit = defineEmits(['success'])
 
 const { 
   name, code, category, unit, purchasePackName, packPrice, packQty, 
@@ -5948,6 +6135,7 @@ const {
 
 const { start } = useProductScanner()
 const router = useRouter()
+const productStore = useProductsStore()
 
 const autoModal = computed(() => calcModalDariPack(packPrice.value, packQty.value))
 const marginPersen = computed(() => calcMargin(price_sell.value, price_modal.value))
@@ -5955,6 +6143,21 @@ const marginPersen = computed(() => calcMargin(price_sell.value, price_modal.val
 onMounted(() => {
   loadCategories()
   loadUnits()
+
+  // Jika ada initialData (Mode Edit), isi formulir dengan data lama
+  if (props.initialData) {
+    name.value = props.initialData.name || ''
+    code.value = props.initialData.code || ''
+    category.value = props.initialData.category || 'Umum'
+    unit.value = props.initialData.unit || ''
+    purchasePackName.value = props.initialData.purchasePackName || ''
+    packPrice.value = props.initialData.packPrice || 0
+    packQty.value = props.initialData.packQty || 0
+    price_modal.value = props.initialData.price_modal || 0
+    price_sell.value = props.initialData.price_sell || 0
+    qty.value = props.initialData.qty || 0
+    minStock.value = props.initialData.minStock || 5
+  }
 })
 
 const onPackPriceInput = (e) => {
@@ -5976,7 +6179,7 @@ const onJualInput = (e) => {
 watch(autoModal, (val) => { if (val > 0) price_modal.value = val })
 
 const onSubmit = handleSubmit(async (vals) => {
-  await productService.createProduct({
+  const payload = {
     name: vals.name,
     code: vals.code || '',
     category: category.value || 'Umum',
@@ -5988,8 +6191,17 @@ const onSubmit = handleSubmit(async (vals) => {
     price_sell: toNumber(price_sell.value),
     qty: toNumber(qty.value),
     minStock: toNumber(minStock.value) || 5
-  }, toNumber(price_modal.value))
-  router.push('/products')
+  }
+
+  if (props.initialData?.id) {
+    // Mode Update / Edit
+    await productStore.update(props.initialData.id, payload)
+    emit('success')
+  } else {
+    // Mode Tambah Baru
+    await productService.createProduct(payload, toNumber(price_modal.value))
+    router.push('/products')
+  }
 })
 </script>
 

@@ -86,7 +86,7 @@
   <!-- Stok Awal + Min Stok bersebelahan -->
   <div class="grid grid-cols-2 gap-2">
     <div class="flex flex-col gap-1">
-      <label class="text-[10px] text-zinc-500 font-bold uppercase">Stok Awal ({{ unit || 'satuan' }})</label>
+      <label class="text-[10px] text-zinc-500 font-bold uppercase">Stok ({{ unit || 'satuan' }})</label>
       <input v-model.number="qty" type="number" placeholder="0" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold"/>
     </div>
     <div class="flex flex-col gap-1">
@@ -96,7 +96,7 @@
   </div>
 
   <button :disabled="isSubmitting" class="w-full bg-zinc-900 text-white py-4 rounded-2xl font-black text-sm active:scale-95 transition">
-    {{ isSubmitting ? 'Menyimpan...' : 'Simpan Barang' }}
+    {{ isSubmitting ? 'Menyimpan...' : (initialData ? 'Update Barang' : 'Simpan Barang') }}
   </button>
 </form>
 </template>
@@ -110,6 +110,16 @@ import { useProductScanner } from '../../composables/useProductScanner.js'
 import { calcModalDariPack, calcMargin } from '../../utils/calculator/product.js'
 import { formatRp, toNumber } from '../../utils/formatters/currency.js'
 import { productService } from '../../services/productService.js'
+import { useProductsStore } from '../../stores/productStore.js'
+
+const props = defineProps({
+  initialData: {
+    type: Object,
+    default: null
+  }
+})
+
+const emit = defineEmits(['success'])
 
 const { 
   name, code, category, unit, purchasePackName, packPrice, packQty, 
@@ -119,6 +129,7 @@ const {
 
 const { start } = useProductScanner()
 const router = useRouter()
+const productStore = useProductsStore()
 
 const autoModal = computed(() => calcModalDariPack(packPrice.value, packQty.value))
 const marginPersen = computed(() => calcMargin(price_sell.value, price_modal.value))
@@ -126,6 +137,21 @@ const marginPersen = computed(() => calcMargin(price_sell.value, price_modal.val
 onMounted(() => {
   loadCategories()
   loadUnits()
+
+  // Jika ada initialData (Mode Edit), isi formulir dengan data lama
+  if (props.initialData) {
+    name.value = props.initialData.name || ''
+    code.value = props.initialData.code || ''
+    category.value = props.initialData.category || 'Umum'
+    unit.value = props.initialData.unit || ''
+    purchasePackName.value = props.initialData.purchasePackName || ''
+    packPrice.value = props.initialData.packPrice || 0
+    packQty.value = props.initialData.packQty || 0
+    price_modal.value = props.initialData.price_modal || 0
+    price_sell.value = props.initialData.price_sell || 0
+    qty.value = props.initialData.qty || 0
+    minStock.value = props.initialData.minStock || 5
+  }
 })
 
 const onPackPriceInput = (e) => {
@@ -147,7 +173,7 @@ const onJualInput = (e) => {
 watch(autoModal, (val) => { if (val > 0) price_modal.value = val })
 
 const onSubmit = handleSubmit(async (vals) => {
-  await productService.createProduct({
+  const payload = {
     name: vals.name,
     code: vals.code || '',
     category: category.value || 'Umum',
@@ -159,7 +185,16 @@ const onSubmit = handleSubmit(async (vals) => {
     price_sell: toNumber(price_sell.value),
     qty: toNumber(qty.value),
     minStock: toNumber(minStock.value) || 5
-  }, toNumber(price_modal.value))
-  router.push('/products')
+  }
+
+  if (props.initialData?.id) {
+    // Mode Update / Edit
+    await productStore.update(props.initialData.id, payload)
+    emit('success')
+  } else {
+    // Mode Tambah Baru
+    await productService.createProduct(payload, toNumber(price_modal.value))
+    router.push('/products')
+  }
 })
 </script>
