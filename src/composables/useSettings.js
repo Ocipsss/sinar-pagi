@@ -1,3 +1,4 @@
+// src/composables/useSettings.js
 import { ref } from 'vue'
 import { settingsRepo } from '../db/repositories/settingsRepository.js'
 import { backupService } from '../services/backupService.js'
@@ -63,12 +64,40 @@ export function useSettings() {
     }
   }
 
+  const resetTransactionsData = async () => {
+    const confirmation = confirm(
+      'PERINGATAN DANGER!\n\nApakah Anda yakin ingin MENGHAPUS SEMUA RIWAYAT TRANSAKSI?\n\n' +
+      'Data yang akan dihapus:\n' +
+      '• Riwayat Penjualan Kasir & Item Nota\n' +
+      '• Transaksi Digital (Topup/Tarik)\n' +
+      '• Pengeluaran Operasional\n' +
+      '• Mutasi Saldo Kas/Bank (Saldo direset ke Rp 0)\n' +
+      '• Piutang & Poin Member (Direset ke Rp 0)\n' +
+      '• Daftar Belanja Kulakan\n\n' +
+      'Data Produk/Barang, Kategori, Satuan, dan Member TETAP AMAN.'
+    )
+
+    if (!confirmation) return
+
+    loading.value = true
+    try {
+      await backupService.resetTransactions()
+      toast.success('Semua riwayat transaksi berhasil dibersihkan!')
+      setTimeout(() => window.location.reload(), 800)
+    } catch (err) {
+      toast.error(`Gagal mereset transaksi: ${err.message}`)
+    } finally {
+      loading.value = false
+    }
+  }
+
   return {
     form,
     loading,
     loadSettings,
     saveSettings,
     exportBackup,
-    importBackup
+    importBackup,
+    resetTransactionsData
   }
 }

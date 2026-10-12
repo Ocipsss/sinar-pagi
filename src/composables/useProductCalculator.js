@@ -1,3 +1,4 @@
+/*
 import { computed } from 'vue'
 import { calcModalDariPack, calcMargin } from '../utils/calculator/product.js'
 
@@ -10,3 +11,4 @@ export function useProductCalculator(packPriceRef, packQtyRef, priceSellRef = { 
   )
   return { modalPerPcs, marginPersen }
 }
+*/

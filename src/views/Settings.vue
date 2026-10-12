@@ -117,15 +117,36 @@
       </label>
     </div>
   </div>
+
+  <!-- Section 4: Reset Data Transaksi (Pengembangan) -->
+  <div class="bg-red-50 p-5 rounded-3xl border border-red-200/80 shadow-sm space-y-3">
+    <div class="flex items-center gap-2 border-b border-red-200/60 pb-3">
+      <Trash2 class="w-5 h-5 text-red-600" />
+      <span class="font-black text-sm text-red-900">Reset Riwayat Transaksi</span>
+    </div>
+
+    <p class="text-xs text-red-700/80 leading-relaxed">
+      Khusus masa pengembangan/testing. Fitur ini akan mengosongkan riwayat penjualan, pengeluaran, mutasi kas, dan piutang member. <strong>Master data produk & stok barang tidak akan terhapus.</strong>
+    </p>
+
+    <button 
+      @click="resetTransactionsData" 
+      :disabled="loading"
+      class="w-full py-3 bg-red-600 hover:bg-red-700 disabled:bg-zinc-300 text-white font-bold text-xs rounded-xl shadow-md transition active:scale-95 flex items-center justify-center gap-2"
+    >
+      <Trash2 class="w-4 h-4" />
+      <span>Kosongkan Semua Riwayat Transaksi</span>
+    </button>
+  </div>
 </div>
 </template>
 
 <script setup>
 import { onMounted } from 'vue'
-import { Store, Printer, Database, Download, Upload } from 'lucide-vue-next'
+import { Store, Printer, Database, Download, Upload, Trash2 } from 'lucide-vue-next'
 import { useSettings } from '../composables/useSettings.js'
 
-const { form, loading, loadSettings, saveSettings, exportBackup, importBackup } = useSettings()
+const { form, loading, loadSettings, saveSettings, exportBackup, importBackup, resetTransactionsData } = useSettings()
 
 onMounted(() => {
   loadSettings()

@@ -1,3 +1,4 @@
+/*
 import { db } from '../index.js'
 import dayjs from 'dayjs'
 
@@ -31,3 +32,4 @@ export const digitalTransactionRepo = {
 
   delete: (id) => (db.digital_transactions || db.table('digital_transactions')).delete(id)
 }
+*/

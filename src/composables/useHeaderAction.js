@@ -1,3 +1,4 @@
+/*
 import { ref } from 'vue'
 
 const headerAction = ref(null) // { label, icon, to, onClick }
@@ -11,3 +12,4 @@ export function useHeaderAction() {
   }
   return { headerAction, setAction, clearAction }
 }
+*/

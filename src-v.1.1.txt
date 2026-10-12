@@ -92,6 +92,7 @@ export function useProductForm() {
 }
 
 ===== src/composables/useProductCalculator.js =====
+/*
 import { computed } from 'vue'
 import { calcModalDariPack, calcMargin } from '../utils/calculator/product.js'
 
@@ -104,6 +105,7 @@ export function useProductCalculator(packPriceRef, packQtyRef, priceSellRef = { 
   )
   return { modalPerPcs, marginPersen }
 }
+*/
 ===== src/composables/useProductScanner.js =====
 import { ref } from 'vue'
 import { Html5Qrcode } from 'html5-qrcode'
@@ -123,6 +125,7 @@ export function useProductScanner() {
   return { isScanning, start, stop }
 }
 ===== src/composables/useRupiah.js =====
+/*
 import { computed } from 'vue'
 import { formatRp, formatRibuan, toNumber } from '../utils/formatters/currency.js'
 
@@ -140,7 +143,9 @@ export function useRupiah(fieldRef, withPrefix = true) {
 
   return { display, onInput, toNumber, formatRp, formatRibuan }
 }
+*/
 ===== src/composables/useHeaderAction.js =====
+/*
 import { ref } from 'vue'
 
 const headerAction = ref(null) // { label, icon, to, onClick }
@@ -154,6 +159,7 @@ export function useHeaderAction() {
   }
   return { headerAction, setAction, clearAction }
 }
+*/
 ===== src/composables/useDashboard.js =====
 import { ref } from 'vue'
 import { dashboardService } from '../services/dashboardService.js'
@@ -1156,6 +1162,7 @@ export function useProductsDigital() {
 }
 
 ===== src/composables/useSettings.js =====
+// src/composables/useSettings.js
 import { ref } from 'vue'
 import { settingsRepo } from '../db/repositories/settingsRepository.js'
 import { backupService } from '../services/backupService.js'
@@ -1221,13 +1228,41 @@ export function useSettings() {
     }
   }
 
+  const resetTransactionsData = async () => {
+    const confirmation = confirm(
+      'PERINGATAN DANGER!\n\nApakah Anda yakin ingin MENGHAPUS SEMUA RIWAYAT TRANSAKSI?\n\n' +
+      'Data yang akan dihapus:\n' +
+      '• Riwayat Penjualan Kasir & Item Nota\n' +
+      '• Transaksi Digital (Topup/Tarik)\n' +
+      '• Pengeluaran Operasional\n' +
+      '• Mutasi Saldo Kas/Bank (Saldo direset ke Rp 0)\n' +
+      '• Piutang & Poin Member (Direset ke Rp 0)\n' +
+      '• Daftar Belanja Kulakan\n\n' +
+      'Data Produk/Barang, Kategori, Satuan, dan Member TETAP AMAN.'
+    )
+
+    if (!confirmation) return
+
+    loading.value = true
+    try {
+      await backupService.resetTransactions()
+      toast.success('Semua riwayat transaksi berhasil dibersihkan!')
+      setTimeout(() => window.location.reload(), 800)
+    } catch (err) {
+      toast.error(`Gagal mereset transaksi: ${err.message}`)
+    } finally {
+      loading.value = false
+    }
+  }
+
   return {
     form,
     loading,
     loadSettings,
     saveSettings,
     exportBackup,
-    importBackup
+    importBackup,
+    resetTransactionsData
   }
 }
 
@@ -2013,6 +2048,7 @@ export const financeRepo = {
 }
 
 ===== src/db/repositories/digitalTransactionRepository.js =====
+/*
 import { db } from '../index.js'
 import dayjs from 'dayjs'
 
@@ -2046,7 +2082,7 @@ export const digitalTransactionRepo = {
 
   delete: (id) => (db.digital_transactions || db.table('digital_transactions')).delete(id)
 }
-
+*/
 ===== src/db/repositories/settingsRepository.js =====
 import { db } from '../index.js'
 
@@ -2735,22 +2771,17 @@ export const backupService = {
       reader.onload = async (e) => {
         try {
           const rawParsed = JSON.parse(e.target.result)
-          // Menangani jika data dibungkus dalam object { database: ... } atau langsung root JSON
           const importedData = rawParsed.database || rawParsed
 
-          // Menggunakan Dexie Transaction untuk keamanan data (Atomicity)
           await db.transaction('rw', db.tables, async () => {
-            // 1. Kosongkan semua tabel lama sebelum me-restore
             for (const table of db.tables) {
               await table.clear()
             }
 
-            // 2. Restore tabel biasa yang kompatibel 1-to-1
             for (const tableName of Object.keys(importedData)) {
               if (tableName !== 'transactions' && db[tableName]) {
                 const rows = importedData[tableName]
                 if (Array.isArray(rows) && rows.length > 0) {
-                  // Pastikan fieldSynced bernilai 0 jika belum ada agar ikut masuk antrean cloud sync
                   const preparedRows = rows.map(item => ({
                     ...item,
                     synced: item.synced ?? 0
@@ -2760,13 +2791,11 @@ export const backupService = {
               }
             }
 
-            // 3. Restrukturisasi Khusus untuk Transaksi (Ekstrak items ke transaction_items)
             if (importedData.transactions && Array.isArray(importedData.transactions)) {
               const transactionsToPut = []
               const itemsToPut = []
 
               importedData.transactions.forEach(trx => {
-                // Pisahkan array items dari objek transaksi utama
                 const { items, ...trxData } = trx
 
                 transactionsToPut.push({
@@ -2774,7 +2803,6 @@ export const backupService = {
                   synced: trxData.synced ?? 0
                 })
 
-                // Ekstrak items ke tabel transaction_items
                 if (items && Array.isArray(items)) {
                   items.forEach((item, index) => {
                     itemsToPut.push({
@@ -2811,6 +2839,39 @@ export const backupService = {
 
       reader.onerror = () => reject(new Error('Gagal membaca file backup'))
       reader.readAsText(file)
+    })
+  },
+
+  async resetTransactions() {
+    await db.transaction('rw', db.tables, async () => {
+      // 1. Kosongkan tabel transaksi & aktivitas terkait
+      await db.transactions.clear()
+      await db.transaction_items.clear()
+      await db.expenses.clear()
+      await db.digital_transactions.clear()
+      await db.debt_payments.clear()
+      await db.cash_mutations.clear()
+      await db.shopping_list.clear()
+
+      // 2. Reset piutang dan total belanja member
+      const members = await db.members.toArray()
+      for (const m of members) {
+        await db.members.update(m.id, {
+          debt: 0,
+          total_spending: 0,
+          points: 0,
+          synced: 0
+        })
+      }
+
+      // 3. Reset saldo akun kas & bank menjadi 0
+      const accounts = await db.cash_accounts.toArray()
+      for (const a of accounts) {
+        await db.cash_accounts.update(a.id, {
+          balance: 0,
+          synced: 0
+        })
+      }
     })
   }
 }
@@ -6082,15 +6143,36 @@ onMounted(() => {
       </label>
     </div>
   </div>
+
+  <!-- Section 4: Reset Data Transaksi (Pengembangan) -->
+  <div class="bg-red-50 p-5 rounded-3xl border border-red-200/80 shadow-sm space-y-3">
+    <div class="flex items-center gap-2 border-b border-red-200/60 pb-3">
+      <Trash2 class="w-5 h-5 text-red-600" />
+      <span class="font-black text-sm text-red-900">Reset Riwayat Transaksi</span>
+    </div>
+
+    <p class="text-xs text-red-700/80 leading-relaxed">
+      Khusus masa pengembangan/testing. Fitur ini akan mengosongkan riwayat penjualan, pengeluaran, mutasi kas, dan piutang member. <strong>Master data produk & stok barang tidak akan terhapus.</strong>
+    </p>
+
+    <button 
+      @click="resetTransactionsData" 
+      :disabled="loading"
+      class="w-full py-3 bg-red-600 hover:bg-red-700 disabled:bg-zinc-300 text-white font-bold text-xs rounded-xl shadow-md transition active:scale-95 flex items-center justify-center gap-2"
+    >
+      <Trash2 class="w-4 h-4" />
+      <span>Kosongkan Semua Riwayat Transaksi</span>
+    </button>
+  </div>
 </div>
 </template>
 
 <script setup>
 import { onMounted } from 'vue'
-import { Store, Printer, Database, Download, Upload } from 'lucide-vue-next'
+import { Store, Printer, Database, Download, Upload, Trash2 } from 'lucide-vue-next'
 import { useSettings } from '../composables/useSettings.js'
 
-const { form, loading, loadSettings, saveSettings, exportBackup, importBackup } = useSettings()
+const { form, loading, loadSettings, saveSettings, exportBackup, importBackup, resetTransactionsData } = useSettings()
 
 onMounted(() => {
   loadSettings()

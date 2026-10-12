@@ -26,22 +26,17 @@ export const backupService = {
       reader.onload = async (e) => {
         try {
           const rawParsed = JSON.parse(e.target.result)
-          // Menangani jika data dibungkus dalam object { database: ... } atau langsung root JSON
           const importedData = rawParsed.database || rawParsed
 
-          // Menggunakan Dexie Transaction untuk keamanan data (Atomicity)
           await db.transaction('rw', db.tables, async () => {
-            // 1. Kosongkan semua tabel lama sebelum me-restore
             for (const table of db.tables) {
               await table.clear()
             }
 
-            // 2. Restore tabel biasa yang kompatibel 1-to-1
             for (const tableName of Object.keys(importedData)) {
               if (tableName !== 'transactions' && db[tableName]) {
                 const rows = importedData[tableName]
                 if (Array.isArray(rows) && rows.length > 0) {
-                  // Pastikan fieldSynced bernilai 0 jika belum ada agar ikut masuk antrean cloud sync
                   const preparedRows = rows.map(item => ({
                     ...item,
                     synced: item.synced ?? 0
@@ -51,13 +46,11 @@ export const backupService = {
               }
             }
 
-            // 3. Restrukturisasi Khusus untuk Transaksi (Ekstrak items ke transaction_items)
             if (importedData.transactions && Array.isArray(importedData.transactions)) {
               const transactionsToPut = []
               const itemsToPut = []
 
               importedData.transactions.forEach(trx => {
-                // Pisahkan array items dari objek transaksi utama
                 const { items, ...trxData } = trx
 
                 transactionsToPut.push({
@@ -65,7 +58,6 @@ export const backupService = {
                   synced: trxData.synced ?? 0
                 })
 
-                // Ekstrak items ke tabel transaction_items
                 if (items && Array.isArray(items)) {
                   items.forEach((item, index) => {
                     itemsToPut.push({
@@ -102,6 +94,39 @@ export const backupService = {
 
       reader.onerror = () => reject(new Error('Gagal membaca file backup'))
       reader.readAsText(file)
+    })
+  },
+
+  async resetTransactions() {
+    await db.transaction('rw', db.tables, async () => {
+      // 1. Kosongkan tabel transaksi & aktivitas terkait
+      await db.transactions.clear()
+      await db.transaction_items.clear()
+      await db.expenses.clear()
+      await db.digital_transactions.clear()
+      await db.debt_payments.clear()
+      await db.cash_mutations.clear()
+      await db.shopping_list.clear()
+
+      // 2. Reset piutang dan total belanja member
+      const members = await db.members.toArray()
+      for (const m of members) {
+        await db.members.update(m.id, {
+          debt: 0,
+          total_spending: 0,
+          points: 0,
+          synced: 0
+        })
+      }
+
+      // 3. Reset saldo akun kas & bank menjadi 0
+      const accounts = await db.cash_accounts.toArray()
+      for (const a of accounts) {
+        await db.cash_accounts.update(a.id, {
+          balance: 0,
+          synced: 0
+        })
+      }
     })
   }
 }

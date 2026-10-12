@@ -1,3 +1,4 @@
+/*
 import { computed } from 'vue'
 import { formatRp, formatRibuan, toNumber } from '../utils/formatters/currency.js'
 
@@ -15,3 +16,4 @@ export function useRupiah(fieldRef, withPrefix = true) {
 
   return { display, onInput, toNumber, formatRp, formatRibuan }
 }
+*/
