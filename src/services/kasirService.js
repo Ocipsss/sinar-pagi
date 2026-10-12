@@ -4,7 +4,7 @@ import dayjs from 'dayjs'
 import { financeRepo } from '../db/repositories/financeRepository.js'
 
 export const kasirService = {
-  async checkout({ cart, member, paymentMethod }) {
+  async checkout({ cart, member, paymentMethod, operator }) {
     const now = dayjs().toISOString()
     const id = crypto.randomUUID()
     const total = cart.reduce((s, c) => s + (c.price_sell * c.cartQty), 0)
@@ -19,6 +19,8 @@ export const kasirService = {
       date: now, 
       total, 
       memberId: member?.id || null,
+      operatorId: operator?.id || null,
+      operatorName: operator?.name || 'Kasir',
       paymentMethod, 
       amountPaid: isTempo ? 0 : total, 
       paidAmount: isTempo ? 0 : total,
@@ -29,14 +31,13 @@ export const kasirService = {
       synced: 0
     })
 
-    // Mutasi Saldo Otomatis berdasarkan Metode Pembayaran
     if (paymentMethod === 'CASH') {
       await financeRepo.addMutation({
         accountId: 'acc_cash',
         type: 'IN',
         amount: total,
         category: 'Penjualan Toko',
-        note: `Transaksi Kasir (Tunai) #${id.slice(0, 8)}`,
+        note: `Transaksi Kasir (${operator?.name || 'Kasir'}) #${id.slice(0, 8)}`,
         refId: id
       })
     } else if (paymentMethod === 'QRIS') {
@@ -45,7 +46,7 @@ export const kasirService = {
         type: 'IN',
         amount: total,
         category: 'Penjualan Toko',
-        note: `Transaksi Kasir (QRIS) #${id.slice(0, 8)}`,
+        note: `Transaksi QRIS (${operator?.name || 'Kasir'}) #${id.slice(0, 8)}`,
         refId: id
       })
     }

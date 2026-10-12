@@ -5,9 +5,12 @@ import { packageRepository } from '../db/repositories/packageRepository.js'
 import { serviceRepository } from '../db/repositories/serviceRepository.js'
 import { formatRibuan } from '../utils/formatters/currency.js'
 import { useKasirStore } from '../stores/kasirStore.js'
+import { useOperatorStore } from '../stores/operatorStore.js'
 
 export function useKasir() {
   const store = useKasirStore()
+  const operatorStore = useOperatorStore()
+
   const products = ref([])
   const members = ref([])
   const packagesList = ref([])
@@ -30,7 +33,7 @@ export function useKasir() {
     }
   })
 
-    const filteredProducts = computed(() => {
+  const filteredProducts = computed(() => {
     const qq = q.value.toLowerCase().trim()
     if (!qq) return products.value.slice(0, 15)
 
@@ -47,16 +50,13 @@ export function useKasir() {
         const idxA = nameA.indexOf(qq)
         const idxB = nameB.indexOf(qq)
 
-        // 1. Jika dua-duanya ditemukan di nama, urutkan berdasarkan posisi huruf terdepan (indexOf terkecil)
         if (idxA !== -1 && idxB !== -1) {
           if (idxA !== idxB) {
             return idxA - idxB
           }
-          // Jika posisi indeksnya sama, urutkan secara abjad
           return nameA.localeCompare(nameB)
         }
 
-        // 2. Jika salah satu ketemu di nama dan yang lain hanya di kode, utamakan yang di nama
         if (idxA !== -1) return -1
         if (idxB !== -1) return 1
 
@@ -71,7 +71,6 @@ export function useKasir() {
     return members.value.filter(m => m.name.toLowerCase().includes(qq) || (m.phone || '').includes(qq)).slice(0, 20)
   })
 
-  // Filter jasa berdasarkan kategori produk aktif
   const filteredServicesByCategory = computed(() => {
     if (!selectedProductForOption.value) return []
     const pCat = (selectedProductForOption.value.category || '').toLowerCase()
@@ -79,20 +78,18 @@ export function useKasir() {
   })
 
   const load = async () => {
-  const [data, packages, services] = await Promise.all([
-    kasirService.getInitialData(),
-    packageRepository.getAll(),
-    serviceRepository.getAll()
-  ])
-  products.value = data.products
-  members.value = data.members
-  packagesList.value = packages
-  servicesList.value = services
+    const [data, packages, services] = await Promise.all([
+      kasirService.getInitialData(),
+      packageRepository.getAll(),
+      serviceRepository.getAll()
+    ])
+    products.value = data.products
+    members.value = data.members
+    packagesList.value = packages
+    servicesList.value = services
 
-  // Reset nominal bayar saat halaman kasir dimuat ulang
-  store.bayarNominal = 0
-}
-
+    store.bayarNominal = 0
+  }
 
   const getProductPackages = (productId) => {
     return packagesList.value.filter(pkg => pkg.productId === productId)
@@ -128,6 +125,7 @@ export function useKasir() {
       cart: store.cart,
       member: store.selectedMember,
       paymentMethod: store.paymentMethod,
+      operator: operatorStore.activeOperator,
       amountPaid: store.paymentMethod === 'TEMPO' ? 0 : store.paymentMethod === 'QRIS' ? total.value : store.bayarNominal
     })
     store.clearCart()
@@ -136,9 +134,23 @@ export function useKasir() {
 
   return {
     store,
-    q, memberQ, products, filteredProducts, filteredMembers,
-    total, kembalian, kurangBayar, bayarDisplay, showSearch,
-    selectedProductForOption, filteredServicesByCategory,
-    load, handleSelectProduct, confirmAddToCart, getProductPackages, checkout
+    operatorStore,
+    q, 
+    memberQ, 
+    products, 
+    filteredProducts, 
+    filteredMembers,
+    total, 
+    kembalian, 
+    kurangBayar, 
+    bayarDisplay, 
+    showSearch,
+    selectedProductForOption, 
+    filteredServicesByCategory,
+    load, 
+    handleSelectProduct, 
+    confirmAddToCart, 
+    getProductPackages, 
+    checkout
   }
 }

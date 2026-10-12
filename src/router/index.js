@@ -1,23 +1,32 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import MainLayout from '../layouts/MainLayout.vue'
-import ProductsList from '../views/ProductsList.vue'
-import ProductsAdd from '../views/ProductsAdd.vue'
-import CategoriesView from '../views/Categories.vue'
-import MembersView from '../views/Members.vue'
-import SalesHistoryView from '../views/SalesHistory.vue'
+import LoginView from '../views/Login.vue'
+import { useOperatorStore } from '../stores/operatorStore.js'
 
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
     {
+      path: '/login',
+      name: 'Login',
+      component: LoginView,
+      meta: { title: 'Kasir Login', guestOnly: true }
+    },
+    {
       path: '/',
       component: MainLayout,
       children: [
-        { path: '', redirect: '/products' },
+        { path: '', redirect: '/kasir' },
+        { 
+          path: 'kasir', 
+          name: 'Kasir', 
+          component: () => import('../views/Kasir.vue'),
+          meta: { title: 'Kasir' }
+        },
         { 
           path: 'products', 
           name: 'ProductsList',
-          component: ProductsList,
+          component: () => import('../views/ProductsList.vue'),
           meta: { title: 'Barang' }
         },
         { 
@@ -29,13 +38,13 @@ export const router = createRouter({
         { 
           path: 'categories', 
           name: 'Categories',
-          component: CategoriesView,
+          component: () => import('../views/Categories.vue'),
           meta: { title: 'Kategori Barang' }
         },
         { 
           path: 'add-products', 
           name: 'ProductsAdd',
-          component: ProductsAdd,
+          component: () => import('../views/ProductsAdd.vue'),
           meta: { title: 'Tambah Barang' }
         },
         { 
@@ -47,14 +56,8 @@ export const router = createRouter({
         { 
           path: 'members', 
           name: 'Members',
-          component: MembersView,
+          component: () => import('../views/Members.vue'),
           meta: { title: 'Daftar Member' }
-        },
-        { 
-          path: 'kasir', 
-          name: 'Kasir', 
-          component: () => import('../views/Kasir.vue'),
-          meta: { title: 'Kasir' }
         },
         { 
           path: 'digital', 
@@ -65,8 +68,14 @@ export const router = createRouter({
         { 
           path: 'sales-history', 
           name: 'SalesHistory',
-          component: SalesHistoryView,
+          component: () => import('../views/SalesHistory.vue'),
           meta: { title: 'Riwayat Penjualan' }
+        },
+        { 
+          path: 'expenses', 
+          name: 'Expenses', 
+          component: () => import('../views/Expenses.vue'),
+          meta: { title: 'Pengeluaran Operasional' }
         },
         { 
           path: 'finance', 
@@ -97,15 +106,21 @@ export const router = createRouter({
           name: 'Settings', 
           component: () => import('../views/Settings.vue'),
           meta: { title: 'Pengaturan' }
-        },
-        { 
-  path: 'expenses', 
-  name: 'Expenses', 
-  component: () => import('../views/Expenses.vue'),
-  meta: { title: 'Pengeluaran Operasional' }
-},
-
+        }
       ]
     }
   ]
+})
+
+// ROUTE GUARD UNTUK SESI OPERATOR
+router.beforeEach((to, from, next) => {
+  const operatorStore = useOperatorStore()
+
+  if (!to.meta.guestOnly && !operatorStore.isLoggedIn) {
+    next('/login')
+  } else if (to.meta.guestOnly && operatorStore.isLoggedIn) {
+    next('/kasir')
+  } else {
+    next()
+  }
 })

@@ -183,9 +183,12 @@ import { packageRepository } from '../db/repositories/packageRepository.js'
 import { serviceRepository } from '../db/repositories/serviceRepository.js'
 import { formatRibuan } from '../utils/formatters/currency.js'
 import { useKasirStore } from '../stores/kasirStore.js'
+import { useOperatorStore } from '../stores/operatorStore.js'
 
 export function useKasir() {
   const store = useKasirStore()
+  const operatorStore = useOperatorStore()
+
   const products = ref([])
   const members = ref([])
   const packagesList = ref([])
@@ -208,7 +211,7 @@ export function useKasir() {
     }
   })
 
-    const filteredProducts = computed(() => {
+  const filteredProducts = computed(() => {
     const qq = q.value.toLowerCase().trim()
     if (!qq) return products.value.slice(0, 15)
 
@@ -225,16 +228,13 @@ export function useKasir() {
         const idxA = nameA.indexOf(qq)
         const idxB = nameB.indexOf(qq)
 
-        // 1. Jika dua-duanya ditemukan di nama, urutkan berdasarkan posisi huruf terdepan (indexOf terkecil)
         if (idxA !== -1 && idxB !== -1) {
           if (idxA !== idxB) {
             return idxA - idxB
           }
-          // Jika posisi indeksnya sama, urutkan secara abjad
           return nameA.localeCompare(nameB)
         }
 
-        // 2. Jika salah satu ketemu di nama dan yang lain hanya di kode, utamakan yang di nama
         if (idxA !== -1) return -1
         if (idxB !== -1) return 1
 
@@ -249,7 +249,6 @@ export function useKasir() {
     return members.value.filter(m => m.name.toLowerCase().includes(qq) || (m.phone || '').includes(qq)).slice(0, 20)
   })
 
-  // Filter jasa berdasarkan kategori produk aktif
   const filteredServicesByCategory = computed(() => {
     if (!selectedProductForOption.value) return []
     const pCat = (selectedProductForOption.value.category || '').toLowerCase()
@@ -257,20 +256,18 @@ export function useKasir() {
   })
 
   const load = async () => {
-  const [data, packages, services] = await Promise.all([
-    kasirService.getInitialData(),
-    packageRepository.getAll(),
-    serviceRepository.getAll()
-  ])
-  products.value = data.products
-  members.value = data.members
-  packagesList.value = packages
-  servicesList.value = services
+    const [data, packages, services] = await Promise.all([
+      kasirService.getInitialData(),
+      packageRepository.getAll(),
+      serviceRepository.getAll()
+    ])
+    products.value = data.products
+    members.value = data.members
+    packagesList.value = packages
+    servicesList.value = services
 
-  // Reset nominal bayar saat halaman kasir dimuat ulang
-  store.bayarNominal = 0
-}
-
+    store.bayarNominal = 0
+  }
 
   const getProductPackages = (productId) => {
     return packagesList.value.filter(pkg => pkg.productId === productId)
@@ -306,6 +303,7 @@ export function useKasir() {
       cart: store.cart,
       member: store.selectedMember,
       paymentMethod: store.paymentMethod,
+      operator: operatorStore.activeOperator,
       amountPaid: store.paymentMethod === 'TEMPO' ? 0 : store.paymentMethod === 'QRIS' ? total.value : store.bayarNominal
     })
     store.clearCart()
@@ -314,10 +312,24 @@ export function useKasir() {
 
   return {
     store,
-    q, memberQ, products, filteredProducts, filteredMembers,
-    total, kembalian, kurangBayar, bayarDisplay, showSearch,
-    selectedProductForOption, filteredServicesByCategory,
-    load, handleSelectProduct, confirmAddToCart, getProductPackages, checkout
+    operatorStore,
+    q, 
+    memberQ, 
+    products, 
+    filteredProducts, 
+    filteredMembers,
+    total, 
+    kembalian, 
+    kurangBayar, 
+    bayarDisplay, 
+    showSearch,
+    selectedProductForOption, 
+    filteredServicesByCategory,
+    load, 
+    handleSelectProduct, 
+    confirmAddToCart, 
+    getProductPackages, 
+    checkout
   }
 }
 
@@ -1219,6 +1231,141 @@ export function useSettings() {
   }
 }
 
+===== src/composables/useExpenses.js =====
+import { ref, computed } from 'vue'
+import { expenseService } from '../services/expenseService.js'
+import { toast } from 'vue-sonner'
+import dayjs from 'dayjs'
+
+export function useExpenses() {
+  const expenses = ref([])
+  const searchQuery = ref('')
+  const selectedCategory = ref('ALL')
+  const loading = ref(false)
+
+  const showModal = ref(false)
+  const form = ref({
+    category: 'Plastik & Bungkusan',
+    amount: null,
+    paymentMethod: 'CASH',
+    note: '',
+    date: dayjs().format('YYYY-MM-DDTHH:mm')
+  })
+
+  const categoryOptions = [
+    'Plastik & Bungkusan',
+    'Listrik & Air',
+    'Sewa Tempat',
+    'Gaji Karyawan',
+    'Transportasi / Bensin',
+    'Perbaikan & Alat',
+    'Lain-lain'
+  ]
+
+  const loadExpenses = async () => {
+    loading.value = true
+    try {
+      expenses.value = await expenseService.getAllExpenses()
+    } finally {
+      loading.value = false
+    }
+  }
+
+  const filteredExpenses = computed(() => {
+    const q = searchQuery.value.toLowerCase().trim()
+    return expenses.value.filter(e => {
+      const matchQuery = !q || 
+        (e.note || '').toLowerCase().includes(q) || 
+        (e.category || '').toLowerCase().includes(q)
+      
+      const matchCat = selectedCategory.value === 'ALL' || e.category === selectedCategory.value
+
+      return matchQuery && matchCat
+    })
+  })
+
+  const totalHariIni = computed(() => {
+    const today = dayjs().startOf('day')
+    return expenses.value
+      .filter(e => dayjs(e.date).isAfter(today))
+      .reduce((sum, e) => sum + (Number(e.amount) || 0), 0)
+  })
+
+  const totalBulanIni = computed(() => {
+    const startOfMonth = dayjs().startOf('month')
+    return expenses.value
+      .filter(e => dayjs(e.date).isAfter(startOfMonth))
+      .reduce((sum, e) => sum + (Number(e.amount) || 0), 0)
+  })
+
+  const openModal = () => {
+    form.value = {
+      category: 'Plastik & Bungkusan',
+      amount: null,
+      paymentMethod: 'CASH',
+      note: '',
+      date: dayjs().format('YYYY-MM-DDTHH:mm')
+    }
+    showModal.value = true
+  }
+
+  const saveExpense = async () => {
+    if (!form.value.amount || form.value.amount <= 0) {
+      toast.error('Nominal pengeluaran harus lebih dari 0')
+      return
+    }
+
+    loading.value = true
+    try {
+      await expenseService.addExpense(form.value)
+      toast.success('Pengeluaran berhasil dicatat & kas dipotong!')
+      showModal.value = false
+      await loadExpenses()
+    } catch (err) {
+      toast.error(`Gagal menyimpan: ${err.message}`)
+    } finally {
+      loading.value = false
+    }
+  }
+
+  const deleteExpense = async (expense) => {
+    if (!confirm(`Hapus catatan pengeluaran "${expense.category}" (Rp ${expense.amount.toLocaleString('id-ID')})?\nSaldo kas/bank akan dikembalikan.`)) {
+      return
+    }
+
+    loading.value = true
+    try {
+      await expenseService.deleteExpense(expense)
+      toast.success('Pengeluaran dihapus & kas dikembalikan!')
+      await loadExpenses()
+    } catch (err) {
+      toast.error(`Gagal menghapus: ${err.message}`)
+    } finally {
+      loading.value = false
+    }
+  }
+
+  const formatDate = (d) => dayjs(d).format('DD MMM YYYY • HH:mm')
+
+  return {
+    expenses,
+    searchQuery,
+    selectedCategory,
+    loading,
+    showModal,
+    form,
+    categoryOptions,
+    filteredExpenses,
+    totalHariIni,
+    totalBulanIni,
+    loadExpenses,
+    openModal,
+    saveExpense,
+    deleteExpense,
+    formatDate
+  }
+}
+
 ===== src/utils/formatters/currency.js =====
 export const toNumber = (v) => Number(String(v?? '').replace(/[^0-9]/g, '')) || 0
 
@@ -1269,6 +1416,7 @@ import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import piniaPluginPersistedstate from 'pinia-plugin-persistedstate'
 import './style.css'
+import 'vue-sonner/style.css'
 import App from './App.vue'
 import { router } from './router/index.js'
 import { syncRealtime as syncService } from './services/syncService.js'
@@ -1915,6 +2063,54 @@ export const settingsRepo = {
   }
 }
 
+===== src/db/repositories/expenseRepository.js =====
+import { db } from '../index.js'
+import dayjs from 'dayjs'
+
+export const expenseRepository = {
+  async getAll() {
+    return await db.expenses.orderBy('date').reverse().toArray()
+  },
+
+  async getById(id) {
+    return await db.expenses.get(id)
+  },
+
+  async create(data) {
+    const id = crypto.randomUUID()
+    const now = dayjs().toISOString()
+    const item = {
+      id,
+      date: data.date || now,
+      category: data.category || 'Lain-lain',
+      amount: Number(data.amount) || 0,
+      note: data.note || '',
+      paymentMethod: data.paymentMethod || 'CASH',
+      cashPart: data.paymentMethod === 'CASH' ? Number(data.amount) : 0,
+      qrisPart: data.paymentMethod === 'QRIS' ? Number(data.amount) : 0,
+      updatedAt: now,
+      synced: 0
+    }
+    await db.expenses.add(item)
+    return item
+  },
+
+  async update(id, data) {
+    const now = dayjs().toISOString()
+    await db.expenses.update(id, {
+      ...data,
+      cashPart: data.paymentMethod === 'CASH' ? Number(data.amount) : 0,
+      qrisPart: data.paymentMethod === 'QRIS' ? Number(data.amount) : 0,
+      updatedAt: now,
+      synced: 0
+    })
+  },
+
+  async delete(id) {
+    await db.expenses.delete(id)
+  }
+}
+
 ===== src/services/firebase.js =====
 import { initializeApp } from 'firebase/app'
 import { getFirestore } from 'firebase/firestore'
@@ -2189,7 +2385,7 @@ import dayjs from 'dayjs'
 import { financeRepo } from '../db/repositories/financeRepository.js'
 
 export const kasirService = {
-  async checkout({ cart, member, paymentMethod }) {
+  async checkout({ cart, member, paymentMethod, operator }) {
     const now = dayjs().toISOString()
     const id = crypto.randomUUID()
     const total = cart.reduce((s, c) => s + (c.price_sell * c.cartQty), 0)
@@ -2204,6 +2400,8 @@ export const kasirService = {
       date: now, 
       total, 
       memberId: member?.id || null,
+      operatorId: operator?.id || null,
+      operatorName: operator?.name || 'Kasir',
       paymentMethod, 
       amountPaid: isTempo ? 0 : total, 
       paidAmount: isTempo ? 0 : total,
@@ -2214,14 +2412,13 @@ export const kasirService = {
       synced: 0
     })
 
-    // Mutasi Saldo Otomatis berdasarkan Metode Pembayaran
     if (paymentMethod === 'CASH') {
       await financeRepo.addMutation({
         accountId: 'acc_cash',
         type: 'IN',
         amount: total,
         category: 'Penjualan Toko',
-        note: `Transaksi Kasir (Tunai) #${id.slice(0, 8)}`,
+        note: `Transaksi Kasir (${operator?.name || 'Kasir'}) #${id.slice(0, 8)}`,
         refId: id
       })
     } else if (paymentMethod === 'QRIS') {
@@ -2230,7 +2427,7 @@ export const kasirService = {
         type: 'IN',
         amount: total,
         category: 'Penjualan Toko',
-        note: `Transaksi Kasir (QRIS) #${id.slice(0, 8)}`,
+        note: `Transaksi QRIS (${operator?.name || 'Kasir'}) #${id.slice(0, 8)}`,
         refId: id
       })
     }
@@ -3014,6 +3211,252 @@ export const salesHistoryService = {
   }
 }
 
+===== src/services/receiptService.js =====
+import { jsPDF } from 'jspdf'
+import EscPosEncoder from 'esc-pos-encoder'
+import { settingsRepo } from '../db/repositories/settingsRepository.js'
+import dayjs from 'dayjs'
+
+export const receiptService = {
+  // 1. Cetak Struk via Bluetooth Thermal Printer
+  async printThermal(transaction) {
+    if (!navigator.bluetooth) {
+      throw new Error('Browser ini belum mendukung Web Bluetooth. Gunakan Chrome di Android/Desktop.')
+    }
+
+    const settings = await settingsRepo.getSettings()
+    const is58mm = settings.printerPaperSize !== '80mm'
+    const encoder = new EscPosEncoder()
+
+    // Format Perataan Kolom Text Thermal
+    const width = is58mm ? 32 : 48
+    const line = '-'.repeat(width)
+
+    let encoded = encoder.initialize()
+      .align('center')
+      .bold(true)
+      .line(settings.storeName || 'SINAR PAGI')
+      .bold(false)
+      .line(settings.storeAddress || '')
+      .line(settings.storePhone ? `Telp: ${settings.storePhone}` : '')
+      .line(line)
+      .align('left')
+      .line(`No. Nota : #${transaction.id.slice(0, 8)}`)
+      .line(`Tanggal  : ${dayjs(transaction.date).format('DD/MM/YY HH:mm')}`)
+      .line(`Kasir    : ${transaction.operatorName || 'Admin'}`)
+      .line(`Pelanggan: ${transaction.memberName || 'Umum'}`)
+      .line(line)
+
+    // Daftar Item
+    transaction.items.forEach(item => {
+      const name = item.name || item.productName || 'Barang'
+      const qtyPrice = `${item.qty} x ${item.price.toLocaleString('id-ID')}`
+      const subtotal = (item.subtotal || item.price * item.qty).toLocaleString('id-ID')
+      
+      encoded = encoded.line(name)
+      
+      // Spacing kanan kiri
+      const spaceCount = Math.max(1, width - qtyPrice.length - subtotal.length)
+      encoded = encoded.line(`${qtyPrice}${' '.repeat(spaceCount)}${subtotal}`)
+    })
+
+    encoded = encoded.line(line)
+      .align('right')
+      .bold(true)
+      .line(`TOTAL     : Rp ${transaction.total.toLocaleString('id-ID')}`)
+      .bold(false)
+
+    if (transaction.paymentMethod === 'CASH') {
+      const bayar = transaction.amountPaid || transaction.paidAmount || transaction.total
+      const kembali = Math.max(0, bayar - transaction.total)
+      encoded = encoded
+        .line(`BAYAR (TUNAI): Rp ${bayar.toLocaleString('id-ID')}`)
+        .line(`KEMBALI      : Rp ${kembali.toLocaleString('id-ID')}`)
+    } else {
+      encoded = encoded.line(`METODE BAYAR : ${transaction.paymentMethod}`)
+    }
+
+    encoded = encoded
+      .line(line)
+      .align('center')
+      .line(settings.receiptFooter || 'Terima kasih telah berbelanja!')
+      .line('\n\n')
+      .cut()
+      .encode()
+
+    // Koneksi Web Bluetooth GATT
+    const device = await navigator.bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: [
+        '000018f0-0000-1000-8000-00805f9b34fb', // Standard Printer Service
+        '0000ff00-0000-1000-8000-00805f9b34fb',
+        '49535343-fe7d-41aa-a322-3d7a4a2d2bd0'  // Custom SPP
+      ]
+    })
+
+    const server = await device.gatt.connect()
+    const services = await server.getPrimaryServices()
+    
+    let targetCharacteristic = null
+    for (const service of services) {
+      const characteristics = await service.getCharacteristics()
+      for (const char of characteristics) {
+        if (char.properties.write || char.properties.writeWithoutResponse) {
+          targetCharacteristic = char
+          break
+        }
+      }
+      if (targetCharacteristic) break
+    }
+
+    if (!targetCharacteristic) {
+      throw new Error('Karakteristik printer thermal tidak ditemukan pada perangkat Bluetooth ini.')
+    }
+
+    // Kirim data bergulir per-chunk 512 byte
+    const chunkSize = 512
+    for (let i = 0; i < encoded.length; i += chunkSize) {
+      const chunk = encoded.slice(i, i + chunkSize)
+      await targetCharacteristic.writeValue(chunk)
+    }
+
+    await device.gatt.disconnect()
+  },
+
+  // 2. Unduh Nota dalam Bentuk File PDF
+  async downloadPdf(transaction) {
+    const settings = await settingsRepo.getSettings()
+    const is58mm = settings.printerPaperSize !== '80mm'
+    
+    const paperWidth = is58mm ? 58 : 80
+    // Estimasi tinggi dinamis sesuai jumlah item
+    const estimatedHeight = 90 + (transaction.items.length * 12)
+
+    const doc = new jsPDF({
+      orientation: 'portrait',
+      unit: 'mm',
+      format: [paperWidth, estimatedHeight]
+    })
+
+    let y = 7
+    doc.setFont('courier', 'bold')
+    doc.setFontSize(11)
+    doc.text(settings.storeName || 'SINAR PAGI', paperWidth / 2, y, { align: 'center' })
+
+    doc.setFont('courier', 'normal')
+    doc.setFontSize(8)
+    if (settings.storeAddress) {
+      y += 4
+      doc.text(settings.storeAddress, paperWidth / 2, y, { align: 'center' })
+    }
+    if (settings.storePhone) {
+      y += 3.5
+      doc.text(`Telp: ${settings.storePhone}`, paperWidth / 2, y, { align: 'center' })
+    }
+
+    y += 4
+    doc.text('-'.repeat(is58mm ? 32 : 45), paperWidth / 2, y, { align: 'center' })
+
+    y += 4
+    doc.text(`Nota : #${transaction.id.slice(0, 8)}`, 4, y)
+    y += 3.5
+    doc.text(`Tgl  : ${dayjs(transaction.date).format('DD/MM/YY HH:mm')}`, 4, y)
+    y += 3.5
+    doc.text(`Kasir: ${transaction.operatorName || 'Admin'}`, 4, y)
+
+    y += 4
+    doc.text('-'.repeat(is58mm ? 32 : 45), paperWidth / 2, y, { align: 'center' })
+
+    transaction.items.forEach(item => {
+      y += 4
+      const name = item.name || item.productName || 'Barang'
+      doc.text(name, 4, y)
+      
+      y += 3.5
+      const qtyPrice = `${item.qty} x ${item.price.toLocaleString('id-ID')}`
+      const subtotal = (item.subtotal || item.price * item.qty).toLocaleString('id-ID')
+      doc.text(qtyPrice, 4, y)
+      doc.text(subtotal, paperWidth - 4, y, { align: 'right' })
+    })
+
+    y += 4
+    doc.text('-'.repeat(is58mm ? 32 : 45), paperWidth / 2, y, { align: 'center' })
+
+    y += 4
+    doc.setFont('courier', 'bold')
+    doc.text('TOTAL :', 4, y)
+    doc.text(`Rp ${transaction.total.toLocaleString('id-ID')}`, paperWidth - 4, y, { align: 'right' })
+
+    if (transaction.paymentMethod === 'CASH') {
+      const bayar = transaction.amountPaid || transaction.paidAmount || transaction.total
+      const kembali = Math.max(0, bayar - transaction.total)
+      
+      y += 3.5
+      doc.setFont('courier', 'normal')
+      doc.text('BAYAR :', 4, y)
+      doc.text(`Rp ${bayar.toLocaleString('id-ID')}`, paperWidth - 4, y, { align: 'right' })
+      
+      y += 3.5
+      doc.text('KEMBALI :', 4, y)
+      doc.text(`Rp ${kembali.toLocaleString('id-ID')}`, paperWidth - 4, y, { align: 'right' })
+    }
+
+    y += 6
+    doc.setFont('courier', 'normal')
+    doc.setFontSize(7)
+    doc.text(settings.receiptFooter || 'Terima kasih telah berbelanja!', paperWidth / 2, y, { align: 'center' })
+
+    doc.save(`Nota_${transaction.id.slice(0, 8)}_${dayjs().format('YYYYMMDD_HHmm')}.pdf`)
+  }
+}
+
+===== src/services/expenseService.js =====
+import { expenseRepository } from '../db/repositories/expenseRepository.js'
+import { financeRepo } from '../db/repositories/financeRepository.js'
+
+export const expenseService = {
+  async getAllExpenses() {
+    return await expenseRepository.getAll()
+  },
+
+  async addExpense(data) {
+    // 1. Simpan data pengeluaran
+    const newItem = await expenseRepository.create(data)
+
+    // 2. Potong kas / bank di sistem Keuangan (OUT)
+    const accountId = data.paymentMethod === 'QRIS' ? 'acc_bank' : 'acc_cash'
+    const accLabel = accountId === 'acc_bank' ? 'Bank / QRIS' : 'Kas Laci'
+
+    await financeRepo.addMutation({
+      accountId,
+      type: 'OUT',
+      amount: newItem.amount,
+      category: `Operasional: ${newItem.category}`,
+      note: `${newItem.note || newItem.category} (via ${accLabel})`,
+      refId: newItem.id
+    })
+
+    return newItem
+  },
+
+  async deleteExpense(expense) {
+    // 1. Hapus data pengeluaran
+    await expenseRepository.delete(expense.id)
+
+    // 2. Pengembalian dana mutasi kas / bank (IN)
+    const accountId = expense.paymentMethod === 'QRIS' ? 'acc_bank' : 'acc_cash'
+
+    await financeRepo.addMutation({
+      accountId,
+      type: 'IN',
+      amount: expense.amount,
+      category: 'Pembatalan Pengeluaran',
+      note: `Batal Pengeluaran ${expense.category}: ${expense.note || ''}`,
+      refId: expense.id
+    })
+  }
+}
+
 ===== src/components/product/ProductForm.vue =====
 <template>
 <form @submit.prevent="onSubmit" class="bg-white p-5 rounded-3xl border flex flex-col gap-4 shadow-sm">
@@ -3218,12 +3661,15 @@ const onSubmit = handleSubmit(async (vals) => {
 
 ===== src/components/Sidebar.vue =====
 <script setup>
-import { X } from 'lucide-vue-next'
+import { X, LogOut } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
+import { useOperatorStore } from '../stores/operatorStore.js'
 
 const props = defineProps({ groups: Array, activePage: String })
 const emit = defineEmits(['select-page', 'close'])
+
 const router = useRouter()
+const operatorStore = useOperatorStore()
 
 const handleItemClick = (item) => {
   emit('select-page', item)
@@ -3231,18 +3677,43 @@ const handleItemClick = (item) => {
     router.push(item.to)
   }
 }
+
+const handleLogout = () => {
+  if (confirm('Akhiri shift & keluar dari akun operator ini?')) {
+    operatorStore.logout()
+    router.push('/login')
+  }
+}
 </script>
 
 <template>
 <div class="h-full bg-zinc-900 text-white flex flex-col overflow-hidden">
-  <div class="flex justify-between items-center p-6 pb-2 shrink-0">
-    <span class="font-black text-lg tracking-tight">SINAR PAGI</span>
-    <button @click="$emit('close')" class="p-2 bg-zinc-800 rounded-xl active:scale-95 transition">
-      <X class="w-4 h-4"/>
-    </button>
+  <!-- Header App & Operator Active -->
+  <div class="p-6 pb-4 shrink-0 space-y-3">
+    <div class="flex justify-between items-center">
+      <span class="font-black text-lg tracking-tight">SINAR PAGI</span>
+      <button @click="$emit('close')" class="p-2 bg-zinc-800 rounded-xl active:scale-95 transition">
+        <X class="w-4 h-4"/>
+      </button>
+    </div>
+
+    <!-- Info Operator Aktif & Tombol Switch Shift -->
+    <div class="bg-zinc-800/80 p-3 rounded-2xl border border-zinc-700/50 flex items-center justify-between">
+      <div class="min-w-0 flex-1 pr-2">
+        <div class="text-[9px] font-black text-zinc-400 uppercase tracking-wider">Shift Aktif</div>
+        <div class="font-bold text-xs text-white truncate">{{ operatorStore.operatorName }}</div>
+      </div>
+      <button 
+        @click="handleLogout" 
+        title="Ganti Operator / Keluar Shift"
+        class="px-2.5 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-xl font-bold text-[10px] flex items-center gap-1 active:scale-95 transition shrink-0"
+      >
+        <LogOut class="w-3 h-3" /> Shift
+      </button>
+    </div>
   </div>
 
-  <!-- AREA MENU BISA DI-SCROLL -->
+  <!-- Area Menu Scroll -->
   <div class="flex-1 overflow-y-auto px-6 py-2 space-y-6">
     <div v-for="group in groups" :key="group.title">
       <div class="text-[10px] font-black tracking-widest text-zinc-500 uppercase mb-3">
@@ -3270,6 +3741,125 @@ const handleItemClick = (item) => {
   </div>
 </div>
 </template>
+
+===== src/components/ReceiptModal.vue =====
+<template>
+  <div class="fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+    <div class="w-full max-w-sm bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-2xl flex flex-col gap-4 animate-in slide-in-from-bottom duration-200">
+      
+      <!-- Header Dialog -->
+      <div class="flex justify-between items-center border-b border-zinc-100 pb-3">
+        <div>
+          <h2 class="font-black text-base text-zinc-900">Transaksi Selesai</h2>
+          <p class="text-xs text-zinc-400">ID: #{{ transaction?.id?.slice(0, 8) }}</p>
+        </div>
+        <button @click="$emit('close')" class="p-2 bg-zinc-100 rounded-xl">
+          <X class="w-4 h-4" />
+        </button>
+      </div>
+
+      <!-- Ringkasan Struk Nota -->
+      <div class="bg-zinc-50 border border-zinc-200/60 p-4 rounded-2xl space-y-2 text-xs font-mono">
+        <div class="text-center font-bold text-sm text-zinc-800">SINAR PAGI</div>
+        <div class="border-b border-dashed border-zinc-300 pb-2 text-[10px] text-zinc-500 text-center">
+          {{ formatDate(transaction?.date) }}
+        </div>
+
+        <div class="max-h-36 overflow-y-auto space-y-1 my-2 pr-1">
+          <div v-for="item in transaction?.items" :key="item.id" class="flex justify-between text-[11px]">
+            <span class="truncate max-w-[160px]">{{ item.name || item.productName }}</span>
+            <span>{{ item.qty }}x {{ formatRibuan(item.price) }}</span>
+          </div>
+        </div>
+
+        <div class="border-t border-dashed border-zinc-300 pt-2 space-y-1">
+          <div class="flex justify-between font-bold text-zinc-900">
+            <span>TOTAL</span>
+            <span>Rp {{ formatRibuan(transaction?.total) }}</span>
+          </div>
+          <div v-if="transaction?.paymentMethod === 'CASH'" class="flex justify-between text-[11px] text-zinc-600">
+            <span>BAYAR</span>
+            <span>Rp {{ formatRibuan(transaction?.amountPaid || transaction?.total) }}</span>
+          </div>
+          <div v-if="transaction?.paymentMethod === 'CASH'" class="flex justify-between text-[11px] text-emerald-600 font-bold">
+            <span>KEMBALI</span>
+            <span>Rp {{ formatRibuan(Math.max(0, (transaction?.amountPaid || transaction?.total) - transaction?.total)) }}</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tombol Aksi Cetak & Unduh -->
+      <div class="space-y-2">
+        <button 
+          @click="handlePrintBluetooth" 
+          :disabled="printing"
+          class="w-full py-3.5 bg-zinc-900 hover:bg-zinc-800 disabled:bg-zinc-400 text-white rounded-2xl font-bold text-xs flex items-center justify-center gap-2 transition active:scale-95 shadow-md"
+        >
+          <Printer class="w-4 h-4" />
+          <span>{{ printing ? 'Menghubungkan Printer...' : 'Cetak Thermal (Bluetooth)' }}</span>
+        </button>
+
+        <button 
+          @click="handleDownloadPdf" 
+          class="w-full py-3.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 rounded-2xl font-bold text-xs flex items-center justify-center gap-2 transition active:scale-95"
+        >
+          <FileText class="w-4 h-4" />
+          <span>Unduh Nota (PDF)</span>
+        </button>
+
+        <button 
+          @click="$emit('close')" 
+          class="w-full py-3 bg-zinc-100 text-zinc-700 rounded-2xl font-bold text-xs hover:bg-zinc-200 transition"
+        >
+          Transaksi Baru
+        </button>
+      </div>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref } from 'vue'
+import { X, Printer, FileText } from 'lucide-vue-next'
+import { receiptService } from '../services/receiptService.js'
+import { formatRibuan } from '../utils/formatters/currency.js'
+import { toast } from 'vue-sonner'
+import dayjs from 'dayjs'
+
+const props = defineProps({
+  transaction: {
+    type: Object,
+    required: true
+  }
+})
+
+defineEmits(['close'])
+
+const printing = ref(false)
+
+const formatDate = (dateStr) => dateStr ? dayjs(dateStr).format('DD/MM/YYYY • HH:mm') : '-'
+
+const handlePrintBluetooth = async () => {
+  printing.value = true
+  try {
+    await receiptService.printThermal(props.transaction)
+    toast.success('Struk berhasil dicetak!')
+  } catch (err) {
+    toast.error(`Gagal mencetak: ${err.message}`)
+  } finally {
+    printing.value = false
+  }
+}
+
+const handleDownloadPdf = async () => {
+  try {
+    await receiptService.downloadPdf(props.transaction)
+    toast.success('Nota PDF berhasil diunduh!')
+  } catch (err) {
+    toast.error(`Gagal mengunduh PDF: ${err.message}`)
+  }
+}
+</script>
 
 ===== src/layouts/MainLayout.vue =====
 <template>
@@ -3370,7 +3960,7 @@ import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { 
   Menu, X, Package, Store, LayoutDashboard, Plus, 
-  Users, ShoppingCart, Tags, History, Coffee, Smartphone, Wallet, RefreshCw, BarChart3, Settings 
+  Users, ShoppingCart, Tags, History, Coffee, Smartphone, Wallet, RefreshCw, BarChart3, Settings, Receipt
 } from 'lucide-vue-next'
 import SidebarComponent from '../components/Sidebar.vue'
 import { syncStatus, syncRealtime } from '../services/syncService.js'
@@ -3396,6 +3986,7 @@ const groups = ref([
     title: 'KEUANGAN', 
     items: [
       { name: 'Kas & Keuangan', icon: Wallet, to: '/finance' },
+      { name: 'Pengeluaran Operasional', icon: Receipt, to: '/expenses'},
       { name: 'Laporan & Rekap', icon: BarChart3, to: '/reports' }
     ]
   },
@@ -3830,6 +4421,13 @@ onActivated(initDashboard)
   </div>
 </div>
 
+<!-- Modal Struk & Cetak Nota -->
+<ReceiptModal 
+  v-if="completedTransaction" 
+  :transaction="completedTransaction" 
+  @close="completedTransaction = null" 
+/>
+
 <div v-if="showSearch" @click="showSearch=false" class="fixed inset-0 z-20"></div>
 </template>
 
@@ -3839,6 +4437,7 @@ import { Search, X, ShoppingBag, Clock, PauseCircle, Trash2 } from 'lucide-vue-n
 import { useKasir } from '../composables/useKasir.js'
 import { formatRibuan } from '../utils/formatters/currency.js'
 import { toast } from 'vue-sonner'
+import ReceiptModal from '../components/ReceiptModal.vue'
 
 const { 
   store, q, memberQ, filteredProducts, filteredMembers, 
@@ -3849,6 +4448,7 @@ const {
 
 const showMemberPicker = ref(false)
 const showPendingModal = ref(false)
+const completedTransaction = ref(null)
 
 const handleMethod = (m) => { 
   store.paymentMethod = m
@@ -3869,7 +4469,24 @@ const restorePending = (pendingId) => {
 
 const onCheckout = async () => { 
   try { 
-    await checkout()
+    const currentCart = [...store.cart]
+    const currentMember = store.selectedMember
+    const currentMethod = store.paymentMethod
+    const currentPaid = store.bayarNominal
+
+    const res = await checkout()
+    
+    // Siapkan objek data transaksi untuk pratinjau nota
+    completedTransaction.value = {
+      id: res.id,
+      date: new Date().toISOString(),
+      total: res.total,
+      paymentMethod: currentMethod,
+      amountPaid: currentPaid,
+      memberName: currentMember?.name || 'Umum',
+      items: currentCart
+    }
+
     toast.success('Transaksi berhasil diproses!') 
   } catch(e) { 
     toast.error(e.message) 
@@ -4760,6 +5377,226 @@ onActivated(() => {
 </script>
 
 ===== src/views/Expenses.vue =====
+<template>
+<div class="flex-1 overflow-auto p-4 pb-28 space-y-4">
+  <!-- Header Title & Action -->
+  <div class="flex justify-between items-center">
+    <div>
+      <h1 class="font-black text-xl text-zinc-900">Pengeluaran Operasional</h1>
+      <p class="text-xs text-zinc-400">Pencatatan beban usaha & pengeluaran kas</p>
+    </div>
+
+    <button 
+      @click="openModal" 
+      class="bg-zinc-900 text-white px-3.5 py-2.5 rounded-2xl font-bold text-xs flex items-center gap-1.5 active:scale-95 transition shadow-sm"
+    >
+      <Plus class="w-4 h-4" /> Catat Beban
+    </button>
+  </div>
+
+  <!-- Cards Ringkasan Total -->
+  <div class="grid grid-cols-2 gap-3">
+    <div class="bg-white border border-zinc-100 p-4 rounded-3xl shadow-sm">
+      <div class="flex items-center gap-2 mb-1">
+        <div class="w-7 h-7 bg-red-50 text-red-600 rounded-xl flex items-center justify-center">
+          <Receipt class="w-4 h-4" />
+        </div>
+        <span class="text-[10px] font-black text-zinc-400 uppercase">Hari Ini</span>
+      </div>
+      <div class="text-lg font-black text-zinc-900 mt-1">Rp {{ formatRibuan(totalHariIni) }}</div>
+    </div>
+
+    <div class="bg-red-500 text-white p-4 rounded-3xl shadow-md">
+      <div class="flex items-center gap-2 mb-1">
+        <div class="w-7 h-7 bg-white/20 text-white rounded-xl flex items-center justify-center">
+          <TrendingDown class="w-4 h-4" />
+        </div>
+        <span class="text-[10px] font-black text-white/80 uppercase">Bulan Ini</span>
+      </div>
+      <div class="text-lg font-black text-white mt-1">Rp {{ formatRibuan(totalBulanIni) }}</div>
+    </div>
+  </div>
+
+  <!-- Filter & Search Bar -->
+  <div class="space-y-2">
+    <div class="relative">
+      <Search class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400" />
+      <input 
+        v-model="searchQuery" 
+        placeholder="Cari beban, plastik, listrik..." 
+        class="w-full pl-11 pr-4 py-3 bg-white border border-zinc-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"
+      />
+    </div>
+
+    <!-- Dropdown / Horizontal Scroll Category Filter -->
+    <div class="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+      <button 
+        @click="selectedCategory = 'ALL'"
+        :class="[
+          'px-3.5 py-2 rounded-xl text-xs font-bold shrink-0 transition',
+          selectedCategory === 'ALL' ? 'bg-zinc-900 text-white shadow-sm' : 'bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-50'
+        ]"
+      >
+        Semua
+      </button>
+      <button 
+        v-for="cat in categoryOptions" 
+        :key="cat"
+        @click="selectedCategory = cat"
+        :class="[
+          'px-3.5 py-2 rounded-xl text-xs font-bold shrink-0 transition',
+          selectedCategory === cat ? 'bg-zinc-900 text-white shadow-sm' : 'bg-white text-zinc-600 border border-zinc-200 hover:bg-zinc-50'
+        ]"
+      >
+        {{ cat }}
+      </button>
+    </div>
+  </div>
+
+  <!-- Empty State -->
+  <div v-if="filteredExpenses.length === 0" class="py-16 text-center text-zinc-400 text-xs bg-white rounded-3xl border border-zinc-100 p-6">
+    <Receipt class="w-10 h-10 text-zinc-300 mx-auto mb-2" />
+    <div class="font-bold text-zinc-500 text-sm">Belum Ada Pengeluaran</div>
+    <p class="text-[11px] text-zinc-400 mt-1">Klik "+ Catat Beban" untuk menambahkan pengeluaran operasional baru</p>
+  </div>
+
+  <!-- Daftar Pengeluaran -->
+  <div v-else class="space-y-2.5">
+    <div 
+      v-for="e in filteredExpenses" 
+      :key="e.id"
+      class="bg-white p-4 rounded-3xl border border-zinc-100 shadow-sm flex items-center justify-between gap-3"
+    >
+      <div class="min-w-0 flex-1">
+        <div class="flex items-center gap-2">
+          <span class="font-bold text-sm text-zinc-900 truncate">{{ e.note || e.category }}</span>
+          <span class="px-2 py-0.5 bg-red-50 text-red-600 border border-red-100 rounded-md text-[9px] font-black uppercase shrink-0">
+            {{ e.category }}
+          </span>
+        </div>
+        <div class="text-[10px] text-zinc-400 mt-0.5 flex items-center gap-2">
+          <span>{{ formatDate(e.date) }}</span>
+          <span>•</span>
+          <span class="font-bold text-zinc-600">via {{ e.paymentMethod === 'QRIS' ? 'Bank/QRIS' : 'Kas Laci' }}</span>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-3 shrink-0">
+        <div class="text-right">
+          <div class="font-black text-sm text-red-600">-Rp {{ formatRibuan(e.amount) }}</div>
+        </div>
+        <button 
+          @click="deleteExpense(e)" 
+          class="p-2 text-zinc-300 hover:text-red-500 hover:bg-red-50 rounded-xl transition"
+        >
+          <Trash2 class="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal Form Tambah Pengeluaran -->
+  <div v-if="showModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+    <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl animate-in slide-in-from-bottom duration-200">
+      <div class="flex justify-between items-center mb-4">
+        <div>
+          <h2 class="font-black text-base text-zinc-900">Catat Pengeluaran Operasional</h2>
+          <p class="text-xs text-zinc-400">Saldo kas/bank akan otomatis terpotong</p>
+        </div>
+        <button @click="showModal = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4" /></button>
+      </div>
+
+      <form @submit.prevent="saveExpense" class="space-y-3.5">
+        <div>
+          <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Kategori Beban *</label>
+          <select v-model="form.category" class="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-bold">
+            <option v-for="cat in categoryOptions" :key="cat" :value="cat">{{ cat }}</option>
+          </select>
+        </div>
+
+        <div>
+          <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Nominal Pengeluaran *</label>
+          <input 
+            :value="formatRp(form.amount)" 
+            @input="e => form.amount = toNumber(e.target.value)" 
+            type="text" 
+            inputmode="numeric" 
+            placeholder="Rp 0" 
+            required
+            class="w-full px-4 py-3 bg-red-50/50 border border-red-200 rounded-xl text-lg font-black text-red-600 focus:outline-none focus:ring-2 focus:ring-red-500" 
+          />
+        </div>
+
+        <div>
+          <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Sumber Pembayaran *</label>
+          <div class="grid grid-cols-2 gap-2">
+            <button 
+              type="button"
+              @click="form.paymentMethod = 'CASH'" 
+              :class="['py-2.5 rounded-xl text-xs font-bold border transition', form.paymentMethod === 'CASH' ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-zinc-50 border-zinc-200 text-zinc-600']"
+            >
+              Kas Laci (Tunai)
+            </button>
+            <button 
+              type="button"
+              @click="form.paymentMethod = 'QRIS'" 
+              :class="['py-2.5 rounded-xl text-xs font-bold border transition', form.paymentMethod === 'QRIS' ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-zinc-50 border-zinc-200 text-zinc-600']"
+            >
+              Bank / QRIS
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Catatan / Keterangan</label>
+          <input 
+            v-model="form.note" 
+            placeholder="Misal: Beli kantong plastik 10 pack" 
+            class="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-bold" 
+          />
+        </div>
+
+        <div class="flex gap-2 pt-2">
+          <button type="button" @click="showModal = false" class="flex-1 py-3 bg-zinc-100 font-bold text-xs rounded-xl">Batal</button>
+          <button type="submit" :disabled="loading" class="flex-1 py-3 bg-zinc-900 disabled:bg-zinc-400 text-white font-bold text-xs rounded-xl shadow-md">Simpan & Potong Kas</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+</template>
+
+<script setup>
+import { onMounted, onActivated } from 'vue'
+import { Plus, Search, Trash2, X, Receipt, TrendingDown } from 'lucide-vue-next'
+import { useExpenses } from '../composables/useExpenses.js'
+import { formatRibuan, formatRp, toNumber } from '../utils/formatters/currency.js'
+
+const {
+  searchQuery,
+  selectedCategory,
+  loading,
+  showModal,
+  form,
+  categoryOptions,
+  filteredExpenses,
+  totalHariIni,
+  totalBulanIni,
+  loadExpenses,
+  openModal,
+  saveExpense,
+  deleteExpense,
+  formatDate
+} = useExpenses()
+
+onMounted(() => {
+  loadExpenses()
+})
+
+onActivated(() => {
+  loadExpenses()
+})
+</script>
 
 ===== src/views/ProductsList.vue =====
 <template>
@@ -6276,27 +7113,144 @@ onActivated(() => {
 })
 </script>
 
+===== src/views/Login.vue =====
+<template>
+<div class="min-h-screen bg-zinc-900 text-white flex items-center justify-center p-4">
+  <div class="w-full max-w-sm bg-zinc-800 border border-zinc-700/60 p-6 rounded-[2.5rem] shadow-2xl flex flex-col gap-5">
+    
+    <!-- Header -->
+    <div class="text-center space-y-1">
+      <div class="w-12 h-12 bg-amber-500/20 text-amber-400 rounded-2xl flex items-center justify-center mx-auto mb-2 font-black text-xl">
+        SP
+      </div>
+      <h1 class="font-black text-xl tracking-tight">Sinar Pagi POS</h1>
+      <p class="text-xs text-zinc-400">Pilih akun operator untuk memulai shift</p>
+    </div>
+
+    <!-- Pilihan Operator -->
+    <div class="space-y-3">
+      <div>
+        <label class="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1.5 block">Pilih Operator</label>
+        <select 
+          v-model="selectedOperatorId" 
+          @change="pin = ''"
+          class="w-full px-4 py-3 bg-zinc-900 border border-zinc-700 rounded-2xl text-sm font-bold text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+        >
+          <option value="" disabled>-- Pilih Operator --</option>
+          <option v-for="op in operators" :key="op.id" :value="op.id">
+            {{ op.name }} ({{ op.role }})
+          </option>
+        </select>
+      </div>
+
+      <!-- Input PIN (jika operator punya PIN) -->
+      <div v-if="activeSelectedOperator?.pin">
+        <label class="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1.5 block">PIN Otorisasi</label>
+        <input 
+          v-model="pin" 
+          type="password" 
+          maxlength="6" 
+          placeholder="••••" 
+          @keyup.enter="handleLogin"
+          class="w-full px-4 py-3 bg-zinc-900 border border-zinc-700 rounded-2xl text-center text-lg font-black tracking-widest text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+        />
+      </div>
+    </div>
+
+    <!-- Button Submit -->
+    <button 
+      @click="handleLogin" 
+      :disabled="!selectedOperatorId || loading"
+      class="w-full py-4 bg-white hover:bg-zinc-100 disabled:bg-zinc-700 disabled:text-zinc-500 text-zinc-900 font-black text-xs rounded-2xl transition active:scale-95 shadow-lg mt-2"
+    >
+      {{ loading ? 'VERIFIKASI...' : 'MASUK SHIFT' }}
+    </button>
+  </div>
+</div>
+</template>
+
+<script setup>
+import { ref, computed, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
+import { operatorRepo } from '../db/repositories/operatorRepository.js'
+import { useOperatorStore } from '../stores/operatorStore.js'
+import { toast } from 'vue-sonner'
+
+const router = useRouter()
+const operatorStore = useOperatorStore()
+
+const operators = ref([])
+const selectedOperatorId = ref('')
+const pin = ref('')
+const loading = ref(false)
+
+const activeSelectedOperator = computed(() => {
+  return operators.value.find(o => o.id === selectedOperatorId.value)
+})
+
+const loadOperators = async () => {
+  let list = await operatorRepo.getAll()
+  
+  // Jika belum ada operator sama sekali, buatkan Kasir Utama bawaan
+  if (list.length === 0) {
+    await operatorRepo.create({ name: 'Kasir Utama', role: 'Admin', pin: '' })
+    list = await operatorRepo.getAll()
+  }
+
+  operators.value = list
+  if (list.length > 0) {
+    selectedOperatorId.value = list[0].id
+  }
+}
+
+const handleLogin = async () => {
+  if (!selectedOperatorId.value) return
+
+  loading.value = true
+  try {
+    await operatorStore.login(selectedOperatorId.value, pin.value)
+    toast.success(`Selamat bertugas, ${operatorStore.operatorName}!`)
+    router.push('/kasir')
+  } catch (err) {
+    toast.error(err.message)
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(loadOperators)
+</script>
+
 ===== src/router/index.js =====
 import { createRouter, createWebHistory } from 'vue-router'
 import MainLayout from '../layouts/MainLayout.vue'
-import ProductsList from '../views/ProductsList.vue'
-import ProductsAdd from '../views/ProductsAdd.vue'
-import CategoriesView from '../views/Categories.vue'
-import MembersView from '../views/Members.vue'
-import SalesHistoryView from '../views/SalesHistory.vue'
+import LoginView from '../views/Login.vue'
+import { useOperatorStore } from '../stores/operatorStore.js'
 
 export const router = createRouter({
   history: createWebHistory(),
   routes: [
     {
+      path: '/login',
+      name: 'Login',
+      component: LoginView,
+      meta: { title: 'Kasir Login', guestOnly: true }
+    },
+    {
       path: '/',
       component: MainLayout,
       children: [
-        { path: '', redirect: '/products' },
+        { path: '', redirect: '/kasir' },
+        { 
+          path: 'kasir', 
+          name: 'Kasir', 
+          component: () => import('../views/Kasir.vue'),
+          meta: { title: 'Kasir' }
+        },
         { 
           path: 'products', 
           name: 'ProductsList',
-          component: ProductsList,
+          component: () => import('../views/ProductsList.vue'),
           meta: { title: 'Barang' }
         },
         { 
@@ -6308,13 +7262,13 @@ export const router = createRouter({
         { 
           path: 'categories', 
           name: 'Categories',
-          component: CategoriesView,
+          component: () => import('../views/Categories.vue'),
           meta: { title: 'Kategori Barang' }
         },
         { 
           path: 'add-products', 
           name: 'ProductsAdd',
-          component: ProductsAdd,
+          component: () => import('../views/ProductsAdd.vue'),
           meta: { title: 'Tambah Barang' }
         },
         { 
@@ -6326,14 +7280,8 @@ export const router = createRouter({
         { 
           path: 'members', 
           name: 'Members',
-          component: MembersView,
+          component: () => import('../views/Members.vue'),
           meta: { title: 'Daftar Member' }
-        },
-        { 
-          path: 'kasir', 
-          name: 'Kasir', 
-          component: () => import('../views/Kasir.vue'),
-          meta: { title: 'Kasir' }
         },
         { 
           path: 'digital', 
@@ -6344,8 +7292,14 @@ export const router = createRouter({
         { 
           path: 'sales-history', 
           name: 'SalesHistory',
-          component: SalesHistoryView,
+          component: () => import('../views/SalesHistory.vue'),
           meta: { title: 'Riwayat Penjualan' }
+        },
+        { 
+          path: 'expenses', 
+          name: 'Expenses', 
+          component: () => import('../views/Expenses.vue'),
+          meta: { title: 'Pengeluaran Operasional' }
         },
         { 
           path: 'finance', 
@@ -6376,10 +7330,23 @@ export const router = createRouter({
           name: 'Settings', 
           component: () => import('../views/Settings.vue'),
           meta: { title: 'Pengaturan' }
-        },
+        }
       ]
     }
   ]
+})
+
+// ROUTE GUARD UNTUK SESI OPERATOR
+router.beforeEach((to, from, next) => {
+  const operatorStore = useOperatorStore()
+
+  if (!to.meta.guestOnly && !operatorStore.isLoggedIn) {
+    next('/login')
+  } else if (to.meta.guestOnly && operatorStore.isLoggedIn) {
+    next('/kasir')
+  } else {
+    next()
+  }
 })
 
 ===== src/schemas/product.schema.js =====
@@ -6464,6 +7431,52 @@ export const useProductsStore = defineStore('products', {
       syncRealtime.pushLocalToCloud()
     }
   },
+  persist: true
+})
+
+===== src/stores/operatorStore.js =====
+import { defineStore } from 'pinia'
+import { operatorRepo } from '../db/repositories/operatorRepository.js'
+
+export const useOperatorStore = defineStore('operator', {
+  state: () => ({
+    activeOperator: null
+  }),
+
+  getters: {
+    isLoggedIn: (state) => !!state.activeOperator,
+    operatorName: (state) => state.activeOperator?.name || 'Kasir',
+    operatorRole: (state) => state.activeOperator?.role || 'Kasir'
+  },
+
+  actions: {
+    async login(operatorId, pinInput) {
+      const operators = await operatorRepo.getAll()
+      const target = operators.find(o => o.id === operatorId)
+
+      if (!target) {
+        throw new Error('Operator tidak ditemukan.')
+      }
+
+      // Jika operator memiliki PIN, cocokkan PIN
+      if (target.pin && target.pin !== pinInput) {
+        throw new Error('PIN yang Anda masukkan salah.')
+      }
+
+      this.activeOperator = {
+        id: target.id,
+        name: target.name,
+        role: target.role
+      }
+
+      return this.activeOperator
+    },
+
+    logout() {
+      this.activeOperator = null
+    }
+  },
+
   persist: true
 })
 
