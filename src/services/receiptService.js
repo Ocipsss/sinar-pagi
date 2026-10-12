@@ -12,7 +12,10 @@ export const receiptService = {
 
     const settings = await settingsRepo.getSettings()
     const is58mm = settings.printerPaperSize !== '80mm'
-    const encoder = new EscPosEncoder()
+    
+    // Penanganan aman untuk impor instansiasi EscPosEncoder
+    const EncoderClass = typeof EscPosEncoder === 'function' ? EscPosEncoder : (EscPosEncoder.default || EscPosEncoder)
+    const encoder = new EncoderClass()
 
     // Format Perataan Kolom Text Thermal
     const width = is58mm ? 32 : 48
@@ -76,18 +79,28 @@ export const receiptService = {
       optionalServices: [
         '000018f0-0000-1000-8000-00805f9b34fb', // Standard Printer Service
         '0000ff00-0000-1000-8000-00805f9b34fb',
-        '49535343-fe7d-41aa-a322-3d7a4a2d2bd0'  // Custom SPP
+        '0000af00-0000-1000-8000-00805f9b34fb',
+        '49535343-fe7d-41aa-a322-3d7a4a2d2bd0', // Custom SPP
+        'e7810a71-73ae-4d9d-8c54-be98300d1107'
       ]
     })
 
+    if (!device || !device.gatt) {
+      throw new Error('Perangkat Bluetooth tidak mendukung profil GATT.')
+    }
+
     const server = await device.gatt.connect()
-    const services = await server.getPrimaryServices()
-    
+    if (!server) {
+      throw new Error('Gagal terhubung ke server GATT printer.')
+    }
+
+    const services = await server.getPrimaryServices().catch(() => [])
     let targetCharacteristic = null
+
     for (const service of services) {
-      const characteristics = await service.getCharacteristics()
+      const characteristics = await service.getCharacteristics().catch(() => [])
       for (const char of characteristics) {
-        if (char.properties.write || char.properties.writeWithoutResponse) {
+        if (char?.properties?.write || char?.properties?.writeWithoutResponse) {
           targetCharacteristic = char
           break
         }
@@ -106,7 +119,9 @@ export const receiptService = {
       await targetCharacteristic.writeValue(chunk)
     }
 
-    await device.gatt.disconnect()
+    if (device.gatt.connected) {
+      await device.gatt.disconnect()
+    }
   },
 
   // 2. Unduh Nota dalam Bentuk File PDF

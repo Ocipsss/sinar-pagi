@@ -179,13 +179,23 @@
           </template>
         </div>
 
+        <!-- Action Buttons -->
         <div class="border-t border-zinc-100 pt-3 space-y-2">
-          <div class="flex justify-between items-center text-sm">
+          <div class="flex justify-between items-center text-sm mb-2">
             <span class="font-bold text-zinc-600">Total Transaksi</span>
             <span :class="['font-black text-base', selectedTransaction.status === 'void' || selectedTransaction.status === 'CANCELLED' ? 'line-through text-zinc-400' : 'text-zinc-900']">
               Rp {{ formatRibuan(Math.abs(selectedTransaction.total)) }}
             </span>
           </div>
+
+          <!-- Tombol Cetak Struk (Reprint) -->
+          <button 
+            @click="showReceiptModal = true"
+            class="w-full py-3 bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 shadow-md transition active:scale-95"
+          >
+            <Printer class="w-4 h-4" />
+            <span>Cetak Struk / Reprint Nota</span>
+          </button>
 
           <div class="flex gap-2">
             <button 
@@ -198,7 +208,7 @@
             </button>
             <button 
               @click="selectedTransaction = null" 
-              class="flex-1 py-3 bg-zinc-900 text-white rounded-xl font-bold text-xs"
+              class="flex-1 py-3 bg-zinc-100 text-zinc-700 rounded-xl font-bold text-xs hover:bg-zinc-200 transition"
             >
               Tutup
             </button>
@@ -206,14 +216,22 @@
         </div>
       </div>
     </div>
+
+    <!-- Modal Struk / Reprint Nota -->
+    <ReceiptModal 
+      v-if="showReceiptModal && selectedTransaction" 
+      :transaction="selectedTransaction" 
+      @close="showReceiptModal = false" 
+    />
   </div>
 </template>
 
 <script setup>
-import { onMounted, onActivated } from 'vue'
-import { Search, Receipt, Calendar, X } from 'lucide-vue-next'
+import { ref, onMounted, onActivated } from 'vue'
+import { Search, Receipt, Calendar, X, Printer } from 'lucide-vue-next'
 import { formatRibuan } from '../utils/formatters/currency.js'
 import { useSalesHistory } from '../composables/useSalesHistory.js'
+import ReceiptModal from '../components/ReceiptModal.vue'
 
 const {
   searchQuery,
@@ -228,6 +246,8 @@ const {
   handleVoid,
   formatDate
 } = useSalesHistory()
+
+const showReceiptModal = ref(false)
 
 onMounted(() => {
   loadHistory()
