@@ -340,6 +340,7 @@ export function useKasir() {
 }
 
 ===== src/composables/useSalesHistory.js =====
+// src/composables/useSalesHistory.js
 import { ref, computed } from 'vue'
 import { salesHistoryService } from '../services/salesHistoryService.js'
 import { toast } from 'vue-sonner'
@@ -350,6 +351,7 @@ dayjs.locale(localeId)
 
 export function useSalesHistory() {
   const transactions = ref([])
+  const totalPiutang = ref(0)
   const searchQuery = ref('')
   const selectedFilter = ref('ALL')
   const selectedTransaction = ref(null)
@@ -367,7 +369,9 @@ export function useSalesHistory() {
   const loadHistory = async () => {
     loading.value = true
     try {
-      transactions.value = await salesHistoryService.getCombinedHistory()
+      const data = await salesHistoryService.getCombinedHistory()
+      transactions.value = data.transactions
+      totalPiutang.value = data.totalPiutang
     } finally {
       loading.value = false
     }
@@ -412,12 +416,6 @@ export function useSalesHistory() {
     return filteredTransactions.value
       .filter(t => t.status !== 'void' && t.status !== 'CANCELLED')
       .reduce((sum, t) => sum + (t.total || 0), 0)
-  })
-
-  const totalPiutang = computed(() => {
-    return filteredTransactions.value
-      .filter(t => t.trxType === 'BARANG' && t.paymentMethod === 'TEMPO' && t.status !== 'void')
-      .reduce((sum, t) => sum + (t.remaining || t.total || 0), 0)
   })
 
   const formatDate = (dateString) => {
@@ -1109,8 +1107,11 @@ export function useOperators() {
 }
 
 ===== src/composables/useProductsDigital.js =====
+// src/composables/useProductsDigital.js
 import { ref, computed } from 'vue'
 import { productsDigitalService } from '../services/productsDigitalService.js'
+import { memberRepo } from '../db/repositories/memberRepository.js'
+import { formatRibuan } from '../utils/formatters/currency.js'
 import { toast } from 'vue-sonner'
 
 export function useProductsDigital() {
@@ -1122,6 +1123,26 @@ export function useProductsDigital() {
     adminPaymentMethod: 'cash'
   })
   const loading = ref(false)
+
+  const members = ref([])
+  const selectedMember = ref(null)
+  const memberQ = ref('')
+  const showMemberPicker = ref(false)
+
+  const loadMembers = async () => {
+    members.value = await memberRepo.getAll()
+  }
+
+  const filteredMembers = computed(() => {
+    const qq = memberQ.value.toLowerCase().trim()
+    if (!qq) return members.value.slice(0, 20)
+    return members.value.filter(m => m.name.toLowerCase().includes(qq) || (m.phone || '').includes(qq)).slice(0, 20)
+  })
+
+  const selectMember = (m) => {
+    selectedMember.value = m
+    showMemberPicker.value = false
+  }
 
   const estimasiKas = computed(() => {
     const n = Number(form.value.nominal) || 0
@@ -1142,7 +1163,11 @@ export function useProductsDigital() {
 
     loading.value = true
     try {
-      await productsDigitalService.create(form.value)
+      await productsDigitalService.create({
+        ...form.value,
+        memberId: selectedMember.value?.id || null,
+        memberName: selectedMember.value?.name || null
+      })
       toast.success('Transaksi digital berhasil disimpan!')
       form.value = {
         type: 'topup',
@@ -1151,6 +1176,7 @@ export function useProductsDigital() {
         adminFee: 2000,
         adminPaymentMethod: 'cash'
       }
+      selectedMember.value = null
     } catch (e) {
       toast.error(`Gagal menyimpan transaksi: ${e.message}`)
     } finally {
@@ -1158,7 +1184,19 @@ export function useProductsDigital() {
     }
   }
 
-  return { form, estimasiKas, loading, saveTransaction }
+  return { 
+    form, 
+    estimasiKas, 
+    loading, 
+    members,
+    selectedMember,
+    memberQ,
+    showMemberPicker,
+    filteredMembers,
+    loadMembers,
+    selectMember,
+    saveTransaction 
+  }
 }
 
 ===== src/composables/useSettings.js =====
@@ -1657,6 +1695,7 @@ export const memberRepo = {
 }
 
 ===== src/db/repositories/categoryRepository.js =====
+// src/db/repositories/categoryRepository.js
 import { db } from '../index.js'
 import dayjs from 'dayjs'
 
@@ -1676,11 +1715,34 @@ export const categoryRepo = {
   },
   update: async (id, name) => {
     const now = dayjs().toISOString()
-    await db.categories.update(id, {
-      name,
-      updatedAt: now,
-      synced: 0
-    })
+    const oldCategory = await db.categories.get(id)
+
+    if (oldCategory && oldCategory.name !== name) {
+      const oldName = oldCategory.name
+
+      // 1. Update nama kategori di tabel categories
+      await db.categories.update(id, {
+        name,
+        updatedAt: now,
+        synced: 0
+      })
+
+      // 2. Cari semua produk yang menggunakan kategori lama, lalu perbarui ke nama baru
+      const products = await db.products.where('category').equals(oldName).toArray()
+      for (const p of products) {
+        await db.products.update(p.id, {
+          category: name,
+          updatedAt: now,
+          synced: 0
+        })
+      }
+    } else {
+      await db.categories.update(id, {
+        name,
+        updatedAt: now,
+        synced: 0
+      })
+    }
   },
   delete: (id) => db.categories.delete(id)
 }
@@ -1827,10 +1889,35 @@ export const shoppingRepository = {
 // src/db/repositories/operatorRepository.js
 import { db } from '../index.js'
 import dayjs from 'dayjs'
+import { firestore } from '../../services/firebase.js'
+import { doc, deleteDoc, collection, getDocs } from 'firebase/firestore'
 
 export const operatorRepo = {
-  getAll: () => (db.operators ? db.operators.toArray() : db.table('operators').toArray()),
+  getAll: async () => {
+    const table = db.operators || db.table('operators')
+    let list = await table.toArray()
+    
+    // Jika data lokal kosong (seperti di mode Incognito) dan online, ambil langsung dari Cloud Firestore
+    if (list.length === 0 && navigator.onLine && firestore) {
+      try {
+        const snapshot = await getDocs(collection(firestore, 'operators'))
+        const cloudList = []
+        snapshot.forEach(d => {
+          cloudList.push({ id: d.id, ...d.data() })
+        })
+        if (cloudList.length > 0) {
+          await table.bulkPut(cloudList.map(o => ({ ...o, synced: 1 })))
+          list = cloudList
+        }
+      } catch (e) {
+        console.warn('Gagal mengambil operator dari cloud:', e)
+      }
+    }
+    return list
+  },
+
   getById: (id) => (db.operators ? db.operators.get(id) : db.table('operators').get(id)),
+
   create: async (data) => {
     const id = crypto.randomUUID()
     const now = dayjs().toISOString()
@@ -1846,12 +1933,25 @@ export const operatorRepo = {
     await table.add(item)
     return id
   },
+
   update: async (id, data) => {
     const now = dayjs().toISOString()
     const table = db.operators || db.table('operators')
     await table.update(id, { ...data, updatedAt: now, synced: 0 })
   },
-  delete: (id) => (db.operators || db.table('operators')).delete(id)
+
+  delete: async (id) => {
+    const table = db.operators || db.table('operators')
+    await table.delete(id)
+    
+    if (navigator.onLine && firestore) {
+      try {
+        await deleteDoc(doc(firestore, 'operators', id))
+      } catch (e) {
+        console.warn('Gagal menghapus operator dari cloud:', e)
+      }
+    }
+  }
 }
 
 ===== src/db/repositories/financeRepository.js =====
@@ -2745,6 +2845,8 @@ export const shoppingService = {
 ===== src/services/backupService.js =====
 // src/services/backupService.js
 import { db } from '../db/index.js'
+import { firestore } from './firebase.js'
+import { collection, getDocs, writeBatch } from 'firebase/firestore'
 import dayjs from 'dayjs'
 
 export const backupService = {
@@ -2773,7 +2875,8 @@ export const backupService = {
           const rawParsed = JSON.parse(e.target.result)
           const importedData = rawParsed.database || rawParsed
 
-          await db.transaction('rw', db.tables, async () => {
+          const tableNames = db.tables.map(t => t.name)
+          await db.transaction('rw', tableNames, async () => {
             for (const table of db.tables) {
               await table.clear()
             }
@@ -2843,8 +2946,49 @@ export const backupService = {
   },
 
   async resetTransactions() {
-    await db.transaction('rw', db.tables, async () => {
-      // 1. Kosongkan tabel transaksi & aktivitas terkait
+    // 1. Hapus data di Cloud Firestore terlebih dahulu jika perangkat online
+    if (navigator.onLine && firestore) {
+      const cloudTablesToClear = [
+        'transactions',
+        'transaction_items',
+        'expenses',
+        'digital_transactions',
+        'debt_payments',
+        'cash_mutations',
+        'shopping_list'
+      ]
+
+      for (const tableName of cloudTablesToClear) {
+        try {
+          const querySnapshot = await getDocs(collection(firestore, tableName))
+          const batches = []
+          let currentBatch = writeBatch(firestore)
+          let count = 0
+
+          querySnapshot.forEach((document) => {
+            currentBatch.delete(document.ref)
+            count++
+            if (count >= 400) {
+              batches.push(currentBatch.commit())
+              currentBatch = writeBatch(firestore)
+              count = 0
+            }
+          })
+          if (count > 0) {
+            batches.push(currentBatch.commit())
+          }
+          await Promise.all(batches)
+        } catch (err) {
+          console.warn(`Gagal menghapus koleksi cloud ${tableName}:`, err)
+        }
+      }
+    }
+
+    // 2. Ambil daftar nama tabel secara eksplisit agar transaksi Dexie tidak gagal
+    const tableNames = db.tables.map(t => t.name)
+
+    await db.transaction('rw', tableNames, async () => {
+      // 3. Kosongkan seluruh tabel riwayat transaksi & aktivitas lokal[span_1](start_span)[span_1](end_span)
       await db.transactions.clear()
       await db.transaction_items.clear()
       await db.expenses.clear()
@@ -2853,7 +2997,7 @@ export const backupService = {
       await db.cash_mutations.clear()
       await db.shopping_list.clear()
 
-      // 2. Reset piutang dan total belanja member
+      // 4. Reset piutang, poin, dan total belanja seluruh member menjadi 0[span_2](start_span)[span_2](end_span)
       const members = await db.members.toArray()
       for (const m of members) {
         await db.members.update(m.id, {
@@ -2864,7 +3008,7 @@ export const backupService = {
         })
       }
 
-      // 3. Reset saldo akun kas & bank menjadi 0
+      // 5. Reset saldo seluruh akun kas & bank menjadi 0[span_3](start_span)[span_3](end_span)
       const accounts = await db.cash_accounts.toArray()
       for (const a of accounts) {
         await db.cash_accounts.update(a.id, {
@@ -2927,15 +3071,18 @@ export const memberService = {
 // src/services/productsDigitalService.js
 import { db } from '../db/index.js'
 import { financeRepo } from '../db/repositories/financeRepository.js'
+import dayjs from 'dayjs'
 
 export const productsDigitalService = {
   async create(data) {
-    const now = new Date().toISOString()
+    const now = dayjs().toISOString()
     const id = crypto.randomUUID()
     const nominal = Number(data.nominal) || 0
     const adminFee = Number(data.adminFee) || 0
     const isTopup = data.type === 'topup'
     const isCashAdmin = data.adminPaymentMethod === 'cash'
+    const memberId = data.memberId || null
+    const memberName = data.memberName || null
 
     const doc = {
       id,
@@ -2948,14 +3095,14 @@ export const productsDigitalService = {
       adminPaymentMethod: data.adminPaymentMethod,
       totalReceived: isTopup && isCashAdmin ? nominal + adminFee : nominal,
       profit: adminFee,
+      memberId,
+      memberName,
       synced: 0
     }
 
     const result = await db.digital_transactions.add(doc)
 
     if (isTopup) {
-      // TOP UP:
-      // 1. Uang Tunai Masuk Laci (Selalu sebesar Nominal Tunai yang diterima dari pelanggan)
       const cashIn = nominal + (isCashAdmin ? adminFee : 0)
       if (cashIn > 0) {
         await financeRepo.addMutation({
@@ -2968,9 +3115,6 @@ export const productsDigitalService = {
         })
       }
 
-      // 2. Saldo Rekening/Bank Terpotong
-      // Jika Admin Potong Saldo: Bank terpotong = Nominal - Admin (misal 20rb - 2rb = 18rb)
-      // Jika Admin Tunai: Bank terpotong = Nominal Utuh (20rb)
       const bankOut = isCashAdmin ? nominal : Math.max(0, nominal - adminFee)
       await financeRepo.addMutation({
         accountId: 'acc_bank',
@@ -2981,8 +3125,6 @@ export const productsDigitalService = {
         refId: id
       })
     } else {
-      // TARIK TUNAI:
-      // 1. Uang Tunai Keluar dari Laci
       const cashOut = nominal - (isCashAdmin ? adminFee : 0)
       if (cashOut > 0) {
         await financeRepo.addMutation({
@@ -2994,8 +3136,7 @@ export const productsDigitalService = {
           refId: id
         })
       }
-
-      // 2. Saldo Rekening/Bank Bertambah
+      
       const bankIn = isCashAdmin ? nominal : nominal + adminFee
       await financeRepo.addMutation({
         accountId: 'acc_bank',
@@ -3005,6 +3146,24 @@ export const productsDigitalService = {
         note: `Masuk Saldo Tarik Tunai ${doc.provider}`,
         refId: id
       })
+    }
+
+    // Jika ada member yang dipilih, update poin dan total belanja
+    if (memberId) {
+      const currentMember = await db.members.get(memberId)
+      if (currentMember) {
+        const totalOmzetDigital = nominal + adminFee
+        const earnedPoints = Math.floor(adminFee * 0.01) // 1% dari profit admin fee
+        const updatedPoints = (currentMember.points || 0) + earnedPoints
+        const updatedSpending = (currentMember.total_spending || 0) + totalOmzetDigital
+
+        await db.members.update(memberId, {
+          points: updatedPoints,
+          total_spending: updatedSpending,
+          updatedAt: now,
+          synced: 0
+        })
+      }
     }
 
     return result
@@ -3107,6 +3266,9 @@ export const salesHistoryService = {
     const memberMap = new Map(members.map(m => [m.id, m.name]))
     const productMap = new Map(products.map(p => [p.id, p.name]))
 
+    // Hitung total piutang langsung dari sisa utang seluruh member agar akurat & sinkron
+    const totalPiutang = members.reduce((sum, m) => sum + (Number(m.debt) || 0), 0)
+
     // 1. Format transaksi barang
     const formattedBarang = transactions.map(t => {
       const items = allItems
@@ -3162,7 +3324,12 @@ export const salesHistoryService = {
       }
     })
 
-    return [...formattedBarang, ...formattedDigital].sort((a, b) => new Date(b.date) - new Date(a.date))
+    const transactionsList = [...formattedBarang, ...formattedDigital].sort((a, b) => new Date(b.date) - new Date(a.date))
+
+    return {
+      transactions: transactionsList,
+      totalPiutang
+    }
   },
 
   async voidTransaction(transaction) {
@@ -6640,7 +6807,7 @@ onActivated(() => {
     <div class="w-full bg-white p-6 rounded-[2.5rem] shadow-sm border border-zinc-100">
 
       <!-- Toggle Top Up / Tarik Tunai -->
-      <div class="flex bg-zinc-100 p-1.5 rounded-2xl mb-8 gap-2">
+      <div class="flex bg-zinc-100 p-1.5 rounded-2xl mb-6 gap-2">
         <button 
           @click="form.type = 'topup'" 
           :class="form.type === 'topup'? 'bg-zinc-900 text-white shadow-md' : 'text-zinc-400'" 
@@ -6655,6 +6822,31 @@ onActivated(() => {
         >
           TARIK TUNAI
         </button>
+      </div>
+
+      <!-- Pilih Member -->
+      <div class="mb-5 flex items-center justify-between bg-zinc-50 border border-zinc-200/80 p-3.5 rounded-2xl">
+        <div>
+          <div class="text-[9px] font-black text-zinc-400 uppercase tracking-wider">Pelanggan / Member</div>
+          <div class="text-xs font-bold text-zinc-900 mt-0.5">
+            {{ selectedMember ? selectedMember.name : 'Umum / Non-Member' }}
+          </div>
+        </div>
+        <div class="flex gap-2">
+          <button 
+            v-if="selectedMember" 
+            @click="selectedMember = null" 
+            class="px-3 py-1.5 bg-red-100 text-red-600 rounded-xl font-bold text-xs"
+          >
+            Lepas
+          </button>
+          <button 
+            @click="showMemberPicker = true" 
+            class="px-3.5 py-1.5 bg-zinc-900 text-white rounded-xl font-bold text-xs active:scale-95 transition"
+          >
+            {{ selectedMember ? 'Ganti' : 'Pilih Member' }}
+          </button>
+        </div>
       </div>
 
       <div class="flex flex-col gap-5">
@@ -6741,14 +6933,44 @@ onActivated(() => {
       </div>
     </div>
   </div>
+
+  <!-- Modal Member Picker -->
+  <div v-if="showMemberPicker" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end">
+    <div class="w-full max-w-xl mx-auto bg-white rounded-t-[2rem] p-5 max-h-[80vh] flex flex-col">
+      <div class="flex justify-between items-center mb-4">
+        <div class="font-black text-sm">Pilih Member</div>
+        <button @click="showMemberPicker = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
+      </div>
+      <input v-model="memberQ" placeholder="Cari nama / hp..." class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm mb-3"/>
+      <div class="flex-1 overflow-auto">
+        <div v-if="filteredMembers.length === 0" class="py-8 text-center text-xs text-zinc-400">Member tidak ditemukan</div>
+        <div v-for="m in filteredMembers" :key="m.id" @click="selectMember(m)" class="p-3 border-b border-zinc-50 flex justify-between cursor-pointer hover:bg-zinc-50">
+          <div>
+            <div class="font-bold text-sm">{{ m.name }}</div>
+            <div class="text-[11px] text-zinc-500">{{ m.phone || 'Tanpa No HP' }}</div>
+          </div>
+          <span class="text-xs font-black self-center bg-zinc-900 text-white px-3 py-1.5 rounded-xl">Pilih</span>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 </template>
 
 <script setup>
+import { onMounted } from 'vue'
+import { X } from 'lucide-vue-next'
 import { useProductsDigital } from '../composables/useProductsDigital.js'
 import { formatRp, formatRibuan, toNumber } from '../utils/formatters/currency.js'
 
-const { form, estimasiKas, loading, saveTransaction } = useProductsDigital()
+const { 
+  form, estimasiKas, loading, selectedMember, memberQ, 
+  showMemberPicker, filteredMembers, loadMembers, selectMember, saveTransaction 
+} = useProductsDigital()
+
+onMounted(() => {
+  loadMembers()
+})
 </script>
 
 ===== src/views/SettingsMenu.vue =====
@@ -7290,12 +7512,6 @@ const activeSelectedOperator = computed(() => {
 const loadOperators = async () => {
   let list = await operatorRepo.getAll()
   
-  // Jika belum ada operator sama sekali, buatkan Kasir Utama bawaan
-  if (list.length === 0) {
-    await operatorRepo.create({ name: 'Kasir Utama', role: 'Admin', pin: '' })
-    list = await operatorRepo.getAll()
-  }
-
   operators.value = list
   if (list.length > 0) {
     selectedOperatorId.value = list[0].id

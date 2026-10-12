@@ -40,24 +40,24 @@ Pembaruan versi 1.8 berfokus pada **Penyelarasan Source Code Secara Menyeluruh**
 | `src/views/Login.vue` | `useOperatorStore` | `operatorRepo` | Autentikasi operator, verifikasi PIN, & manajemen sesi shift aktif[span_14](start_span)[span_14](end_span). |
 | `src/views/Kasir.vue` | `useKasir.js`, `kasirStore.js`, `useOperatorStore` | `kasirService.js`, `packageRepository.js`, `serviceRepository.js`, `receiptService.js` | Transaksi kasir, tunda/lanjutkan keranjang, varian ecer/seduh, cetak Bluetooth, PDF nota, & mutasi kas otomatis[span_15](start_span)[span_15](end_span). |
 | `src/views/ProductsList.vue` / `ProductsAdd.vue` | `useProductsStore`, `useProductForm.js`, `useProductScanner.js` | `productRepo`, `productService.js` | CRUD Master Produk, barcode scanner, kalkulator grosir, serta penyaringan stok/kategori[span_16](start_span)[span_16](end_span). |
-| `src/views/Members.vue` | `useMembers.js` | `memberRepo`, `memberService.js` | CRUD Member, akumulasi poin profit 1%, & pembayaran cicilan utang TEMPO via CASH/QRIS[span_17](start_span)[span_17](end_span). |
-| `src/views/SalesHistory.vue` | `useSalesHistory.js` | `salesHistoryService.js` | Kombinasi riwayat transaksi barang & digital, pembatalan (VOID) nota, & rekap arus kas[span_18](start_span)[span_18](end_span). |
-| `src/views/ProductsDigital.vue` | `useProductsDigital.js` | `productsDigitalService.js` | Transaksi Topup & Tarik Tunai pulsa/e-wallet dengan estimasi penyesuaian kas laci[span_19](start_span)[span_19](end_span). |
-| `src/views/Expenses.vue` | `useExpenses.js` | `expenseService.js`, `expenseRepository.js` | Catatan pengeluaran operasional warung & pemotongan saldo kas/bank otomatis[span_20](start_span)[span_20](end_span). |
-| `src/views/Finance.vue` | `useFinance.js` | `financeRepo` | Ringkasan saldo kas laci (`acc_cash`), bank/QRIS (`acc_bank`), total piutang, mutasi, & fitur *Hitung Ulang*[span_21](start_span)[span_21](end_span). |
-| `src/views/Shopping.vue` | `useShopping.js` | `shoppingService.js`, `shoppingRepository.js` | Auto-restock produk tipis, konfirmasi bayar kulakan, & ekspor salin teks belanja[span_22](start_span)[span_22](end_span). |
-| `src/views/Reports.vue` | — | `reportService.js` | Analisis omzet/profit barang & digital, breakdown sumber laba, serta ekspor file Excel (.xlsx)[span_23](start_span)[span_23](end_span). |
-| `src/views/Dashboard.vue` | `useDashboard.js` | `dashboardService.js` | Visualisasi statistik omzet 7 hari, peringatan stok tipis, dan agregasi total piutang[span_24](start_span)[span_24](end_span). |
-| `src/views/Categories.vue` | `useCategories.js` | `categoryRepo`, `unitRepo` | Navigasi tabbed CRUD Kategori & Satuan tanpa akses DB langsung[span_25](start_span)[span_25](end_span). |
-| `src/views/SettingsMenu.vue` | `useSettingsMenu.js` | `packageRepository.js`, `serviceRepository.js` | Konfigurasi varian eceran rokok & tarif jasa per kategori (mis. Seduh Mie/Kopi)[span_26](start_span)[span_26](end_span). |
-| `src/views/Operators.vue` | `useOperators.js` | `operatorRepo` | CRUD data operator, pengaturan peran/jabatan, & PIN otorisasi[span_27](start_span)[span_27](end_span). |
-| `src/views/Settings.vue` | `useSettings.js` | `settingsRepo`, `backupService.js` | Identitas toko, header/footer nota, ukuran kertas thermal, & ekspor/impor JSON backup[span_28](start_span)[span_28](end_span). |
+| `src/views/Members.vue` | `useMembers.js` | `memberRepo`, `memberService.js` | CRUD Member, akumulasi poin profit 1%, & pembayaran cicilan utang TEMPO via CASH/QRIS. |
+| `src/views/SalesHistory.vue` | `useSalesHistory.js` | `salesHistoryService.js` | Kombinasi riwayat transaksi barang & digital, pembatalan (VOID) nota, & rekap arus kas. |
+| `src/views/ProductsDigital.vue` | `useProductsDigital.js` | `productsDigitalService.js` | Transaksi Topup & Tarik Tunai pulsa/e-wallet dengan estimasi penyesuaian kas laci. |
+| `src/views/Expenses.vue` | `useExpenses.js` | `expenseService.js`, `expenseRepository.js` | Catatan pengeluaran operasional warung & pemotongan saldo kas/bank otomatis. |
+| `src/views/Finance.vue` | `useFinance.js` | `financeRepo` | Ringkasan saldo kas laci (`acc_cash`), bank/QRIS (`acc_bank`), total piutang, mutasi, & fitur *Hitung Ulang*. |
+| `src/views/Shopping.vue` | `useShopping.js` | `shoppingService.js`, `shoppingRepository.js` | Auto-restock produk tipis, konfirmasi bayar kulakan, & ekspor salin teks belanja. |
+| `src/views/Reports.vue` | — | `reportService.js` | Analisis omzet/profit barang & digital, breakdown sumber laba, serta ekspor file Excel (.xlsx). |
+| `src/views/Dashboard.vue` | `useDashboard.js` | `dashboardService.js` | Visualisasi statistik omzet 7 hari, peringatan stok tipis, dan agregasi total piutang. |
+| `src/views/Categories.vue` | `useCategories.js` | `categoryRepo`, `unitRepo` | Navigasi tabbed CRUD Kategori & Satuan tanpa akses DB langsung. |
+| `src/views/SettingsMenu.vue` | `useSettingsMenu.js` | `packageRepository.js`, `serviceRepository.js` | Konfigurasi varian eceran rokok & tarif jasa per kategori (mis. Seduh Mie/Kopi). |
+| `src/views/Operators.vue` | `useOperators.js` | `operatorRepo` | CRUD data operator, pengaturan peran/jabatan, & PIN otorisasi. |
+| `src/views/Settings.vue` | `useSettings.js` | `settingsRepo`, `backupService.js` | Identitas toko, header/footer nota, ukuran kertas thermal, & ekspor/impor JSON backup. |
 
 ---
 
 ## 3. Skema Database IndexedDB (`SinarPagiDB` v1)
 
-Seluruh data lokal disimpan pada Dexie IndexedDB dengan nama database **`SinarPagiDB`**[span_29](start_span)[span_29](end_span):
+Seluruh data lokal disimpan pada Dexie IndexedDB dengan nama database **`SinarPagiDB`**:
 
 ```javascript
 // Database Schema pada src/db/index.js

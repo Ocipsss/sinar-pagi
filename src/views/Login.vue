@@ -75,12 +75,6 @@ const activeSelectedOperator = computed(() => {
 const loadOperators = async () => {
   let list = await operatorRepo.getAll()
   
-  // Jika belum ada operator sama sekali, buatkan Kasir Utama bawaan
-  if (list.length === 0) {
-    await operatorRepo.create({ name: 'Kasir Utama', role: 'Admin', pin: '' })
-    list = await operatorRepo.getAll()
-  }
-
   operators.value = list
   if (list.length > 0) {
     selectedOperatorId.value = list[0].id

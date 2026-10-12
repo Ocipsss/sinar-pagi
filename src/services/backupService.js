@@ -1,5 +1,7 @@
 // src/services/backupService.js
 import { db } from '../db/index.js'
+import { firestore } from './firebase.js'
+import { collection, getDocs, writeBatch } from 'firebase/firestore'
 import dayjs from 'dayjs'
 
 export const backupService = {
@@ -28,7 +30,8 @@ export const backupService = {
           const rawParsed = JSON.parse(e.target.result)
           const importedData = rawParsed.database || rawParsed
 
-          await db.transaction('rw', db.tables, async () => {
+          const tableNames = db.tables.map(t => t.name)
+          await db.transaction('rw', tableNames, async () => {
             for (const table of db.tables) {
               await table.clear()
             }
@@ -98,8 +101,49 @@ export const backupService = {
   },
 
   async resetTransactions() {
-    await db.transaction('rw', db.tables, async () => {
-      // 1. Kosongkan tabel transaksi & aktivitas terkait
+    // 1. Hapus data di Cloud Firestore terlebih dahulu jika perangkat online
+    if (navigator.onLine && firestore) {
+      const cloudTablesToClear = [
+        'transactions',
+        'transaction_items',
+        'expenses',
+        'digital_transactions',
+        'debt_payments',
+        'cash_mutations',
+        'shopping_list'
+      ]
+
+      for (const tableName of cloudTablesToClear) {
+        try {
+          const querySnapshot = await getDocs(collection(firestore, tableName))
+          const batches = []
+          let currentBatch = writeBatch(firestore)
+          let count = 0
+
+          querySnapshot.forEach((document) => {
+            currentBatch.delete(document.ref)
+            count++
+            if (count >= 400) {
+              batches.push(currentBatch.commit())
+              currentBatch = writeBatch(firestore)
+              count = 0
+            }
+          })
+          if (count > 0) {
+            batches.push(currentBatch.commit())
+          }
+          await Promise.all(batches)
+        } catch (err) {
+          console.warn(`Gagal menghapus koleksi cloud ${tableName}:`, err)
+        }
+      }
+    }
+
+    // 2. Ambil daftar nama tabel secara eksplisit agar transaksi Dexie tidak gagal
+    const tableNames = db.tables.map(t => t.name)
+
+    await db.transaction('rw', tableNames, async () => {
+      // 3. Kosongkan seluruh tabel riwayat transaksi & aktivitas lokal[span_1](start_span)[span_1](end_span)
       await db.transactions.clear()
       await db.transaction_items.clear()
       await db.expenses.clear()
@@ -108,7 +152,7 @@ export const backupService = {
       await db.cash_mutations.clear()
       await db.shopping_list.clear()
 
-      // 2. Reset piutang dan total belanja member
+      // 4. Reset piutang, poin, dan total belanja seluruh member menjadi 0[span_2](start_span)[span_2](end_span)
       const members = await db.members.toArray()
       for (const m of members) {
         await db.members.update(m.id, {
@@ -119,7 +163,7 @@ export const backupService = {
         })
       }
 
-      // 3. Reset saldo akun kas & bank menjadi 0
+      // 5. Reset saldo seluruh akun kas & bank menjadi 0[span_3](start_span)[span_3](end_span)
       const accounts = await db.cash_accounts.toArray()
       for (const a of accounts) {
         await db.cash_accounts.update(a.id, {

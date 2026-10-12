@@ -1,15 +1,18 @@
 // src/services/productsDigitalService.js
 import { db } from '../db/index.js'
 import { financeRepo } from '../db/repositories/financeRepository.js'
+import dayjs from 'dayjs'
 
 export const productsDigitalService = {
   async create(data) {
-    const now = new Date().toISOString()
+    const now = dayjs().toISOString()
     const id = crypto.randomUUID()
     const nominal = Number(data.nominal) || 0
     const adminFee = Number(data.adminFee) || 0
     const isTopup = data.type === 'topup'
     const isCashAdmin = data.adminPaymentMethod === 'cash'
+    const memberId = data.memberId || null
+    const memberName = data.memberName || null
 
     const doc = {
       id,
@@ -22,14 +25,14 @@ export const productsDigitalService = {
       adminPaymentMethod: data.adminPaymentMethod,
       totalReceived: isTopup && isCashAdmin ? nominal + adminFee : nominal,
       profit: adminFee,
+      memberId,
+      memberName,
       synced: 0
     }
 
     const result = await db.digital_transactions.add(doc)
 
     if (isTopup) {
-      // TOP UP:
-      // 1. Uang Tunai Masuk Laci (Selalu sebesar Nominal Tunai yang diterima dari pelanggan)
       const cashIn = nominal + (isCashAdmin ? adminFee : 0)
       if (cashIn > 0) {
         await financeRepo.addMutation({
@@ -42,9 +45,6 @@ export const productsDigitalService = {
         })
       }
 
-      // 2. Saldo Rekening/Bank Terpotong
-      // Jika Admin Potong Saldo: Bank terpotong = Nominal - Admin (misal 20rb - 2rb = 18rb)
-      // Jika Admin Tunai: Bank terpotong = Nominal Utuh (20rb)
       const bankOut = isCashAdmin ? nominal : Math.max(0, nominal - adminFee)
       await financeRepo.addMutation({
         accountId: 'acc_bank',
@@ -55,8 +55,6 @@ export const productsDigitalService = {
         refId: id
       })
     } else {
-      // TARIK TUNAI:
-      // 1. Uang Tunai Keluar dari Laci
       const cashOut = nominal - (isCashAdmin ? adminFee : 0)
       if (cashOut > 0) {
         await financeRepo.addMutation({
@@ -68,8 +66,7 @@ export const productsDigitalService = {
           refId: id
         })
       }
-
-      // 2. Saldo Rekening/Bank Bertambah
+      
       const bankIn = isCashAdmin ? nominal : nominal + adminFee
       await financeRepo.addMutation({
         accountId: 'acc_bank',
@@ -79,6 +76,24 @@ export const productsDigitalService = {
         note: `Masuk Saldo Tarik Tunai ${doc.provider}`,
         refId: id
       })
+    }
+
+    // Jika ada member yang dipilih, update poin dan total belanja
+    if (memberId) {
+      const currentMember = await db.members.get(memberId)
+      if (currentMember) {
+        const totalOmzetDigital = nominal + adminFee
+        const earnedPoints = Math.floor(adminFee * 0.01) // 1% dari profit admin fee
+        const updatedPoints = (currentMember.points || 0) + earnedPoints
+        const updatedSpending = (currentMember.total_spending || 0) + totalOmzetDigital
+
+        await db.members.update(memberId, {
+          points: updatedPoints,
+          total_spending: updatedSpending,
+          updatedAt: now,
+          synced: 0
+        })
+      }
     }
 
     return result

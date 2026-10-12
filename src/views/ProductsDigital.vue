@@ -4,7 +4,7 @@
     <div class="w-full bg-white p-6 rounded-[2.5rem] shadow-sm border border-zinc-100">
 
       <!-- Toggle Top Up / Tarik Tunai -->
-      <div class="flex bg-zinc-100 p-1.5 rounded-2xl mb-8 gap-2">
+      <div class="flex bg-zinc-100 p-1.5 rounded-2xl mb-6 gap-2">
         <button 
           @click="form.type = 'topup'" 
           :class="form.type === 'topup'? 'bg-zinc-900 text-white shadow-md' : 'text-zinc-400'" 
@@ -19,6 +19,31 @@
         >
           TARIK TUNAI
         </button>
+      </div>
+
+      <!-- Pilih Member -->
+      <div class="mb-5 flex items-center justify-between bg-zinc-50 border border-zinc-200/80 p-3.5 rounded-2xl">
+        <div>
+          <div class="text-[9px] font-black text-zinc-400 uppercase tracking-wider">Pelanggan / Member</div>
+          <div class="text-xs font-bold text-zinc-900 mt-0.5">
+            {{ selectedMember ? selectedMember.name : 'Umum / Non-Member' }}
+          </div>
+        </div>
+        <div class="flex gap-2">
+          <button 
+            v-if="selectedMember" 
+            @click="selectedMember = null" 
+            class="px-3 py-1.5 bg-red-100 text-red-600 rounded-xl font-bold text-xs"
+          >
+            Lepas
+          </button>
+          <button 
+            @click="showMemberPicker = true" 
+            class="px-3.5 py-1.5 bg-zinc-900 text-white rounded-xl font-bold text-xs active:scale-95 transition"
+          >
+            {{ selectedMember ? 'Ganti' : 'Pilih Member' }}
+          </button>
+        </div>
       </div>
 
       <div class="flex flex-col gap-5">
@@ -105,12 +130,42 @@
       </div>
     </div>
   </div>
+
+  <!-- Modal Member Picker -->
+  <div v-if="showMemberPicker" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end">
+    <div class="w-full max-w-xl mx-auto bg-white rounded-t-[2rem] p-5 max-h-[80vh] flex flex-col">
+      <div class="flex justify-between items-center mb-4">
+        <div class="font-black text-sm">Pilih Member</div>
+        <button @click="showMemberPicker = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
+      </div>
+      <input v-model="memberQ" placeholder="Cari nama / hp..." class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm mb-3"/>
+      <div class="flex-1 overflow-auto">
+        <div v-if="filteredMembers.length === 0" class="py-8 text-center text-xs text-zinc-400">Member tidak ditemukan</div>
+        <div v-for="m in filteredMembers" :key="m.id" @click="selectMember(m)" class="p-3 border-b border-zinc-50 flex justify-between cursor-pointer hover:bg-zinc-50">
+          <div>
+            <div class="font-bold text-sm">{{ m.name }}</div>
+            <div class="text-[11px] text-zinc-500">{{ m.phone || 'Tanpa No HP' }}</div>
+          </div>
+          <span class="text-xs font-black self-center bg-zinc-900 text-white px-3 py-1.5 rounded-xl">Pilih</span>
+        </div>
+      </div>
+    </div>
+  </div>
 </div>
 </template>
 
 <script setup>
+import { onMounted } from 'vue'
+import { X } from 'lucide-vue-next'
 import { useProductsDigital } from '../composables/useProductsDigital.js'
 import { formatRp, formatRibuan, toNumber } from '../utils/formatters/currency.js'
 
-const { form, estimasiKas, loading, saveTransaction } = useProductsDigital()
+const { 
+  form, estimasiKas, loading, selectedMember, memberQ, 
+  showMemberPicker, filteredMembers, loadMembers, selectMember, saveTransaction 
+} = useProductsDigital()
+
+onMounted(() => {
+  loadMembers()
+})
 </script>

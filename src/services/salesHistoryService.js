@@ -20,6 +20,9 @@ export const salesHistoryService = {
     const memberMap = new Map(members.map(m => [m.id, m.name]))
     const productMap = new Map(products.map(p => [p.id, p.name]))
 
+    // Hitung total piutang langsung dari sisa utang seluruh member agar akurat & sinkron
+    const totalPiutang = members.reduce((sum, m) => sum + (Number(m.debt) || 0), 0)
+
     // 1. Format transaksi barang
     const formattedBarang = transactions.map(t => {
       const items = allItems
@@ -75,7 +78,12 @@ export const salesHistoryService = {
       }
     })
 
-    return [...formattedBarang, ...formattedDigital].sort((a, b) => new Date(b.date) - new Date(a.date))
+    const transactionsList = [...formattedBarang, ...formattedDigital].sort((a, b) => new Date(b.date) - new Date(a.date))
+
+    return {
+      transactions: transactionsList,
+      totalPiutang
+    }
   },
 
   async voidTransaction(transaction) {

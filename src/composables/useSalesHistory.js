@@ -1,3 +1,4 @@
+// src/composables/useSalesHistory.js
 import { ref, computed } from 'vue'
 import { salesHistoryService } from '../services/salesHistoryService.js'
 import { toast } from 'vue-sonner'
@@ -8,6 +9,7 @@ dayjs.locale(localeId)
 
 export function useSalesHistory() {
   const transactions = ref([])
+  const totalPiutang = ref(0)
   const searchQuery = ref('')
   const selectedFilter = ref('ALL')
   const selectedTransaction = ref(null)
@@ -25,7 +27,9 @@ export function useSalesHistory() {
   const loadHistory = async () => {
     loading.value = true
     try {
-      transactions.value = await salesHistoryService.getCombinedHistory()
+      const data = await salesHistoryService.getCombinedHistory()
+      transactions.value = data.transactions
+      totalPiutang.value = data.totalPiutang
     } finally {
       loading.value = false
     }
@@ -70,12 +74,6 @@ export function useSalesHistory() {
     return filteredTransactions.value
       .filter(t => t.status !== 'void' && t.status !== 'CANCELLED')
       .reduce((sum, t) => sum + (t.total || 0), 0)
-  })
-
-  const totalPiutang = computed(() => {
-    return filteredTransactions.value
-      .filter(t => t.trxType === 'BARANG' && t.paymentMethod === 'TEMPO' && t.status !== 'void')
-      .reduce((sum, t) => sum + (t.remaining || t.total || 0), 0)
   })
 
   const formatDate = (dateString) => {
