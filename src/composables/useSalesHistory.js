@@ -31,6 +31,24 @@ export function useSalesHistory() {
     }
   }
 
+  const handleVoid = async (transaction) => {
+    if (!confirm(`Apakah Anda yakin ingin membatalkan (VOID) nota ${transaction.id.slice(0, 8)}?\nStok barang dan kas/bank akan dikembalikan.`)) {
+      return
+    }
+
+    loading.value = true
+    try {
+      await salesHistoryService.voidTransaction(transaction)
+      alert('Transaksi berhasil dibatalkan!')
+      selectedTransaction.value = null
+      await loadHistory()
+    } catch (e) {
+      alert(`Gagal membatalkan transaksi: ${e.message}`)
+    } finally {
+      loading.value = false
+    }
+  }
+
   const filteredTransactions = computed(() => {
     const q = searchQuery.value.toLowerCase().trim()
     return transactions.value.filter(t => {
@@ -49,20 +67,15 @@ export function useSalesHistory() {
   })
 
   const totalOmzet = computed(() => {
-    return filteredTransactions.value.reduce((sum, t) => sum + (t.total || 0), 0)
+    return filteredTransactions.value
+      .filter(t => t.status !== 'void' && t.status !== 'CANCELLED')
+      .reduce((sum, t) => sum + (t.total || 0), 0)
   })
 
   const totalPiutang = computed(() => {
     return filteredTransactions.value
-      .filter(t => t.trxType === 'BARANG' && t.paymentMethod === 'TEMPO')
+      .filter(t => t.trxType === 'BARANG' && t.paymentMethod === 'TEMPO' && t.status !== 'void')
       .reduce((sum, t) => sum + (t.remaining || t.total || 0), 0)
-  })
-
-  const totalProfit = computed(() => {
-    return filteredTransactions.value.reduce((sum, t) => {
-      if (t.trxType === 'DIGITAL') return sum + (t.profit || 0)
-      return sum
-    }, 0)
   })
 
   const formatDate = (dateString) => {
@@ -80,8 +93,8 @@ export function useSalesHistory() {
     filteredTransactions,
     totalOmzet,
     totalPiutang,
-    totalProfit,
     loadHistory,
+    handleVoid,
     formatDate
   }
 }

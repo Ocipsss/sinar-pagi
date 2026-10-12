@@ -1,3 +1,4 @@
+<!-- src/views/SalesHistory.vue -->
 <template>
   <div class="flex-1 overflow-auto p-4 pb-24 space-y-4">
     <!-- Header -->
@@ -60,17 +61,23 @@
         v-for="t in filteredTransactions" 
         :key="t.id"
         @click="selectedTransaction = t"
-        class="bg-white p-4 rounded-2xl border border-zinc-100 shadow-sm flex flex-col gap-2.5 active:scale-[0.99] transition cursor-pointer"
+        :class="[
+          'bg-white p-4 rounded-2xl border transition cursor-pointer flex flex-col gap-2.5 active:scale-[0.99]',
+          (t.status === 'void' || t.status === 'CANCELLED') ? 'border-red-200 bg-red-50/30 opacity-70' : 'border-zinc-100 shadow-sm'
+        ]"
       >
         <div class="flex justify-between items-start">
           <div>
             <div class="font-bold text-xs text-zinc-900 flex items-center gap-1.5">
-              <span>{{ t.memberName }}</span>
+              <span :class="(t.status === 'void' || t.status === 'CANCELLED') && 'line-through text-zinc-400'">{{ t.memberName }}</span>
               <span 
                 :class="t.trxType === 'DIGITAL' ? 'bg-blue-100 text-blue-700' : 'bg-zinc-100 text-zinc-600'"
                 class="px-2 py-0.5 rounded-md text-[9px] font-black uppercase"
               >
                 {{ t.trxType }}
+              </span>
+              <span v-if="t.status === 'void' || t.status === 'CANCELLED'" class="bg-red-600 text-white px-2 py-0.5 rounded-md text-[9px] font-black uppercase">
+                VOID
               </span>
             </div>
             <div class="text-[10px] text-zinc-400 mt-0.5 flex items-center gap-1">
@@ -81,10 +88,11 @@
 
           <div :class="[
             'px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider',
+            t.status === 'void' || t.status === 'CANCELLED' ? 'bg-red-100 text-red-600' :
             t.paymentMethod === 'TEMPO' ? 'bg-amber-100 text-amber-700' :
             t.paymentMethod === 'QRIS' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'
           ]">
-            {{ t.paymentMethod }}
+            {{ t.status === 'void' || t.status === 'CANCELLED' ? 'DIBATALKAN' : t.paymentMethod }}
           </div>
         </div>
 
@@ -101,7 +109,7 @@
             <div class="text-[9px] text-zinc-400 font-bold uppercase">
               {{ t.trxType === 'DIGITAL' ? 'Arus Kas Fisik' : 'Total Transaksi' }}
             </div>
-            <div :class="['text-sm font-black', t.total < 0 ? 'text-red-500' : 'text-zinc-900']">
+            <div :class="['text-sm font-black', (t.status === 'void' || t.status === 'CANCELLED') ? 'line-through text-zinc-400' : t.total < 0 ? 'text-red-500' : 'text-zinc-900']">
               {{ t.total < 0 ? '-' : '' }}Rp {{ formatRibuan(Math.abs(t.total)) }}
             </div>
           </div>
@@ -114,8 +122,9 @@
       <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl max-h-[85vh] flex flex-col animate-in slide-in-from-bottom duration-200">
         <div class="flex justify-between items-start mb-4 border-b border-zinc-100 pb-3">
           <div>
-            <h2 class="font-black text-base text-zinc-900">
-              {{ selectedTransaction.trxType === 'DIGITAL' ? 'Detail Transaksi Digital' : 'Detail Rincian Nota' }}
+            <h2 class="font-black text-base text-zinc-900 flex items-center gap-2">
+              <span>{{ selectedTransaction.trxType === 'DIGITAL' ? 'Detail Transaksi Digital' : 'Detail Rincian Nota' }}</span>
+              <span v-if="selectedTransaction.status === 'void' || selectedTransaction.status === 'CANCELLED'" class="text-xs bg-red-600 text-white px-2 py-0.5 rounded font-bold uppercase">BATAL</span>
             </h2>
             <p class="text-[11px] text-zinc-400">ID: {{ selectedTransaction.id.slice(0, 13) }}...</p>
           </div>
@@ -151,10 +160,6 @@
               <span class="text-xs font-bold">Biaya Admin (Profit)</span>
               <span class="font-black text-xs text-emerald-600">Rp {{ formatRibuan(selectedTransaction.adminFee) }}</span>
             </div>
-            <div class="flex justify-between items-center py-2 border-b border-zinc-50">
-              <span class="text-xs font-bold">Metode Admin</span>
-              <span class="font-bold text-xs uppercase">{{ selectedTransaction.adminPaymentMethod === 'cash' ? 'Uang Tunai' : 'Potong Saldo' }}</span>
-            </div>
           </template>
 
           <template v-else>
@@ -176,18 +181,28 @@
 
         <div class="border-t border-zinc-100 pt-3 space-y-2">
           <div class="flex justify-between items-center text-sm">
-            <span class="font-bold text-zinc-600">Impact Kas Fisik</span>
-            <span :class="['font-black text-base', selectedTransaction.total < 0 ? 'text-red-500' : 'text-zinc-900']">
-              {{ selectedTransaction.total < 0 ? '-' : '' }}Rp {{ formatRibuan(Math.abs(selectedTransaction.total)) }}
+            <span class="font-bold text-zinc-600">Total Transaksi</span>
+            <span :class="['font-black text-base', selectedTransaction.status === 'void' || selectedTransaction.status === 'CANCELLED' ? 'line-through text-zinc-400' : 'text-zinc-900']">
+              Rp {{ formatRibuan(Math.abs(selectedTransaction.total)) }}
             </span>
           </div>
 
-          <button 
-            @click="selectedTransaction = null" 
-            class="w-full py-3 bg-zinc-900 text-white rounded-xl font-bold text-xs"
-          >
-            Tutup
-          </button>
+          <div class="flex gap-2">
+            <button 
+              v-if="selectedTransaction.status !== 'void' && selectedTransaction.status !== 'CANCELLED'"
+              @click="handleVoid(selectedTransaction)" 
+              :disabled="loading"
+              class="flex-1 py-3 bg-red-600 hover:bg-red-700 disabled:bg-zinc-300 text-white rounded-xl font-bold text-xs transition active:scale-95"
+            >
+              Batalkan Transaksi (Void)
+            </button>
+            <button 
+              @click="selectedTransaction = null" 
+              class="flex-1 py-3 bg-zinc-900 text-white rounded-xl font-bold text-xs"
+            >
+              Tutup
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -204,20 +219,20 @@ const {
   searchQuery,
   selectedFilter,
   selectedTransaction,
+  loading,
   filterOptions,
   filteredTransactions,
   totalOmzet,
   totalPiutang,
   loadHistory,
+  handleVoid,
   formatDate
 } = useSalesHistory()
 
-// Muat data awal saat komponen pertama kali di-mount
 onMounted(() => {
   loadHistory()
 })
 
-// Otomatis muat ulang data transaksi setiap kali pengguna masuk ke tab Riwayat Penjualan (KeepAlive)
 onActivated(() => {
   loadHistory()
 })
