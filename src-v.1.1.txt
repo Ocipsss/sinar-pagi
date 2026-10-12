@@ -1,5 +1,13 @@
 ===== src/App.vue =====
-<template><router-view/></template>
+<template>
+  <router-view />
+  <Toaster position="top-center" richColors />
+</template>
+
+<script setup>
+import { Toaster } from 'vue-sonner'
+</script>
+
 ===== src/composables/useProductForm.js =====
 // src/composables/useProductForm.js
 import { ref } from 'vue'
@@ -314,9 +322,9 @@ export function useKasir() {
 }
 
 ===== src/composables/useSalesHistory.js =====
-// src/composables/useSalesHistory.js
 import { ref, computed } from 'vue'
 import { salesHistoryService } from '../services/salesHistoryService.js'
+import { toast } from 'vue-sonner'
 import dayjs from 'dayjs'
 import localeId from 'dayjs/locale/id'
 
@@ -347,6 +355,24 @@ export function useSalesHistory() {
     }
   }
 
+  const handleVoid = async (transaction) => {
+    if (!confirm(`Apakah Anda yakin ingin membatalkan (VOID) nota ${transaction.id.slice(0, 8)}?\nStok barang dan kas/bank akan dikembalikan.`)) {
+      return
+    }
+
+    loading.value = true
+    try {
+      await salesHistoryService.voidTransaction(transaction)
+      toast.success('Transaksi berhasil dibatalkan!')
+      selectedTransaction.value = null
+      await loadHistory()
+    } catch (e) {
+      toast.error(`Gagal membatalkan transaksi: ${e.message}`)
+    } finally {
+      loading.value = false
+    }
+  }
+
   const filteredTransactions = computed(() => {
     const q = searchQuery.value.toLowerCase().trim()
     return transactions.value.filter(t => {
@@ -365,20 +391,15 @@ export function useSalesHistory() {
   })
 
   const totalOmzet = computed(() => {
-    return filteredTransactions.value.reduce((sum, t) => sum + (t.total || 0), 0)
+    return filteredTransactions.value
+      .filter(t => t.status !== 'void' && t.status !== 'CANCELLED')
+      .reduce((sum, t) => sum + (t.total || 0), 0)
   })
 
   const totalPiutang = computed(() => {
     return filteredTransactions.value
-      .filter(t => t.trxType === 'BARANG' && t.paymentMethod === 'TEMPO')
+      .filter(t => t.trxType === 'BARANG' && t.paymentMethod === 'TEMPO' && t.status !== 'void')
       .reduce((sum, t) => sum + (t.remaining || t.total || 0), 0)
-  })
-
-  const totalProfit = computed(() => {
-    return filteredTransactions.value.reduce((sum, t) => {
-      if (t.trxType === 'DIGITAL') return sum + (t.profit || 0)
-      return sum
-    }, 0)
   })
 
   const formatDate = (dateString) => {
@@ -396,8 +417,8 @@ export function useSalesHistory() {
     filteredTransactions,
     totalOmzet,
     totalPiutang,
-    totalProfit,
     loadHistory,
+    handleVoid,
     formatDate
   }
 }
@@ -706,6 +727,7 @@ export function useMembers() {
 }
 
 ===== src/composables/useShopping.js =====
+// src/composables/useShopping.js
 import { ref, computed } from 'vue'
 import { shoppingService } from '../services/shoppingService.js'
 import { productRepo } from '../db/repositories/productRepository.js'
@@ -731,6 +753,14 @@ export function useShopping() {
     unit: 'pcs',
     estimatedPrice: 0,
     notes: ''
+  })
+
+  // State Modal Konfirmasi Bayar Kulakan
+  const showPayModal = ref(false)
+  const targetItemForPay = ref(null)
+  const payForm = ref({
+    actualPrice: 0,
+    accountId: 'acc_cash'
   })
 
   const totalItems = computed(() => items.value.length)
@@ -774,7 +804,7 @@ export function useShopping() {
       items.value = shoppingData
       products.value = productData
       categories.value = categoryData
-    } finally {
+    } finally { // Sudah diperbaiki dari "fontally" ke "finally"
       loading.value = false
     }
   }
@@ -790,8 +820,25 @@ export function useShopping() {
     }
   }
 
-  const toggleBought = async (item) => {
-    await shoppingService.toggleBoughtStatus(item)
+  const handleToggleClick = (item) => {
+    if (!item.isBought) {
+      targetItemForPay.value = item
+      payForm.value = {
+        actualPrice: item.estimatedPrice || 0,
+        accountId: 'acc_cash'
+      }
+      showPayModal.value = true
+    } else {
+      if (confirm(`Batalkan status selesai beli "${item.name}"?\nStok barang dan kas/bank akan dikembalikan.`)) {
+        submitToggleBought(item, { accountId: 'acc_cash', actualPrice: item.estimatedPrice })
+      }
+    }
+  }
+
+  const submitToggleBought = async (item, options) => {
+    await shoppingService.toggleBoughtStatus(item, options)
+    showPayModal.value = false
+    targetItemForPay.value = null
     await loadData()
   }
 
@@ -872,6 +919,9 @@ export function useShopping() {
     activeFilter,
     loading,
     showAddModal,
+    showPayModal,
+    targetItemForPay,
+    payForm,
     isCustomItem,
     selectedProduct,
     form,
@@ -883,7 +933,8 @@ export function useShopping() {
     filteredItems,
     loadData,
     handleAutoRestock,
-    toggleBought,
+    handleToggleClick,
+    submitToggleBought,
     openModal,
     selectProductForAdd,
     saveItem,
@@ -892,6 +943,7 @@ export function useShopping() {
     exportShoppingListText
   }
 }
+
 ===== src/composables/useFinance.js =====
 // src/composables/useFinance.js
 import { ref, computed } from 'vue'
@@ -1041,6 +1093,7 @@ export function useOperators() {
 ===== src/composables/useProductsDigital.js =====
 import { ref, computed } from 'vue'
 import { productsDigitalService } from '../services/productsDigitalService.js'
+import { toast } from 'vue-sonner'
 
 export function useProductsDigital() {
   const form = ref({
@@ -1061,18 +1114,18 @@ export function useProductsDigital() {
 
   const saveTransaction = async () => {
     if (!form.value.provider?.trim()) {
-      alert('Pilih/isi Layanan / Provider terlebih dahulu!')
+      toast.error('Pilih atau isi Layanan / Provider terlebih dahulu!')
       return
     }
     if (!form.value.nominal || form.value.nominal <= 0) {
-      alert('Nominal transaksi harus lebih besar dari 0!')
+      toast.error('Nominal transaksi harus lebih besar dari 0!')
       return
     }
 
     loading.value = true
     try {
       await productsDigitalService.create(form.value)
-      alert('Transaksi digital berhasil disimpan!')
+      toast.success('Transaksi digital berhasil disimpan!')
       form.value = {
         type: 'topup',
         provider: '',
@@ -1081,7 +1134,7 @@ export function useProductsDigital() {
         adminPaymentMethod: 'cash'
       }
     } catch (e) {
-      alert(`Gagal menyimpan transaksi: ${e.message}`)
+      toast.error(`Gagal menyimpan transaksi: ${e.message}`)
     } finally {
       loading.value = false
     }
@@ -1091,10 +1144,10 @@ export function useProductsDigital() {
 }
 
 ===== src/composables/useSettings.js =====
-// src/composables/useSettings.js
 import { ref } from 'vue'
 import { settingsRepo } from '../db/repositories/settingsRepository.js'
 import { backupService } from '../services/backupService.js'
+import { toast } from 'vue-sonner'
 
 export function useSettings() {
   const loading = ref(false)
@@ -1121,9 +1174,9 @@ export function useSettings() {
     loading.value = true
     try {
       await settingsRepo.saveSettings(form.value)
-      alert('Pengaturan toko berhasil disimpan!')
+      toast.success('Pengaturan toko berhasil disimpan!')
     } catch (e) {
-      alert(`Gagal menyimpan: ${e.message}`)
+      toast.error(`Gagal menyimpan: ${e.message}`)
     } finally {
       loading.value = false
     }
@@ -1132,8 +1185,9 @@ export function useSettings() {
   const exportBackup = async () => {
     try {
       await backupService.exportBackup()
+      toast.success('File backup berhasil dibuat!')
     } catch (e) {
-      alert(`Gagal membuat backup: ${e.message}`)
+      toast.error(`Gagal membuat backup: ${e.message}`)
     }
   }
 
@@ -1148,10 +1202,10 @@ export function useSettings() {
 
     try {
       await backupService.importBackup(file)
-      alert('Data berhasil dipulihkan dari file backup! Halaman akan memuat ulang.')
-      window.location.reload()
+      toast.success('Data berhasil dipulihkan dari file backup!')
+      setTimeout(() => window.location.reload(), 800)
     } catch (err) {
-      alert(`File backup tidak valid: ${err.message}`)
+      toast.error(`File backup tidak valid: ${err.message}`)
     }
   }
 
@@ -2304,6 +2358,7 @@ export const dashboardService = {
 // src/services/shoppingService.js
 import { shoppingRepository } from '../db/repositories/shoppingRepository.js'
 import { productRepo } from '../db/repositories/productRepository.js'
+import { financeRepo } from '../db/repositories/financeRepository.js'
 
 export const shoppingService = {
   async getShoppingItems() {
@@ -2339,32 +2394,76 @@ export const shoppingService = {
 
     if (itemsToAdd.length > 0) {
       await shoppingRepository.addBulk(itemsToAdd)
-      // syncRealtime.pushLocalToCloud() -> Dihapus, ditangani Dexie Hook
     }
 
     return itemsToAdd.length
   },
 
-  async toggleBoughtStatus(item) {
+  async toggleBoughtStatus(item, options = {}) {
+    const { accountId = 'acc_cash', actualPrice = null } = options
     const newStatus = !item.isBought
-    await shoppingRepository.update(item.id, { isBought: newStatus })
+    const finalPrice = actualPrice !== null ? Number(actualPrice) : (Number(item.estimatedPrice) || 0)
 
-    if (newStatus && item.productId) {
-      const product = await productRepo.getById(item.productId)
-      if (product) {
-        const qtyToAdd = Number(item.qty) || 0
-        const updatedQty = (product.qty || 0) + qtyToAdd
+    // 1. Update status barang belanjaan & harga aktual
+    await shoppingRepository.update(item.id, { 
+      isBought: newStatus,
+      estimatedPrice: finalPrice
+    })
 
-        const changes = { qty: updatedQty }
-        if (item.estimatedPrice && item.qty > 0 && !product.packQty) {
-          changes.price_modal = Math.round(item.estimatedPrice / item.qty)
+    if (newStatus) {
+      // A. STATUS DIBELI (Selesai): Tambah stok & potong kas/bank
+      if (item.productId) {
+        const product = await productRepo.getById(item.productId)
+        if (product) {
+          const qtyToAdd = Number(item.qty) || 0
+          const updatedQty = (product.qty || 0) + qtyToAdd
+
+          const changes = { qty: updatedQty }
+          if (finalPrice > 0 && item.qty > 0 && !product.packQty) {
+            changes.price_modal = Math.round(finalPrice / item.qty)
+          }
+
+          await productRepo.update(item.productId, changes)
         }
+      }
 
-        await productRepo.update(item.productId, changes)
+      // Catat Mutasi Pengeluaran Keuangan (OUT)
+      if (finalPrice > 0) {
+        const accName = accountId === 'acc_bank' ? 'Bank / QRIS' : 'Kas Laci'
+        await financeRepo.addMutation({
+          accountId,
+          type: 'OUT',
+          amount: finalPrice,
+          category: 'Belanja Kulakan',
+          note: `Kulakan ${item.name} (${item.qty} ${item.unit || 'pcs'}) via ${accName}`,
+          refId: item.id
+        })
+      }
+    } else {
+      // B. BATAL DIBELI (Dicentang ulang jadi pending): Kurangi stok & kembalikan kas (IN)
+      if (item.productId) {
+        const product = await productRepo.getById(item.productId)
+        if (product) {
+          const qtyToRemove = Number(item.qty) || 0
+          await productRepo.update(item.productId, {
+            qty: Math.max(0, (product.qty || 0) - qtyToRemove)
+          })
+        }
+      }
+
+      // Catat Pengembalian Kas (IN)
+      if (finalPrice > 0) {
+        await financeRepo.addMutation({
+          accountId,
+          type: 'IN',
+          amount: finalPrice,
+          category: 'Pembatalan Belanja',
+          note: `Batal Kulakan ${item.name}`,
+          refId: item.id
+        })
       }
     }
 
-    // syncRealtime.pushLocalToCloud() -> Dihapus, ditangani Dexie Hook
     return newStatus
   },
 
@@ -2380,18 +2479,15 @@ export const shoppingService = {
       notes: data.notes || ''
     })
 
-    // syncRealtime.pushLocalToCloud() -> Dihapus, ditangani Dexie Hook
     return newItem
   },
 
   async removeItem(id) {
     await shoppingRepository.delete(id)
-    // syncRealtime.pushLocalToCloud() -> Dihapus, ditangani Dexie Hook
   },
 
   async clearCompleted() {
     const count = await shoppingRepository.clearBought()
-    // syncRealtime.pushLocalToCloud() -> Dihapus, ditangani Dexie Hook
     return count
   }
 }
@@ -2714,11 +2810,14 @@ export const reportService = {
 }
 
 ===== src/services/salesHistoryService.js =====
+// src/services/salesHistoryService.js
 import { db } from '../db/index.js'
 import { transactionRepo } from '../db/repositories/transactionRepository.js'
 import { memberRepo } from '../db/repositories/memberRepository.js'
 import { productRepo } from '../db/repositories/productRepository.js'
+import { financeRepo } from '../db/repositories/financeRepository.js'
 import { productsDigitalService } from './productsDigitalService.js'
+import dayjs from 'dayjs'
 
 export const salesHistoryService = {
   async getCombinedHistory() {
@@ -2750,7 +2849,7 @@ export const salesHistoryService = {
       }
     })
 
-    // 2. Format transaksi digital (hitung dampak kas fisik)
+    // 2. Format transaksi digital
     const formattedDigital = digitalTransactions.map(d => {
       const isTopup = d.type === 'topup'
       const isCashAdmin = d.adminPaymentMethod === 'cash'
@@ -2773,6 +2872,7 @@ export const salesHistoryService = {
         adminPaymentMethod: d.adminPaymentMethod,
         total: kasImpact,
         profit: d.profit || d.adminFee,
+        status: d.status || 'SUCCESS',
         paymentMethod: isCashAdmin ? 'CASH' : 'DIGITAL_SALDO',
         memberName: `Digital: ${d.provider}`,
         items: [
@@ -2787,8 +2887,130 @@ export const salesHistoryService = {
       }
     })
 
-    // 3. Gabungkan dan urutkan berdasarkan tanggal terbaru
     return [...formattedBarang, ...formattedDigital].sort((a, b) => new Date(b.date) - new Date(a.date))
+  },
+
+  async voidTransaction(transaction) {
+    const now = dayjs().toISOString()
+
+    if (transaction.trxType === 'BARANG') {
+      if (transaction.status === 'void') throw new Error('Transaksi ini sudah dibatalkan.')
+
+      // 1. Kembalikan stok barang
+      const items = await transactionRepo.getItemsByTransactionId(transaction.id)
+      for (const item of items) {
+        if (item.productId) {
+          const product = await productRepo.getById(item.productId)
+          if (product) {
+            await productRepo.update(item.productId, {
+              qty: (product.qty || 0) + (item.qty || 0)
+            })
+          }
+        }
+      }
+
+      // 2. Balikkan mutasi keuangan kas / bank
+      if (transaction.paymentMethod === 'CASH' && transaction.total > 0) {
+        await financeRepo.addMutation({
+          accountId: 'acc_cash',
+          type: 'OUT',
+          amount: transaction.total,
+          category: 'Pembatalan Transaksi',
+          note: `Void Transaksi Kasir #${transaction.id.slice(0, 8)}`,
+          refId: transaction.id
+        })
+      } else if (transaction.paymentMethod === 'QRIS' && transaction.total > 0) {
+        await financeRepo.addMutation({
+          accountId: 'acc_bank',
+          type: 'OUT',
+          amount: transaction.total,
+          category: 'Pembatalan Transaksi',
+          note: `Void Transaksi QRIS #${transaction.id.slice(0, 8)}`,
+          refId: transaction.id
+        })
+      }
+
+      // 3. Kurangi poin/spending & piutang member jika ada
+      if (transaction.memberId) {
+        const member = await memberRepo.getById(transaction.memberId)
+        if (member) {
+          const newSpending = Math.max(0, (member.total_spending || 0) - transaction.total)
+          const newDebt = transaction.paymentMethod === 'TEMPO' 
+            ? Math.max(0, (member.debt || 0) - (transaction.remaining || transaction.total))
+            : (member.debt || 0)
+
+          await memberRepo.update(transaction.memberId, {
+            total_spending: newSpending,
+            debt: newDebt
+          })
+        }
+      }
+
+      // 4. Update status transaksi menjadi void
+      await db.transactions.update(transaction.id, {
+        status: 'void',
+        updatedAt: now,
+        synced: 0
+      })
+
+    } else if (transaction.trxType === 'DIGITAL') {
+      if (transaction.status === 'CANCELLED') throw new Error('Transaksi digital sudah dibatalkan.')
+
+      const isTopup = transaction.digitalType === 'topup'
+      const isCashAdmin = transaction.adminPaymentMethod === 'cash'
+
+      // Balikkan kas digital
+      if (isTopup) {
+        const cashOut = transaction.nominal + (isCashAdmin ? transaction.adminFee : 0)
+        if (cashOut > 0) {
+          await financeRepo.addMutation({
+            accountId: 'acc_cash',
+            type: 'OUT',
+            amount: cashOut,
+            category: 'Pembatalan Transaksi Digital',
+            note: `Void Top Up ${transaction.provider}`,
+            refId: transaction.id
+          })
+        }
+        const bankIn = isCashAdmin ? transaction.nominal : Math.max(0, transaction.nominal - transaction.adminFee)
+        await financeRepo.addMutation({
+          accountId: 'acc_bank',
+          type: 'IN',
+          amount: bankIn,
+          category: 'Pembatalan Transaksi Digital',
+          note: `Pengembalian Modal Top Up ${transaction.provider}`,
+          refId: transaction.id
+        })
+      } else {
+        const cashIn = transaction.nominal - (isCashAdmin ? transaction.adminFee : 0)
+        if (cashIn > 0) {
+          await financeRepo.addMutation({
+            accountId: 'acc_cash',
+            type: 'IN',
+            amount: cashIn,
+            category: 'Pembatalan Transaksi Digital',
+            note: `Void Tarik Tunai ${transaction.provider}`,
+            refId: transaction.id
+          })
+        }
+        const bankOut = isCashAdmin ? transaction.nominal : transaction.nominal + transaction.adminFee
+        await financeRepo.addMutation({
+          accountId: 'acc_bank',
+          type: 'OUT',
+          amount: bankOut,
+          category: 'Pembatalan Transaksi Digital',
+          note: `Penarikan Saldo Tarik Tunai ${transaction.provider}`,
+          refId: transaction.id
+        })
+      }
+
+      await db.digital_transactions.update(transaction.id, {
+        status: 'CANCELLED',
+        profit: 0,
+        updatedAt: now,
+        synced: 0
+      })
+    }
   }
 }
 
@@ -3616,6 +3838,7 @@ import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { Search, X, ShoppingBag, Clock, PauseCircle, Trash2 } from 'lucide-vue-next'
 import { useKasir } from '../composables/useKasir.js'
 import { formatRibuan } from '../utils/formatters/currency.js'
+import { toast } from 'vue-sonner'
 
 const { 
   store, q, memberQ, filteredProducts, filteredMembers, 
@@ -3641,14 +3864,15 @@ const selectMember = (m) => {
 const restorePending = (pendingId) => {
   store.resumeCart(pendingId)
   showPendingModal.value = false
+  toast.info('Transaksi ditunda berhasil dimuat kembali')
 }
 
 const onCheckout = async () => { 
   try { 
     await checkout()
-    alert('Berhasil') 
+    toast.success('Transaksi berhasil diproses!') 
   } catch(e) { 
-    alert(e.message) 
+    toast.error(e.message) 
   } 
 }
 
@@ -3889,6 +4113,7 @@ onMounted(() => {
 </script>
 
 ===== src/views/Shopping.vue =====
+<!-- src/views/Shopping.vue -->
 <template>
 <div class="flex-1 overflow-auto p-4 pb-28 space-y-4">
   <!-- Header Title & Quick Action -->
@@ -4019,7 +4244,7 @@ onMounted(() => {
       <!-- Checkbox & Detail Item -->
       <div class="flex items-center gap-3 flex-1 min-w-0">
         <button 
-          @click="toggleBought(item)"
+          @click="handleToggleClick(item)"
           :class="[
             'w-7 h-7 rounded-xl flex items-center justify-center shrink-0 transition',
             item.isBought ? 'bg-emerald-500 text-white' : 'bg-zinc-100 text-transparent border border-zinc-300'
@@ -4053,6 +4278,59 @@ onMounted(() => {
     </div>
   </div>
 
+  <!-- Modal Konfirmasi Bayar Kulakan -->
+  <div v-if="showPayModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+    <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl animate-in slide-in-from-bottom duration-200">
+      <div class="flex justify-between items-center mb-4">
+        <div>
+          <h2 class="font-black text-base text-zinc-900">Konfirmasi Pembayaran Kulakan</h2>
+          <p class="text-xs text-zinc-400">{{ targetItemForPay?.name }} ({{ targetItemForPay?.qty }} {{ targetItemForPay?.unit }})</p>
+        </div>
+        <button @click="showPayModal = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4" /></button>
+      </div>
+
+      <form @submit.prevent="submitToggleBought(targetItemForPay, payForm)" class="space-y-4">
+        <div>
+          <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Sumber Dana Pembayaran *</label>
+          <div class="grid grid-cols-2 gap-2">
+            <button 
+              type="button"
+              @click="payForm.accountId = 'acc_cash'" 
+              :class="['py-3 rounded-xl text-xs font-bold border transition', payForm.accountId === 'acc_cash' ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-zinc-50 border-zinc-200 text-zinc-600']"
+            >
+              Kas Laci (Tunai)
+            </button>
+            <button 
+              type="button"
+              @click="payForm.accountId = 'acc_bank'" 
+              :class="['py-3 rounded-xl text-xs font-bold border transition', payForm.accountId === 'acc_bank' ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-zinc-50 border-zinc-200 text-zinc-600']"
+            >
+              Bank / QRIS
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Total Nominal Riil *</label>
+          <input 
+            :value="formatRp(payForm.actualPrice)" 
+            @input="e => payForm.actualPrice = toNumber(e.target.value)" 
+            type="text" 
+            inputmode="numeric" 
+            required
+            class="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-lg font-black text-zinc-900" 
+          />
+        </div>
+
+        <div class="flex gap-2 pt-2">
+          <button type="button" @click="showPayModal = false" class="flex-1 py-3 bg-zinc-100 font-bold text-xs rounded-xl">Batal</button>
+          <button type="submit" class="flex-1 py-3 bg-zinc-900 text-white font-bold text-xs rounded-xl shadow-md">Simpan & Potong Kas</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal Form Tambah Belanjaan -->
   <div v-if="showAddModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
     <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl max-h-[85vh] flex flex-col animate-in slide-in-from-bottom duration-200">
       <div class="flex justify-between items-center mb-4 shrink-0">
@@ -4188,6 +4466,7 @@ import { ref, computed, onMounted } from 'vue'
 import { Plus, Search, Trash2, X, Check, ShoppingBag, Sparkles, Share2 } from 'lucide-vue-next'
 import { useShopping } from '../composables/useShopping.js'
 import { formatRibuan, formatRp, toNumber } from '../utils/formatters/currency.js'
+import { toast } from 'vue-sonner'
 
 const {
   products,
@@ -4196,6 +4475,9 @@ const {
   activeFilter,
   loading,
   showAddModal,
+  showPayModal,
+  targetItemForPay,
+  payForm,
   isCustomItem,
   form,
   totalItems,
@@ -4204,7 +4486,8 @@ const {
   filteredItems,
   loadData,
   handleAutoRestock,
-  toggleBought,
+  handleToggleClick,
+  submitToggleBought,
   openModal,
   selectProductForAdd,
   saveItem,
@@ -4232,23 +4515,22 @@ const filteredMasterProducts = computed(() => {
 const triggerAutoRestock = async () => {
   const count = await handleAutoRestock()
   if (count > 0) {
-    alert(`Berhasil menambahkan ${count} produk tipis ke daftar belanja!`)
+    toast.success(`Berhasil menambahkan ${count} produk tipis ke daftar belanja!`)
   } else {
-    alert('Tidak ada produk baru bersisa stok tipis untuk ditambahkan.')
+    toast.info('Tidak ada produk baru bersisa stok tipis untuk ditambahkan.')
   }
 }
 
 const handleExportCopy = () => {
   const text = exportShoppingListText()
   if (!text) {
-    alert('Belum ada item yang perlu dibeli.')
+    toast.info('Belum ada item yang perlu dibeli.')
     return
   }
 
-  // Gunakan metode standar browser yang kompatibel
   if (navigator.clipboard && window.isSecureContext) {
     navigator.clipboard.writeText(text).then(() => {
-      alert('Daftar belanja berhasil disalin ke clipboard!')
+      toast.success('Daftar belanja berhasil disalin ke clipboard!')
     }).catch(() => {
       copyFallback(text)
     })
@@ -4264,13 +4546,15 @@ const copyFallback = (text) => {
   textarea.select()
   document.execCommand('copy')
   document.body.removeChild(textarea)
-  alert('Daftar belanja berhasil disalin!')
+  toast.success('Daftar belanja berhasil disalin!')
 }
 
 onMounted(() => {
   loadData()
 })
 </script>
+
+
 ===== src/views/Reports.vue =====
 <template>
 <div class="flex-1 overflow-auto p-4 pb-28 space-y-4">
@@ -5173,6 +5457,7 @@ onMounted(() => {
 </script>
 
 ===== src/views/SalesHistory.vue =====
+<!-- src/views/SalesHistory.vue -->
 <template>
   <div class="flex-1 overflow-auto p-4 pb-24 space-y-4">
     <!-- Header -->
@@ -5235,17 +5520,23 @@ onMounted(() => {
         v-for="t in filteredTransactions" 
         :key="t.id"
         @click="selectedTransaction = t"
-        class="bg-white p-4 rounded-2xl border border-zinc-100 shadow-sm flex flex-col gap-2.5 active:scale-[0.99] transition cursor-pointer"
+        :class="[
+          'bg-white p-4 rounded-2xl border transition cursor-pointer flex flex-col gap-2.5 active:scale-[0.99]',
+          (t.status === 'void' || t.status === 'CANCELLED') ? 'border-red-200 bg-red-50/30 opacity-70' : 'border-zinc-100 shadow-sm'
+        ]"
       >
         <div class="flex justify-between items-start">
           <div>
             <div class="font-bold text-xs text-zinc-900 flex items-center gap-1.5">
-              <span>{{ t.memberName }}</span>
+              <span :class="(t.status === 'void' || t.status === 'CANCELLED') && 'line-through text-zinc-400'">{{ t.memberName }}</span>
               <span 
                 :class="t.trxType === 'DIGITAL' ? 'bg-blue-100 text-blue-700' : 'bg-zinc-100 text-zinc-600'"
                 class="px-2 py-0.5 rounded-md text-[9px] font-black uppercase"
               >
                 {{ t.trxType }}
+              </span>
+              <span v-if="t.status === 'void' || t.status === 'CANCELLED'" class="bg-red-600 text-white px-2 py-0.5 rounded-md text-[9px] font-black uppercase">
+                VOID
               </span>
             </div>
             <div class="text-[10px] text-zinc-400 mt-0.5 flex items-center gap-1">
@@ -5256,10 +5547,11 @@ onMounted(() => {
 
           <div :class="[
             'px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider',
+            t.status === 'void' || t.status === 'CANCELLED' ? 'bg-red-100 text-red-600' :
             t.paymentMethod === 'TEMPO' ? 'bg-amber-100 text-amber-700' :
             t.paymentMethod === 'QRIS' ? 'bg-blue-100 text-blue-700' : 'bg-emerald-100 text-emerald-700'
           ]">
-            {{ t.paymentMethod }}
+            {{ t.status === 'void' || t.status === 'CANCELLED' ? 'DIBATALKAN' : t.paymentMethod }}
           </div>
         </div>
 
@@ -5276,7 +5568,7 @@ onMounted(() => {
             <div class="text-[9px] text-zinc-400 font-bold uppercase">
               {{ t.trxType === 'DIGITAL' ? 'Arus Kas Fisik' : 'Total Transaksi' }}
             </div>
-            <div :class="['text-sm font-black', t.total < 0 ? 'text-red-500' : 'text-zinc-900']">
+            <div :class="['text-sm font-black', (t.status === 'void' || t.status === 'CANCELLED') ? 'line-through text-zinc-400' : t.total < 0 ? 'text-red-500' : 'text-zinc-900']">
               {{ t.total < 0 ? '-' : '' }}Rp {{ formatRibuan(Math.abs(t.total)) }}
             </div>
           </div>
@@ -5289,8 +5581,9 @@ onMounted(() => {
       <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl max-h-[85vh] flex flex-col animate-in slide-in-from-bottom duration-200">
         <div class="flex justify-between items-start mb-4 border-b border-zinc-100 pb-3">
           <div>
-            <h2 class="font-black text-base text-zinc-900">
-              {{ selectedTransaction.trxType === 'DIGITAL' ? 'Detail Transaksi Digital' : 'Detail Rincian Nota' }}
+            <h2 class="font-black text-base text-zinc-900 flex items-center gap-2">
+              <span>{{ selectedTransaction.trxType === 'DIGITAL' ? 'Detail Transaksi Digital' : 'Detail Rincian Nota' }}</span>
+              <span v-if="selectedTransaction.status === 'void' || selectedTransaction.status === 'CANCELLED'" class="text-xs bg-red-600 text-white px-2 py-0.5 rounded font-bold uppercase">BATAL</span>
             </h2>
             <p class="text-[11px] text-zinc-400">ID: {{ selectedTransaction.id.slice(0, 13) }}...</p>
           </div>
@@ -5326,10 +5619,6 @@ onMounted(() => {
               <span class="text-xs font-bold">Biaya Admin (Profit)</span>
               <span class="font-black text-xs text-emerald-600">Rp {{ formatRibuan(selectedTransaction.adminFee) }}</span>
             </div>
-            <div class="flex justify-between items-center py-2 border-b border-zinc-50">
-              <span class="text-xs font-bold">Metode Admin</span>
-              <span class="font-bold text-xs uppercase">{{ selectedTransaction.adminPaymentMethod === 'cash' ? 'Uang Tunai' : 'Potong Saldo' }}</span>
-            </div>
           </template>
 
           <template v-else>
@@ -5351,18 +5640,28 @@ onMounted(() => {
 
         <div class="border-t border-zinc-100 pt-3 space-y-2">
           <div class="flex justify-between items-center text-sm">
-            <span class="font-bold text-zinc-600">Impact Kas Fisik</span>
-            <span :class="['font-black text-base', selectedTransaction.total < 0 ? 'text-red-500' : 'text-zinc-900']">
-              {{ selectedTransaction.total < 0 ? '-' : '' }}Rp {{ formatRibuan(Math.abs(selectedTransaction.total)) }}
+            <span class="font-bold text-zinc-600">Total Transaksi</span>
+            <span :class="['font-black text-base', selectedTransaction.status === 'void' || selectedTransaction.status === 'CANCELLED' ? 'line-through text-zinc-400' : 'text-zinc-900']">
+              Rp {{ formatRibuan(Math.abs(selectedTransaction.total)) }}
             </span>
           </div>
 
-          <button 
-            @click="selectedTransaction = null" 
-            class="w-full py-3 bg-zinc-900 text-white rounded-xl font-bold text-xs"
-          >
-            Tutup
-          </button>
+          <div class="flex gap-2">
+            <button 
+              v-if="selectedTransaction.status !== 'void' && selectedTransaction.status !== 'CANCELLED'"
+              @click="handleVoid(selectedTransaction)" 
+              :disabled="loading"
+              class="flex-1 py-3 bg-red-600 hover:bg-red-700 disabled:bg-zinc-300 text-white rounded-xl font-bold text-xs transition active:scale-95"
+            >
+              Batalkan Transaksi (Void)
+            </button>
+            <button 
+              @click="selectedTransaction = null" 
+              class="flex-1 py-3 bg-zinc-900 text-white rounded-xl font-bold text-xs"
+            >
+              Tutup
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -5379,20 +5678,20 @@ const {
   searchQuery,
   selectedFilter,
   selectedTransaction,
+  loading,
   filterOptions,
   filteredTransactions,
   totalOmzet,
   totalPiutang,
   loadHistory,
+  handleVoid,
   formatDate
 } = useSalesHistory()
 
-// Muat data awal saat komponen pertama kali di-mount
 onMounted(() => {
   loadHistory()
 })
 
-// Otomatis muat ulang data transaksi setiap kali pengguna masuk ke tab Riwayat Penjualan (KeepAlive)
 onActivated(() => {
   loadHistory()
 })

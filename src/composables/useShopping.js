@@ -1,3 +1,4 @@
+// src/composables/useShopping.js
 import { ref, computed } from 'vue'
 import { shoppingService } from '../services/shoppingService.js'
 import { productRepo } from '../db/repositories/productRepository.js'
@@ -23,6 +24,14 @@ export function useShopping() {
     unit: 'pcs',
     estimatedPrice: 0,
     notes: ''
+  })
+
+  // State Modal Konfirmasi Bayar Kulakan
+  const showPayModal = ref(false)
+  const targetItemForPay = ref(null)
+  const payForm = ref({
+    actualPrice: 0,
+    accountId: 'acc_cash'
   })
 
   const totalItems = computed(() => items.value.length)
@@ -66,7 +75,7 @@ export function useShopping() {
       items.value = shoppingData
       products.value = productData
       categories.value = categoryData
-    } finally {
+    } finally { // Sudah diperbaiki dari "fontally" ke "finally"
       loading.value = false
     }
   }
@@ -82,8 +91,25 @@ export function useShopping() {
     }
   }
 
-  const toggleBought = async (item) => {
-    await shoppingService.toggleBoughtStatus(item)
+  const handleToggleClick = (item) => {
+    if (!item.isBought) {
+      targetItemForPay.value = item
+      payForm.value = {
+        actualPrice: item.estimatedPrice || 0,
+        accountId: 'acc_cash'
+      }
+      showPayModal.value = true
+    } else {
+      if (confirm(`Batalkan status selesai beli "${item.name}"?\nStok barang dan kas/bank akan dikembalikan.`)) {
+        submitToggleBought(item, { accountId: 'acc_cash', actualPrice: item.estimatedPrice })
+      }
+    }
+  }
+
+  const submitToggleBought = async (item, options) => {
+    await shoppingService.toggleBoughtStatus(item, options)
+    showPayModal.value = false
+    targetItemForPay.value = null
     await loadData()
   }
 
@@ -164,6 +190,9 @@ export function useShopping() {
     activeFilter,
     loading,
     showAddModal,
+    showPayModal,
+    targetItemForPay,
+    payForm,
     isCustomItem,
     selectedProduct,
     form,
@@ -175,7 +204,8 @@ export function useShopping() {
     filteredItems,
     loadData,
     handleAutoRestock,
-    toggleBought,
+    handleToggleClick,
+    submitToggleBought,
     openModal,
     selectProductForAdd,
     saveItem,

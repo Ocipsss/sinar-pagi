@@ -1,7 +1,7 @@
-// src/composables/useSettings.js
 import { ref } from 'vue'
 import { settingsRepo } from '../db/repositories/settingsRepository.js'
 import { backupService } from '../services/backupService.js'
+import { toast } from 'vue-sonner'
 
 export function useSettings() {
   const loading = ref(false)
@@ -28,9 +28,9 @@ export function useSettings() {
     loading.value = true
     try {
       await settingsRepo.saveSettings(form.value)
-      alert('Pengaturan toko berhasil disimpan!')
+      toast.success('Pengaturan toko berhasil disimpan!')
     } catch (e) {
-      alert(`Gagal menyimpan: ${e.message}`)
+      toast.error(`Gagal menyimpan: ${e.message}`)
     } finally {
       loading.value = false
     }
@@ -39,8 +39,9 @@ export function useSettings() {
   const exportBackup = async () => {
     try {
       await backupService.exportBackup()
+      toast.success('File backup berhasil dibuat!')
     } catch (e) {
-      alert(`Gagal membuat backup: ${e.message}`)
+      toast.error(`Gagal membuat backup: ${e.message}`)
     }
   }
 
@@ -55,10 +56,10 @@ export function useSettings() {
 
     try {
       await backupService.importBackup(file)
-      alert('Data berhasil dipulihkan dari file backup! Halaman akan memuat ulang.')
-      window.location.reload()
+      toast.success('Data berhasil dipulihkan dari file backup!')
+      setTimeout(() => window.location.reload(), 800)
     } catch (err) {
-      alert(`File backup tidak valid: ${err.message}`)
+      toast.error(`File backup tidak valid: ${err.message}`)
     }
   }
 

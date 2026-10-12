@@ -303,6 +303,13 @@
   </div>
 </div>
 
+<!-- Modal Struk & Cetak Nota -->
+<ReceiptModal 
+  v-if="completedTransaction" 
+  :transaction="completedTransaction" 
+  @close="completedTransaction = null" 
+/>
+
 <div v-if="showSearch" @click="showSearch=false" class="fixed inset-0 z-20"></div>
 </template>
 
@@ -311,6 +318,8 @@ import { ref, onMounted, onUnmounted, watch } from 'vue'
 import { Search, X, ShoppingBag, Clock, PauseCircle, Trash2 } from 'lucide-vue-next'
 import { useKasir } from '../composables/useKasir.js'
 import { formatRibuan } from '../utils/formatters/currency.js'
+import { toast } from 'vue-sonner'
+import ReceiptModal from '../components/ReceiptModal.vue'
 
 const { 
   store, q, memberQ, filteredProducts, filteredMembers, 
@@ -321,6 +330,7 @@ const {
 
 const showMemberPicker = ref(false)
 const showPendingModal = ref(false)
+const completedTransaction = ref(null)
 
 const handleMethod = (m) => { 
   store.paymentMethod = m
@@ -336,14 +346,32 @@ const selectMember = (m) => {
 const restorePending = (pendingId) => {
   store.resumeCart(pendingId)
   showPendingModal.value = false
+  toast.info('Transaksi ditunda berhasil dimuat kembali')
 }
 
 const onCheckout = async () => { 
   try { 
-    await checkout()
-    alert('Berhasil') 
+    const currentCart = [...store.cart]
+    const currentMember = store.selectedMember
+    const currentMethod = store.paymentMethod
+    const currentPaid = store.bayarNominal
+
+    const res = await checkout()
+    
+    // Siapkan objek data transaksi untuk pratinjau nota
+    completedTransaction.value = {
+      id: res.id,
+      date: new Date().toISOString(),
+      total: res.total,
+      paymentMethod: currentMethod,
+      amountPaid: currentPaid,
+      memberName: currentMember?.name || 'Umum',
+      items: currentCart
+    }
+
+    toast.success('Transaksi berhasil diproses!') 
   } catch(e) { 
-    alert(e.message) 
+    toast.error(e.message) 
   } 
 }
 

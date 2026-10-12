@@ -98,6 +98,13 @@ export const router = createRouter({
           component: () => import('../views/Settings.vue'),
           meta: { title: 'Pengaturan' }
         },
+        { 
+  path: 'expenses', 
+  name: 'Expenses', 
+  component: () => import('../views/Expenses.vue'),
+  meta: { title: 'Pengeluaran Operasional' }
+},
+
       ]
     }
   ]

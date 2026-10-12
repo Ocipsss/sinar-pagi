@@ -1,5 +1,6 @@
 import { ref, computed } from 'vue'
 import { productsDigitalService } from '../services/productsDigitalService.js'
+import { toast } from 'vue-sonner'
 
 export function useProductsDigital() {
   const form = ref({
@@ -20,18 +21,18 @@ export function useProductsDigital() {
 
   const saveTransaction = async () => {
     if (!form.value.provider?.trim()) {
-      alert('Pilih/isi Layanan / Provider terlebih dahulu!')
+      toast.error('Pilih atau isi Layanan / Provider terlebih dahulu!')
       return
     }
     if (!form.value.nominal || form.value.nominal <= 0) {
-      alert('Nominal transaksi harus lebih besar dari 0!')
+      toast.error('Nominal transaksi harus lebih besar dari 0!')
       return
     }
 
     loading.value = true
     try {
       await productsDigitalService.create(form.value)
-      alert('Transaksi digital berhasil disimpan!')
+      toast.success('Transaksi digital berhasil disimpan!')
       form.value = {
         type: 'topup',
         provider: '',
@@ -40,7 +41,7 @@ export function useProductsDigital() {
         adminPaymentMethod: 'cash'
       }
     } catch (e) {
-      alert(`Gagal menyimpan transaksi: ${e.message}`)
+      toast.error(`Gagal menyimpan transaksi: ${e.message}`)
     } finally {
       loading.value = false
     }

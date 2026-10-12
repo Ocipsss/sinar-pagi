@@ -1,3 +1,4 @@
+<!-- src/views/Shopping.vue -->
 <template>
 <div class="flex-1 overflow-auto p-4 pb-28 space-y-4">
   <!-- Header Title & Quick Action -->
@@ -128,7 +129,7 @@
       <!-- Checkbox & Detail Item -->
       <div class="flex items-center gap-3 flex-1 min-w-0">
         <button 
-          @click="toggleBought(item)"
+          @click="handleToggleClick(item)"
           :class="[
             'w-7 h-7 rounded-xl flex items-center justify-center shrink-0 transition',
             item.isBought ? 'bg-emerald-500 text-white' : 'bg-zinc-100 text-transparent border border-zinc-300'
@@ -162,6 +163,59 @@
     </div>
   </div>
 
+  <!-- Modal Konfirmasi Bayar Kulakan -->
+  <div v-if="showPayModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+    <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl animate-in slide-in-from-bottom duration-200">
+      <div class="flex justify-between items-center mb-4">
+        <div>
+          <h2 class="font-black text-base text-zinc-900">Konfirmasi Pembayaran Kulakan</h2>
+          <p class="text-xs text-zinc-400">{{ targetItemForPay?.name }} ({{ targetItemForPay?.qty }} {{ targetItemForPay?.unit }})</p>
+        </div>
+        <button @click="showPayModal = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4" /></button>
+      </div>
+
+      <form @submit.prevent="submitToggleBought(targetItemForPay, payForm)" class="space-y-4">
+        <div>
+          <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Sumber Dana Pembayaran *</label>
+          <div class="grid grid-cols-2 gap-2">
+            <button 
+              type="button"
+              @click="payForm.accountId = 'acc_cash'" 
+              :class="['py-3 rounded-xl text-xs font-bold border transition', payForm.accountId === 'acc_cash' ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-zinc-50 border-zinc-200 text-zinc-600']"
+            >
+              Kas Laci (Tunai)
+            </button>
+            <button 
+              type="button"
+              @click="payForm.accountId = 'acc_bank'" 
+              :class="['py-3 rounded-xl text-xs font-bold border transition', payForm.accountId === 'acc_bank' ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-zinc-50 border-zinc-200 text-zinc-600']"
+            >
+              Bank / QRIS
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Total Nominal Riil *</label>
+          <input 
+            :value="formatRp(payForm.actualPrice)" 
+            @input="e => payForm.actualPrice = toNumber(e.target.value)" 
+            type="text" 
+            inputmode="numeric" 
+            required
+            class="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-lg font-black text-zinc-900" 
+          />
+        </div>
+
+        <div class="flex gap-2 pt-2">
+          <button type="button" @click="showPayModal = false" class="flex-1 py-3 bg-zinc-100 font-bold text-xs rounded-xl">Batal</button>
+          <button type="submit" class="flex-1 py-3 bg-zinc-900 text-white font-bold text-xs rounded-xl shadow-md">Simpan & Potong Kas</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal Form Tambah Belanjaan -->
   <div v-if="showAddModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
     <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl max-h-[85vh] flex flex-col animate-in slide-in-from-bottom duration-200">
       <div class="flex justify-between items-center mb-4 shrink-0">
@@ -297,6 +351,7 @@ import { ref, computed, onMounted } from 'vue'
 import { Plus, Search, Trash2, X, Check, ShoppingBag, Sparkles, Share2 } from 'lucide-vue-next'
 import { useShopping } from '../composables/useShopping.js'
 import { formatRibuan, formatRp, toNumber } from '../utils/formatters/currency.js'
+import { toast } from 'vue-sonner'
 
 const {
   products,
@@ -305,6 +360,9 @@ const {
   activeFilter,
   loading,
   showAddModal,
+  showPayModal,
+  targetItemForPay,
+  payForm,
   isCustomItem,
   form,
   totalItems,
@@ -313,7 +371,8 @@ const {
   filteredItems,
   loadData,
   handleAutoRestock,
-  toggleBought,
+  handleToggleClick,
+  submitToggleBought,
   openModal,
   selectProductForAdd,
   saveItem,
@@ -341,23 +400,22 @@ const filteredMasterProducts = computed(() => {
 const triggerAutoRestock = async () => {
   const count = await handleAutoRestock()
   if (count > 0) {
-    alert(`Berhasil menambahkan ${count} produk tipis ke daftar belanja!`)
+    toast.success(`Berhasil menambahkan ${count} produk tipis ke daftar belanja!`)
   } else {
-    alert('Tidak ada produk baru bersisa stok tipis untuk ditambahkan.')
+    toast.info('Tidak ada produk baru bersisa stok tipis untuk ditambahkan.')
   }
 }
 
 const handleExportCopy = () => {
   const text = exportShoppingListText()
   if (!text) {
-    alert('Belum ada item yang perlu dibeli.')
+    toast.info('Belum ada item yang perlu dibeli.')
     return
   }
 
-  // Gunakan metode standar browser yang kompatibel
   if (navigator.clipboard && window.isSecureContext) {
     navigator.clipboard.writeText(text).then(() => {
-      alert('Daftar belanja berhasil disalin ke clipboard!')
+      toast.success('Daftar belanja berhasil disalin ke clipboard!')
     }).catch(() => {
       copyFallback(text)
     })
@@ -373,10 +431,11 @@ const copyFallback = (text) => {
   textarea.select()
   document.execCommand('copy')
   document.body.removeChild(textarea)
-  alert('Daftar belanja berhasil disalin!')
+  toast.success('Daftar belanja berhasil disalin!')
 }
 
 onMounted(() => {
   loadData()
 })
 </script>
+

@@ -96,7 +96,7 @@ import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { 
   Menu, X, Package, Store, LayoutDashboard, Plus, 
-  Users, ShoppingCart, Tags, History, Coffee, Smartphone, Wallet, RefreshCw, BarChart3, Settings 
+  Users, ShoppingCart, Tags, History, Coffee, Smartphone, Wallet, RefreshCw, BarChart3, Settings, Receipt
 } from 'lucide-vue-next'
 import SidebarComponent from '../components/Sidebar.vue'
 import { syncStatus, syncRealtime } from '../services/syncService.js'
@@ -122,6 +122,7 @@ const groups = ref([
     title: 'KEUANGAN', 
     items: [
       { name: 'Kas & Keuangan', icon: Wallet, to: '/finance' },
+      { name: 'Pengeluaran Operasional', icon: Receipt, to: '/expenses'},
       { name: 'Laporan & Rekap', icon: BarChart3, to: '/reports' }
     ]
   },

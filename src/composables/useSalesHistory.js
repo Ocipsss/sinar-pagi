@@ -1,6 +1,6 @@
-// src/composables/useSalesHistory.js
 import { ref, computed } from 'vue'
 import { salesHistoryService } from '../services/salesHistoryService.js'
+import { toast } from 'vue-sonner'
 import dayjs from 'dayjs'
 import localeId from 'dayjs/locale/id'
 
@@ -39,11 +39,11 @@ export function useSalesHistory() {
     loading.value = true
     try {
       await salesHistoryService.voidTransaction(transaction)
-      alert('Transaksi berhasil dibatalkan!')
+      toast.success('Transaksi berhasil dibatalkan!')
       selectedTransaction.value = null
       await loadHistory()
     } catch (e) {
-      alert(`Gagal membatalkan transaksi: ${e.message}`)
+      toast.error(`Gagal membatalkan transaksi: ${e.message}`)
     } finally {
       loading.value = false
     }
