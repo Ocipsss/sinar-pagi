@@ -1415,22 +1415,39 @@ export const getBarangTipis = (products) =>
 import { createApp } from 'vue'
 import { createPinia } from 'pinia'
 import piniaPluginPersistedstate from 'pinia-plugin-persistedstate'
+import { registerSW } from 'virtual:pwa-register'
 import './style.css'
 import 'vue-sonner/style.css'
 import App from './App.vue'
 import { router } from './router/index.js'
 import { syncRealtime as syncService } from './services/syncService.js'
 
+const updateSW = registerSW({
+  onNeedRefresh() {
+    if (confirm('Versi baru Sinar Pagi POS tersedia. Perbarui sekarang?')) {
+      updateSW(true)
+    }
+  },
+  onOfflineReady() {
+    console.log('Sinar Pagi POS siap digunakan secara offline.')
+  }
+})
+
 const app = createApp(App)
 const pinia = createPinia()
+
 pinia.use(piniaPluginPersistedstate)
 app.use(pinia)
 app.use(router)
+
 app.mount('#app')
 
-try { syncService.init() } catch (e) {
+try {
+  syncService.init()
+} catch (e) {
   console.error('Sync gagal init, jalan offline dulu:', e)
 }
+
 ===== src/style.css =====
 @import "tailwindcss";
 ===== src/db/index.js =====
@@ -7336,16 +7353,23 @@ export const router = createRouter({
   ]
 })
 
-// ROUTE GUARD UNTUK SESI OPERATOR
-router.beforeEach((to, from, next) => {
+// ROUTE GUARD UNTUK SESI OPERATOR (Modul Vue Router 4 Tanpa Callback next)
+router.beforeEach((to) => {
   const operatorStore = useOperatorStore()
 
+  // Update judul halaman secara otomatis
+  if (to.meta?.title) {
+    document.title = `${to.meta.title} - Sinar Pagi POS`
+  }
+
+  // Redirect jika belum login dan mencoba mengakses halaman privat
   if (!to.meta.guestOnly && !operatorStore.isLoggedIn) {
-    next('/login')
-  } else if (to.meta.guestOnly && operatorStore.isLoggedIn) {
-    next('/kasir')
-  } else {
-    next()
+    return '/login'
+  }
+
+  // Redirect jika sudah login tetapi membuka halaman login/guest
+  if (to.meta.guestOnly && operatorStore.isLoggedIn) {
+    return '/kasir'
   }
 })
 

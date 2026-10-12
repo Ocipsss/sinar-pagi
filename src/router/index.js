@@ -112,15 +112,22 @@ export const router = createRouter({
   ]
 })
 
-// ROUTE GUARD UNTUK SESI OPERATOR
-router.beforeEach((to, from, next) => {
+// ROUTE GUARD UNTUK SESI OPERATOR (Modul Vue Router 4 Tanpa Callback next)
+router.beforeEach((to) => {
   const operatorStore = useOperatorStore()
 
+  // Update judul halaman secara otomatis
+  if (to.meta?.title) {
+    document.title = `${to.meta.title} - Sinar Pagi POS`
+  }
+
+  // Redirect jika belum login dan mencoba mengakses halaman privat
   if (!to.meta.guestOnly && !operatorStore.isLoggedIn) {
-    next('/login')
-  } else if (to.meta.guestOnly && operatorStore.isLoggedIn) {
-    next('/kasir')
-  } else {
-    next()
+    return '/login'
+  }
+
+  // Redirect jika sudah login tetapi membuka halaman login/guest
+  if (to.meta.guestOnly && operatorStore.isLoggedIn) {
+    return '/kasir'
   }
 })
