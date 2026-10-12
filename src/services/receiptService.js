@@ -3,21 +3,94 @@ import EscPosEncoder from 'esc-pos-encoder'
 import { settingsRepo } from '../db/repositories/settingsRepository.js'
 import dayjs from 'dayjs'
 
+// Cache koneksi printer agar tidak perlu reconnect tiap cetak
+let cachedDevice = null
+let cachedCharacteristic = null
+
+async function getPrinterCharacteristic() {
+  if (cachedDevice && cachedDevice.gatt?.connected && cachedCharacteristic) {
+    return cachedCharacteristic
+  }
+
+  let device = cachedDevice
+
+  if (!device && navigator.bluetooth?.getDevices) {
+    const devices = await navigator.bluetooth.getDevices()
+    if (devices.length > 0) {
+      device = devices[0]
+    }
+  }
+
+  if (!device) {
+    device = await navigator.bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: [
+        '000018f0-0000-1000-8000-00805f9b34fb',
+        '0000ff00-0000-1000-8000-00805f9b34fb',
+        '0000af00-0000-1000-8000-00805f9b34fb',
+        '49535343-fe7d-41aa-a322-3d7a4a2d2bd0',
+        'e7810a71-73ae-4d9d-8c54-be98300d1107'
+      ]
+    })
+  }
+
+  cachedDevice = device
+
+  device.addEventListener('gattserverdisconnected', () => {
+    cachedCharacteristic = null
+  })
+
+  const server = device.gatt.connected ? device.gatt : await device.gatt.connect()
+  const services = await server.getPrimaryServices().catch(() => [])
+  let targetChar = null
+
+  for (const service of services) {
+    const characteristics = await service.getCharacteristics().catch(() => [])
+    for (const char of characteristics) {
+      if (char?.properties?.write || char?.properties?.writeWithoutResponse) {
+        targetChar = char
+        break
+      }
+    }
+    if (targetChar) break
+  }
+
+  if (!targetChar) {
+    throw new Error('Karakteristik printer thermal tidak ditemukan.')
+  }
+
+  cachedCharacteristic = targetChar
+  return targetChar
+}
+
+// Helper untuk format 2 kolom rata kiri & kanan presisi
+function formatTwoColumn(left, right, width) {
+  const leftStr = String(left || '')
+  const rightStr = String(right || '')
+  const spaceAvailable = width - leftStr.length - rightStr.length
+
+  if (spaceAvailable > 0) {
+    return leftStr + ' '.repeat(spaceAvailable) + rightStr
+  }
+
+  const maxLeftLen = Math.max(1, width - rightStr.length - 1)
+  const truncatedLeft = leftStr.substring(0, maxLeftLen)
+  return truncatedLeft + ' ' + rightStr
+}
+
 export const receiptService = {
   // 1. Cetak Struk via Bluetooth Thermal Printer
   async printThermal(transaction) {
     if (!navigator.bluetooth) {
-      throw new Error('Browser ini belum mendukung Web Bluetooth. Gunakan Chrome di Android/Desktop.')
+      throw new Error('Browser ini belum mendukung Web Bluetooth. Gunakan Chrome di Android.')
     }
 
     const settings = await settingsRepo.getSettings()
     const is58mm = settings.printerPaperSize !== '80mm'
     
-    // Penanganan aman untuk impor instansiasi EscPosEncoder
     const EncoderClass = typeof EscPosEncoder === 'function' ? EscPosEncoder : (EscPosEncoder.default || EscPosEncoder)
     const encoder = new EncoderClass()
 
-    // Format Perataan Kolom Text Thermal
     const width = is58mm ? 32 : 48
     const line = '-'.repeat(width)
 
@@ -26,111 +99,80 @@ export const receiptService = {
       .bold(true)
       .line(settings.storeName || 'SINAR PAGI')
       .bold(false)
-      .line(settings.storeAddress || '')
-      .line(settings.storePhone ? `Telp: ${settings.storePhone}` : '')
+
+    if (settings.storeAddress) {
+      encoded = encoded.line(settings.storeAddress)
+    }
+    if (settings.storePhone) {
+      encoded = encoded.line(`Telp: ${settings.storePhone}`)
+    }
+
+    encoded = encoded
       .line(line)
       .align('left')
-      .line(`No. Nota : #${transaction.id.slice(0, 8)}`)
-      .line(`Tanggal  : ${dayjs(transaction.date).format('DD/MM/YY HH:mm')}`)
-      .line(`Kasir    : ${transaction.operatorName || 'Admin'}`)
-      .line(`Pelanggan: ${transaction.memberName || 'Umum'}`)
+      .line(formatTwoColumn('No. Nota', `#${transaction.id.slice(0, 8)}`, width))
+      .line(formatTwoColumn('Tanggal', dayjs(transaction.date).format('DD/MM/YY HH:mm'), width))
+      .line(formatTwoColumn('Kasir', transaction.operatorName || 'Admin', width))
+      .line(formatTwoColumn('Pelanggan', transaction.memberName || 'Umum', width))
       .line(line)
 
-    // Daftar Item
+    // Rincian Items
     transaction.items.forEach(item => {
       const name = item.name || item.productName || 'Barang'
       const qtyPrice = `${item.qty} x ${item.price.toLocaleString('id-ID')}`
       const subtotal = (item.subtotal || item.price * item.qty).toLocaleString('id-ID')
       
       encoded = encoded.line(name)
-      
-      // Spacing kanan kiri
-      const spaceCount = Math.max(1, width - qtyPrice.length - subtotal.length)
-      encoded = encoded.line(`${qtyPrice}${' '.repeat(spaceCount)}${subtotal}`)
+      encoded = encoded.line(formatTwoColumn(`  ${qtyPrice}`, subtotal, width))
     })
 
-    encoded = encoded.line(line)
-      .align('right')
+    // Block Total & Pembayaran
+    encoded = encoded
+      .line(line)
       .bold(true)
-      .line(`TOTAL     : Rp ${transaction.total.toLocaleString('id-ID')}`)
+      .line(formatTwoColumn('TOTAL', `Rp ${transaction.total.toLocaleString('id-ID')}`, width))
       .bold(false)
 
     if (transaction.paymentMethod === 'CASH') {
       const bayar = transaction.amountPaid || transaction.paidAmount || transaction.total
       const kembali = Math.max(0, bayar - transaction.total)
       encoded = encoded
-        .line(`BAYAR (TUNAI): Rp ${bayar.toLocaleString('id-ID')}`)
-        .line(`KEMBALI      : Rp ${kembali.toLocaleString('id-ID')}`)
+        .line(formatTwoColumn('TUNAI', `Rp ${bayar.toLocaleString('id-ID')}`, width))
+        .line(formatTwoColumn('KEMBALI', `Rp ${kembali.toLocaleString('id-ID')}`, width))
     } else {
-      encoded = encoded.line(`METODE BAYAR : ${transaction.paymentMethod}`)
+      encoded = encoded.line(formatTwoColumn('METODE', transaction.paymentMethod, width))
     }
 
+    // Footer Nota
     encoded = encoded
       .line(line)
       .align('center')
-      .line(settings.receiptFooter || 'Terima kasih telah berbelanja!')
-      .line('\n\n')
+
+    const footerText = settings.receiptFooter || 'Terima kasih telah berbelanja!'
+    footerText.split('\n').forEach(fLine => {
+      if (fLine.trim()) encoded = encoded.line(fLine.trim())
+    })
+
+    encoded = encoded
+      .line('\n\n\n')
       .cut()
       .encode()
 
-    // Koneksi Web Bluetooth GATT
-    const device = await navigator.bluetooth.requestDevice({
-      acceptAllDevices: true,
-      optionalServices: [
-        '000018f0-0000-1000-8000-00805f9b34fb', // Standard Printer Service
-        '0000ff00-0000-1000-8000-00805f9b34fb',
-        '0000af00-0000-1000-8000-00805f9b34fb',
-        '49535343-fe7d-41aa-a322-3d7a4a2d2bd0', // Custom SPP
-        'e7810a71-73ae-4d9d-8c54-be98300d1107'
-      ]
-    })
+    const characteristic = await getPrinterCharacteristic()
 
-    if (!device || !device.gatt) {
-      throw new Error('Perangkat Bluetooth tidak mendukung profil GATT.')
-    }
-
-    const server = await device.gatt.connect()
-    if (!server) {
-      throw new Error('Gagal terhubung ke server GATT printer.')
-    }
-
-    const services = await server.getPrimaryServices().catch(() => [])
-    let targetCharacteristic = null
-
-    for (const service of services) {
-      const characteristics = await service.getCharacteristics().catch(() => [])
-      for (const char of characteristics) {
-        if (char?.properties?.write || char?.properties?.writeWithoutResponse) {
-          targetCharacteristic = char
-          break
-        }
-      }
-      if (targetCharacteristic) break
-    }
-
-    if (!targetCharacteristic) {
-      throw new Error('Karakteristik printer thermal tidak ditemukan pada perangkat Bluetooth ini.')
-    }
-
-    // Kirim data bergulir per-chunk 512 byte
     const chunkSize = 512
     for (let i = 0; i < encoded.length; i += chunkSize) {
       const chunk = encoded.slice(i, i + chunkSize)
-      await targetCharacteristic.writeValue(chunk)
-    }
-
-    if (device.gatt.connected) {
-      await device.gatt.disconnect()
+      await characteristic.writeValue(chunk)
     }
   },
 
-  // 2. Unduh Nota dalam Bentuk File PDF
+  // 2. Unduh Nota PDF
   async downloadPdf(transaction) {
     const settings = await settingsRepo.getSettings()
     const is58mm = settings.printerPaperSize !== '80mm'
     
     const paperWidth = is58mm ? 58 : 80
-    // Estimasi tinggi dinamis sesuai jumlah item
     const estimatedHeight = 90 + (transaction.items.length * 12)
 
     const doc = new jsPDF({
