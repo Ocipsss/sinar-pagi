@@ -1,11 +1,12 @@
 // src/composables/useKasir.js
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated } from 'vue'
 import { kasirService } from '../services/kasirService.js'
 import { packageRepository } from '../db/repositories/packageRepository.js'
 import { serviceRepository } from '../db/repositories/serviceRepository.js'
 import { formatRibuan } from '../utils/formatters/currency.js'
 import { useKasirStore } from '../stores/kasirStore.js'
 import { useOperatorStore } from '../stores/operatorStore.js'
+import { toast } from 'vue-sonner'
 
 export function useKasir() {
   const store = useKasirStore()
@@ -51,9 +52,7 @@ export function useKasir() {
         const idxB = nameB.indexOf(qq)
 
         if (idxA !== -1 && idxB !== -1) {
-          if (idxA !== idxB) {
-            return idxA - idxB
-          }
+          if (idxA !== idxB) return idxA - idxB
           return nameA.localeCompare(nameB)
         }
 
@@ -132,6 +131,96 @@ export function useKasir() {
     return res
   }
 
+  // --- LOGIKA SCANNER BARCODE FISIK (HID MODE) ---
+  let barcodeBuffer = ''
+  let lastKeyTime = Date.now()
+
+  const processBarcodeScan = (codeToScan) => {
+    if (!codeToScan) return false
+    const cleanCode = String(codeToScan).trim().toLowerCase()
+
+    const matchedProduct = products.value.find(
+      p => String(p.code || '').trim().toLowerCase() === cleanCode
+    ) || products.value.find(
+      p => String(p.name || '').trim().toLowerCase() === cleanCode
+    )
+
+    if (matchedProduct) {
+      handleSelectProduct(matchedProduct)
+      toast.success(`Barang ditambahkan: ${matchedProduct.name}`)
+      q.value = ''
+      showSearch.value = false
+      return true
+    } else {
+      toast.error(`Barang tidak ditemukan (${codeToScan})`)
+      return false
+    }
+  }
+
+  const handleGlobalKeydown = (e) => {
+    if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Tab'].includes(e.key)) return
+
+    const activeEl = document.activeElement
+    const isTypingInInput = activeEl && (
+      activeEl.tagName === 'INPUT' || 
+      activeEl.tagName === 'TEXTAREA' || 
+      activeEl.tagName === 'SELECT'
+    )
+
+    const isKasirSearchInput = activeEl && activeEl.id === 'kasir-search-input'
+    if (isTypingInInput && !isKasirSearchInput) return
+
+    const currentTime = Date.now()
+
+    if (currentTime - lastKeyTime > 50) {
+      barcodeBuffer = ''
+    }
+
+    if (e.key === 'Enter') {
+      if (barcodeBuffer.trim().length > 0) {
+        e.preventDefault()
+        const scannedCode = barcodeBuffer.trim()
+        barcodeBuffer = ''
+        processBarcodeScan(scannedCode)
+      } else if (isKasirSearchInput && q.value.trim().length > 0) {
+        // Mendukung input manual + Enter dari kasir
+        e.preventDefault()
+        processBarcodeScan(q.value.trim())
+      }
+    } else if (e.key.length === 1) {
+      if (!isTypingInInput || (currentTime - lastKeyTime < 30)) {
+        barcodeBuffer += e.key
+      }
+    }
+
+    lastKeyTime = currentTime
+  }
+
+  const attachListener = () => {
+    window.removeEventListener('keydown', handleGlobalKeydown)
+    window.addEventListener('keydown', handleGlobalKeydown)
+  }
+
+  const detachListener = () => {
+    window.removeEventListener('keydown', handleGlobalKeydown)
+  }
+
+  onMounted(() => {
+    attachListener()
+  })
+
+  onUnmounted(() => {
+    detachListener()
+  })
+
+  onActivated(() => {
+    attachListener()
+  })
+
+  onDeactivated(() => {
+    detachListener()
+  })
+
   return {
     store,
     operatorStore,
@@ -151,6 +240,7 @@ export function useKasir() {
     handleSelectProduct, 
     confirmAddToCart, 
     getProductPackages, 
-    checkout
+    checkout,
+    processBarcodeScan
   }
 }

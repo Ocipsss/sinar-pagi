@@ -2333,18 +2333,94 @@ import EscPosEncoder from 'esc-pos-encoder'
 import { settingsRepo } from '../db/repositories/settingsRepository.js'
 import dayjs from 'dayjs'
 
+// Cache koneksi printer agar tidak perlu reconnect tiap cetak
+let cachedDevice = null
+let cachedCharacteristic = null
+
+async function getPrinterCharacteristic() {
+  if (cachedDevice && cachedDevice.gatt?.connected && cachedCharacteristic) {
+    return cachedCharacteristic
+  }
+
+  let device = cachedDevice
+
+  if (!device && navigator.bluetooth?.getDevices) {
+    const devices = await navigator.bluetooth.getDevices()
+    if (devices.length > 0) {
+      device = devices[0]
+    }
+  }
+
+  if (!device) {
+    device = await navigator.bluetooth.requestDevice({
+      acceptAllDevices: true,
+      optionalServices: [
+        '000018f0-0000-1000-8000-00805f9b34fb',
+        '0000ff00-0000-1000-8000-00805f9b34fb',
+        '0000af00-0000-1000-8000-00805f9b34fb',
+        '49535343-fe7d-41aa-a322-3d7a4a2d2bd0',
+        'e7810a71-73ae-4d9d-8c54-be98300d1107'
+      ]
+    })
+  }
+
+  cachedDevice = device
+
+  device.addEventListener('gattserverdisconnected', () => {
+    cachedCharacteristic = null
+  })
+
+  const server = device.gatt.connected ? device.gatt : await device.gatt.connect()
+  const services = await server.getPrimaryServices().catch(() => [])
+  let targetChar = null
+
+  for (const service of services) {
+    const characteristics = await service.getCharacteristics().catch(() => [])
+    for (const char of characteristics) {
+      if (char?.properties?.write || char?.properties?.writeWithoutResponse) {
+        targetChar = char
+        break
+      }
+    }
+    if (targetChar) break
+  }
+
+  if (!targetChar) {
+    throw new Error('Karakteristik printer thermal tidak ditemukan.')
+  }
+
+  cachedCharacteristic = targetChar
+  return targetChar
+}
+
+// Helper untuk format 2 kolom rata kiri & kanan presisi
+function formatTwoColumn(left, right, width) {
+  const leftStr = String(left || '')
+  const rightStr = String(right || '')
+  const spaceAvailable = width - leftStr.length - rightStr.length
+
+  if (spaceAvailable > 0) {
+    return leftStr + ' '.repeat(spaceAvailable) + rightStr
+  }
+
+  const maxLeftLen = Math.max(1, width - rightStr.length - 1)
+  const truncatedLeft = leftStr.substring(0, maxLeftLen)
+  return truncatedLeft + ' ' + rightStr
+}
+
 export const receiptService = {
   // 1. Cetak Struk via Bluetooth Thermal Printer
   async printThermal(transaction) {
     if (!navigator.bluetooth) {
-      throw new Error('Browser ini belum mendukung Web Bluetooth. Gunakan Chrome di Android/Desktop.')
+      throw new Error('Browser ini belum mendukung Web Bluetooth. Gunakan Chrome di Android.')
     }
 
     const settings = await settingsRepo.getSettings()
     const is58mm = settings.printerPaperSize !== '80mm'
-    const encoder = new EscPosEncoder()
+    
+    const EncoderClass = typeof EscPosEncoder === 'function' ? EscPosEncoder : (EscPosEncoder.default || EscPosEncoder)
+    const encoder = new EncoderClass()
 
-    // Format Perataan Kolom Text Thermal
     const width = is58mm ? 32 : 48
     const line = '-'.repeat(width)
 
@@ -2353,99 +2429,80 @@ export const receiptService = {
       .bold(true)
       .line(settings.storeName || 'SINAR PAGI')
       .bold(false)
-      .line(settings.storeAddress || '')
-      .line(settings.storePhone ? `Telp: ${settings.storePhone}` : '')
+
+    if (settings.storeAddress) {
+      encoded = encoded.line(settings.storeAddress)
+    }
+    if (settings.storePhone) {
+      encoded = encoded.line(`Telp: ${settings.storePhone}`)
+    }
+
+    encoded = encoded
       .line(line)
       .align('left')
-      .line(`No. Nota : #${transaction.id.slice(0, 8)}`)
-      .line(`Tanggal  : ${dayjs(transaction.date).format('DD/MM/YY HH:mm')}`)
-      .line(`Kasir    : ${transaction.operatorName || 'Admin'}`)
-      .line(`Pelanggan: ${transaction.memberName || 'Umum'}`)
+      .line(formatTwoColumn('No. Nota', `#${transaction.id.slice(0, 8)}`, width))
+      .line(formatTwoColumn('Tanggal', dayjs(transaction.date).format('DD/MM/YY HH:mm'), width))
+      .line(formatTwoColumn('Kasir', transaction.operatorName || 'Admin', width))
+      .line(formatTwoColumn('Pelanggan', transaction.memberName || 'Umum', width))
       .line(line)
 
-    // Daftar Item
+    // Rincian Items
     transaction.items.forEach(item => {
       const name = item.name || item.productName || 'Barang'
       const qtyPrice = `${item.qty} x ${item.price.toLocaleString('id-ID')}`
       const subtotal = (item.subtotal || item.price * item.qty).toLocaleString('id-ID')
       
       encoded = encoded.line(name)
-      
-      // Spacing kanan kiri
-      const spaceCount = Math.max(1, width - qtyPrice.length - subtotal.length)
-      encoded = encoded.line(`${qtyPrice}${' '.repeat(spaceCount)}${subtotal}`)
+      encoded = encoded.line(formatTwoColumn(`  ${qtyPrice}`, subtotal, width))
     })
 
-    encoded = encoded.line(line)
-      .align('right')
+    // Block Total & Pembayaran
+    encoded = encoded
+      .line(line)
       .bold(true)
-      .line(`TOTAL     : Rp ${transaction.total.toLocaleString('id-ID')}`)
+      .line(formatTwoColumn('TOTAL', `Rp ${transaction.total.toLocaleString('id-ID')}`, width))
       .bold(false)
 
     if (transaction.paymentMethod === 'CASH') {
       const bayar = transaction.amountPaid || transaction.paidAmount || transaction.total
       const kembali = Math.max(0, bayar - transaction.total)
       encoded = encoded
-        .line(`BAYAR (TUNAI): Rp ${bayar.toLocaleString('id-ID')}`)
-        .line(`KEMBALI      : Rp ${kembali.toLocaleString('id-ID')}`)
+        .line(formatTwoColumn('TUNAI', `Rp ${bayar.toLocaleString('id-ID')}`, width))
+        .line(formatTwoColumn('KEMBALI', `Rp ${kembali.toLocaleString('id-ID')}`, width))
     } else {
-      encoded = encoded.line(`METODE BAYAR : ${transaction.paymentMethod}`)
+      encoded = encoded.line(formatTwoColumn('METODE', transaction.paymentMethod, width))
     }
 
+    // Footer Nota
     encoded = encoded
       .line(line)
       .align('center')
-      .line(settings.receiptFooter || 'Terima kasih telah berbelanja!')
-      .line('\n\n')
+
+    const footerText = settings.receiptFooter || 'Terima kasih telah berbelanja!'
+    footerText.split('\n').forEach(fLine => {
+      if (fLine.trim()) encoded = encoded.line(fLine.trim())
+    })
+
+    encoded = encoded
+      .line('\n\n\n')
       .cut()
       .encode()
 
-    // Koneksi Web Bluetooth GATT
-    const device = await navigator.bluetooth.requestDevice({
-      acceptAllDevices: true,
-      optionalServices: [
-        '000018f0-0000-1000-8000-00805f9b34fb', // Standard Printer Service
-        '0000ff00-0000-1000-8000-00805f9b34fb',
-        '49535343-fe7d-41aa-a322-3d7a4a2d2bd0'  // Custom SPP
-      ]
-    })
+    const characteristic = await getPrinterCharacteristic()
 
-    const server = await device.gatt.connect()
-    const services = await server.getPrimaryServices()
-    
-    let targetCharacteristic = null
-    for (const service of services) {
-      const characteristics = await service.getCharacteristics()
-      for (const char of characteristics) {
-        if (char.properties.write || char.properties.writeWithoutResponse) {
-          targetCharacteristic = char
-          break
-        }
-      }
-      if (targetCharacteristic) break
-    }
-
-    if (!targetCharacteristic) {
-      throw new Error('Karakteristik printer thermal tidak ditemukan pada perangkat Bluetooth ini.')
-    }
-
-    // Kirim data bergulir per-chunk 512 byte
     const chunkSize = 512
     for (let i = 0; i < encoded.length; i += chunkSize) {
       const chunk = encoded.slice(i, i + chunkSize)
-      await targetCharacteristic.writeValue(chunk)
+      await characteristic.writeValue(chunk)
     }
-
-    await device.gatt.disconnect()
   },
 
-  // 2. Unduh Nota dalam Bentuk File PDF
+  // 2. Unduh Nota PDF
   async downloadPdf(transaction) {
     const settings = await settingsRepo.getSettings()
     const is58mm = settings.printerPaperSize !== '80mm'
     
     const paperWidth = is58mm ? 58 : 80
-    // Estimasi tinggi dinamis sesuai jumlah item
     const estimatedHeight = 90 + (transaction.items.length * 12)
 
     const doc = new jsPDF({
@@ -3044,6 +3101,7 @@ onActivated(() => {
 </script>
 
 ===== src/views/Kasir.vue =====
+<!-- src/views/Kasir.vue -->
 <template>
 <div class="flex flex-col md:flex-row flex-1 h-full overflow-hidden p-0 md:p-4 gap-4">
   <!-- KOLOM KIRI (TABLET): Search & Keranjang Belanja -->
@@ -3054,9 +3112,10 @@ onActivated(() => {
         <div class="relative flex-1">
           <Search class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400"/>
           <input 
+            id="kasir-search-input"
             v-model="q" 
             @focus="showSearch=true" 
-            placeholder="Ketik nama / barcode..." 
+            placeholder="Ketik nama / scan barcode..." 
             class="w-full pl-11 pr-11 py-4 bg-white border border-zinc-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"
           />
           <button v-if="q" @click="q=''" class="absolute right-3 top-1/2 -translate-y-1/2 p-2 bg-zinc-100 rounded-full">
@@ -3127,7 +3186,7 @@ onActivated(() => {
         <div v-if="store.cart.length === 0" class="flex-1 flex flex-col items-center justify-center py-12">
           <ShoppingBag class="w-8 h-8 text-zinc-300 mb-2"/>
           <div class="text-sm font-bold text-zinc-400">Keranjang Kosong</div>
-          <div class="text-[11px] text-zinc-400">Ketik nama barang di atas</div>
+          <div class="text-[11px] text-zinc-400">Ketik nama barang / scan barcode</div>
         </div>
 
         <div v-else class="space-y-1 overflow-auto flex-1 pr-1">
@@ -3371,7 +3430,7 @@ const {
   store, q, memberQ, filteredProducts, filteredMembers, 
   total, kembalian, kurangBayar, bayarDisplay, showSearch, 
   selectedProductForOption, filteredServicesByCategory,
-  load, handleSelectProduct, confirmAddToCart, getProductPackages, checkout 
+  load, handleSelectProduct, confirmAddToCart, getProductPackages, checkout
 } = useKasir()
 
 const showMemberPicker = ref(false)
@@ -3404,7 +3463,6 @@ const onCheckout = async () => {
 
     const res = await checkout()
     
-    // Siapkan objek data transaksi untuk pratinjau nota
     completedTransaction.value = {
       id: res.id,
       date: new Date().toISOString(),
@@ -5375,13 +5433,23 @@ onMounted(() => {
           </template>
         </div>
 
+        <!-- Action Buttons -->
         <div class="border-t border-zinc-100 pt-3 space-y-2">
-          <div class="flex justify-between items-center text-sm">
+          <div class="flex justify-between items-center text-sm mb-2">
             <span class="font-bold text-zinc-600">Total Transaksi</span>
             <span :class="['font-black text-base', selectedTransaction.status === 'void' || selectedTransaction.status === 'CANCELLED' ? 'line-through text-zinc-400' : 'text-zinc-900']">
               Rp {{ formatRibuan(Math.abs(selectedTransaction.total)) }}
             </span>
           </div>
+
+          <!-- Tombol Cetak Struk (Reprint) -->
+          <button 
+            @click="showReceiptModal = true"
+            class="w-full py-3 bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 shadow-md transition active:scale-95"
+          >
+            <Printer class="w-4 h-4" />
+            <span>Cetak Struk / Reprint Nota</span>
+          </button>
 
           <div class="flex gap-2">
             <button 
@@ -5394,7 +5462,7 @@ onMounted(() => {
             </button>
             <button 
               @click="selectedTransaction = null" 
-              class="flex-1 py-3 bg-zinc-900 text-white rounded-xl font-bold text-xs"
+              class="flex-1 py-3 bg-zinc-100 text-zinc-700 rounded-xl font-bold text-xs hover:bg-zinc-200 transition"
             >
               Tutup
             </button>
@@ -5402,14 +5470,22 @@ onMounted(() => {
         </div>
       </div>
     </div>
+
+    <!-- Modal Struk / Reprint Nota -->
+    <ReceiptModal 
+      v-if="showReceiptModal && selectedTransaction" 
+      :transaction="selectedTransaction" 
+      @close="showReceiptModal = false" 
+    />
   </div>
 </template>
 
 <script setup>
-import { onMounted, onActivated } from 'vue'
-import { Search, Receipt, Calendar, X } from 'lucide-vue-next'
+import { ref, onMounted, onActivated } from 'vue'
+import { Search, Receipt, Calendar, X, Printer } from 'lucide-vue-next'
 import { formatRibuan } from '../utils/formatters/currency.js'
 import { useSalesHistory } from '../composables/useSalesHistory.js'
+import ReceiptModal from '../components/ReceiptModal.vue'
 
 const {
   searchQuery,
@@ -5424,6 +5500,8 @@ const {
   handleVoid,
   formatDate
 } = useSalesHistory()
+
+const showReceiptModal = ref(false)
 
 onMounted(() => {
   loadHistory()
@@ -5998,7 +6076,7 @@ onMounted(loadOperators)
 </script>
 
 ===== src/composables/useProductScanner.js =====
-import { ref } from 'vue'
+import { ref, onUnmounted } from 'vue'
 import { Html5Qrcode } from 'html5-qrcode'
 
 export function useProductScanner() {
@@ -6006,15 +6084,52 @@ export function useProductScanner() {
   let qr = null
 
   const start = async (onDetected) => {
-    isScanning.value = true
-    qr = new Html5Qrcode("reader")
-    await qr.start({ facingMode: "environment" }, { fps: 10, qrbox: 250 },
-      (decoded) => { onDetected(decoded); stop() }, null)
+    if (isScanning.value) {
+      await stop()
+      return
+    }
+
+    try {
+      isScanning.value = true
+      qr = new Html5Qrcode("reader")
+      await qr.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: 250 },
+        (decoded) => {
+          onDetected(decoded)
+          stop()
+        },
+        null
+      )
+    } catch (err) {
+      console.error("Gagal membuka kamera:", err)
+      isScanning.value = false
+      throw new Error("Kamera tidak dapat diakses atau tidak ditemukan.")
+    }
   }
-  const stop = async () => { try{ await qr?.stop() }catch{} isScanning.value=false }
+
+  const stop = async () => {
+    if (qr && isScanning.value) {
+      try {
+        await qr.stop()
+        qr.clear()
+      } catch (e) {
+        console.warn("Gagal menghentikan scanner:", e)
+      } finally {
+        isScanning.value = false
+        qr = null
+      }
+    }
+  }
+
+  // Bersihkan kamera otomatis saat komponen ditutup
+  onUnmounted(() => {
+    stop()
+  })
 
   return { isScanning, start, stop }
 }
+
 ===== src/composables/useProductForm.js =====
 // src/composables/useProductForm.js
 import { ref } from 'vue'
@@ -6289,13 +6404,14 @@ export function useHeaderAction() {
 */
 ===== src/composables/useKasir.js =====
 // src/composables/useKasir.js
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated } from 'vue'
 import { kasirService } from '../services/kasirService.js'
 import { packageRepository } from '../db/repositories/packageRepository.js'
 import { serviceRepository } from '../db/repositories/serviceRepository.js'
 import { formatRibuan } from '../utils/formatters/currency.js'
 import { useKasirStore } from '../stores/kasirStore.js'
 import { useOperatorStore } from '../stores/operatorStore.js'
+import { toast } from 'vue-sonner'
 
 export function useKasir() {
   const store = useKasirStore()
@@ -6341,9 +6457,7 @@ export function useKasir() {
         const idxB = nameB.indexOf(qq)
 
         if (idxA !== -1 && idxB !== -1) {
-          if (idxA !== idxB) {
-            return idxA - idxB
-          }
+          if (idxA !== idxB) return idxA - idxB
           return nameA.localeCompare(nameB)
         }
 
@@ -6422,6 +6536,96 @@ export function useKasir() {
     return res
   }
 
+  // --- LOGIKA SCANNER BARCODE FISIK (HID MODE) ---
+  let barcodeBuffer = ''
+  let lastKeyTime = Date.now()
+
+  const processBarcodeScan = (codeToScan) => {
+    if (!codeToScan) return false
+    const cleanCode = String(codeToScan).trim().toLowerCase()
+
+    const matchedProduct = products.value.find(
+      p => String(p.code || '').trim().toLowerCase() === cleanCode
+    ) || products.value.find(
+      p => String(p.name || '').trim().toLowerCase() === cleanCode
+    )
+
+    if (matchedProduct) {
+      handleSelectProduct(matchedProduct)
+      toast.success(`Barang ditambahkan: ${matchedProduct.name}`)
+      q.value = ''
+      showSearch.value = false
+      return true
+    } else {
+      toast.error(`Barang tidak ditemukan (${codeToScan})`)
+      return false
+    }
+  }
+
+  const handleGlobalKeydown = (e) => {
+    if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Tab'].includes(e.key)) return
+
+    const activeEl = document.activeElement
+    const isTypingInInput = activeEl && (
+      activeEl.tagName === 'INPUT' || 
+      activeEl.tagName === 'TEXTAREA' || 
+      activeEl.tagName === 'SELECT'
+    )
+
+    const isKasirSearchInput = activeEl && activeEl.id === 'kasir-search-input'
+    if (isTypingInInput && !isKasirSearchInput) return
+
+    const currentTime = Date.now()
+
+    if (currentTime - lastKeyTime > 50) {
+      barcodeBuffer = ''
+    }
+
+    if (e.key === 'Enter') {
+      if (barcodeBuffer.trim().length > 0) {
+        e.preventDefault()
+        const scannedCode = barcodeBuffer.trim()
+        barcodeBuffer = ''
+        processBarcodeScan(scannedCode)
+      } else if (isKasirSearchInput && q.value.trim().length > 0) {
+        // Mendukung input manual + Enter dari kasir
+        e.preventDefault()
+        processBarcodeScan(q.value.trim())
+      }
+    } else if (e.key.length === 1) {
+      if (!isTypingInInput || (currentTime - lastKeyTime < 30)) {
+        barcodeBuffer += e.key
+      }
+    }
+
+    lastKeyTime = currentTime
+  }
+
+  const attachListener = () => {
+    window.removeEventListener('keydown', handleGlobalKeydown)
+    window.addEventListener('keydown', handleGlobalKeydown)
+  }
+
+  const detachListener = () => {
+    window.removeEventListener('keydown', handleGlobalKeydown)
+  }
+
+  onMounted(() => {
+    attachListener()
+  })
+
+  onUnmounted(() => {
+    detachListener()
+  })
+
+  onActivated(() => {
+    attachListener()
+  })
+
+  onDeactivated(() => {
+    detachListener()
+  })
+
   return {
     store,
     operatorStore,
@@ -6441,7 +6645,8 @@ export function useKasir() {
     handleSelectProduct, 
     confirmAddToCart, 
     getProductPackages, 
-    checkout
+    checkout,
+    processBarcodeScan
   }
 }
 

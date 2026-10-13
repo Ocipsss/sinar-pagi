@@ -1,3 +1,4 @@
+<!-- src/views/Kasir.vue -->
 <template>
 <div class="flex flex-col md:flex-row flex-1 h-full overflow-hidden p-0 md:p-4 gap-4">
   <!-- KOLOM KIRI (TABLET): Search & Keranjang Belanja -->
@@ -8,9 +9,10 @@
         <div class="relative flex-1">
           <Search class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400"/>
           <input 
+            id="kasir-search-input"
             v-model="q" 
             @focus="showSearch=true" 
-            placeholder="Ketik nama / barcode..." 
+            placeholder="Ketik nama / scan barcode..." 
             class="w-full pl-11 pr-11 py-4 bg-white border border-zinc-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"
           />
           <button v-if="q" @click="q=''" class="absolute right-3 top-1/2 -translate-y-1/2 p-2 bg-zinc-100 rounded-full">
@@ -81,7 +83,7 @@
         <div v-if="store.cart.length === 0" class="flex-1 flex flex-col items-center justify-center py-12">
           <ShoppingBag class="w-8 h-8 text-zinc-300 mb-2"/>
           <div class="text-sm font-bold text-zinc-400">Keranjang Kosong</div>
-          <div class="text-[11px] text-zinc-400">Ketik nama barang di atas</div>
+          <div class="text-[11px] text-zinc-400">Ketik nama barang / scan barcode</div>
         </div>
 
         <div v-else class="space-y-1 overflow-auto flex-1 pr-1">
@@ -325,7 +327,7 @@ const {
   store, q, memberQ, filteredProducts, filteredMembers, 
   total, kembalian, kurangBayar, bayarDisplay, showSearch, 
   selectedProductForOption, filteredServicesByCategory,
-  load, handleSelectProduct, confirmAddToCart, getProductPackages, checkout 
+  load, handleSelectProduct, confirmAddToCart, getProductPackages, checkout
 } = useKasir()
 
 const showMemberPicker = ref(false)
@@ -358,7 +360,6 @@ const onCheckout = async () => {
 
     const res = await checkout()
     
-    // Siapkan objek data transaksi untuk pratinjau nota
     completedTransaction.value = {
       id: res.id,
       date: new Date().toISOString(),
