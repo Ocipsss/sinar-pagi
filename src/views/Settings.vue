@@ -20,7 +20,7 @@
           v-model="form.storeName" 
           required 
           placeholder="Contoh: SINAR PAGI" 
-          class="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900"
+          class="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 uppercase"
         />
       </div>
 
@@ -116,9 +116,19 @@
         <input type="file" accept=".json" @change="importBackup" class="hidden" />
       </label>
     </div>
+
+    <!-- Tombol Migrasi Kapital -->
+    <button 
+      @click="convertDataToUppercase" 
+      :disabled="loading"
+      class="w-full py-3 bg-amber-500 hover:bg-amber-600 disabled:bg-zinc-300 text-zinc-950 font-bold text-xs rounded-xl shadow-md transition active:scale-95 flex items-center justify-center gap-2"
+    >
+      <Type class="w-4 h-4" />
+      <span>Ubah Semua Data Master ke KAPITAL</span>
+    </button>
   </div>
 
-  <!-- Section 4: Reset Data Transaksi (Pengembangan) -->
+  <!-- Section 4: Reset Data Transaksi -->
   <div class="bg-red-50 p-5 rounded-3xl border border-red-200/80 shadow-sm space-y-3">
     <div class="flex items-center gap-2 border-b border-red-200/60 pb-3">
       <Trash2 class="w-5 h-5 text-red-600" />
@@ -143,10 +153,19 @@
 
 <script setup>
 import { onMounted } from 'vue'
-import { Store, Printer, Database, Download, Upload, Trash2 } from 'lucide-vue-next'
+import { Store, Printer, Database, Download, Upload, Trash2, Type } from 'lucide-vue-next'
 import { useSettings } from '../composables/useSettings.js'
 
-const { form, loading, loadSettings, saveSettings, exportBackup, importBackup, resetTransactionsData } = useSettings()
+const { 
+  form, 
+  loading, 
+  loadSettings, 
+  saveSettings, 
+  exportBackup, 
+  importBackup, 
+  resetTransactionsData, 
+  convertDataToUppercase 
+} = useSettings()
 
 onMounted(() => {
   loadSettings()

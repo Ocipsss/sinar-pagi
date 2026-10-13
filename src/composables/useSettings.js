@@ -91,6 +91,23 @@ export function useSettings() {
     }
   }
 
+  const convertDataToUppercase = async () => {
+    if (!confirm('Ubah seluruh data Barang, Kategori, Satuan, dan Paket Rokok lama menjadi KAPITAL secara permanen?')) {
+      return
+    }
+
+    loading.value = true
+    try {
+      await backupService.convertAllToUppercase()
+      toast.success('Semua data master berhasil diubah menjadi KAPITAL!')
+      setTimeout(() => window.location.reload(), 800)
+    } catch (err) {
+      toast.error(`Gagal mengubah data ke kapital: ${err.message}`)
+    } finally {
+      loading.value = false
+    }
+  }
+
   return {
     form,
     loading,
@@ -98,6 +115,7 @@ export function useSettings() {
     saveSettings,
     exportBackup,
     importBackup,
-    resetTransactionsData
+    resetTransactionsData,
+    convertDataToUppercase
   }
 }

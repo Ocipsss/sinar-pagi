@@ -47,10 +47,12 @@ export function useCategories() {
   const saveCategory = async () => {
     if (!formName.value.trim()) return
 
+    const formattedName = formName.value.trim().toUpperCase()
+
     if (editingId.value) {
-      await categoryRepo.update(editingId.value, formName.value.trim())
+      await categoryRepo.update(editingId.value, formattedName)
     } else {
-      await categoryRepo.create(formName.value.trim())
+      await categoryRepo.create(formattedName)
     }
 
     showModal.value = false
@@ -58,24 +60,24 @@ export function useCategories() {
     editingId.value = null
 
     await loadCategories()
-    // syncRealtime.pushLocalToCloud() -> Dihapus, ditangani Dexie Hook
   }
 
   const deleteCategory = async (cat) => {
     if (confirm(`Hapus kategori "${cat.name}"?`)) {
       await categoryRepo.delete(cat.id)
       await loadCategories()
-      // syncRealtime.pushLocalToCloud() -> Dihapus, ditangani Dexie Hook
     }
   }
 
   const saveUnit = async () => {
     if (!formName.value.trim()) return
 
+    const formattedName = formName.value.trim().toUpperCase()
+
     if (editingId.value) {
-      await unitRepo.update(editingId.value, formName.value.trim())
+      await unitRepo.update(editingId.value, formattedName)
     } else {
-      await unitRepo.create(formName.value.trim())
+      await unitRepo.create(formattedName)
     }
 
     showModal.value = false
@@ -83,14 +85,12 @@ export function useCategories() {
     editingId.value = null
 
     await loadUnits()
-    // syncRealtime.pushLocalToCloud() -> Dihapus, ditangani Dexie Hook
   }
 
   const deleteUnit = async (u) => {
     if (confirm(`Hapus satuan "${u.name}"?`)) {
       await unitRepo.delete(u.id)
       await loadUnits()
-      // syncRealtime.pushLocalToCloud() -> Dihapus, ditangani Dexie Hook
     }
   }
 

@@ -10,6 +10,7 @@
           <Search class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400"/>
           <input 
             id="kasir-search-input"
+            ref="searchInputRef"
             v-model="q" 
             @focus="showSearch=true" 
             placeholder="Ketik nama / scan barcode..." 
@@ -180,6 +181,7 @@
     </button>
   </div>
 </div>
+
 <!-- Modal Pilihan Varian & Penyajian -->
 <div v-if="selectedProductForOption" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
   <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl animate-in slide-in-from-bottom duration-200 max-h-[80vh] flex flex-col">
@@ -299,7 +301,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, onActivated, nextTick, watch } from 'vue'
 import { Search, X, ShoppingBag, Clock, PauseCircle, Trash2 } from 'lucide-vue-next'
 import { useKasir } from '../composables/useKasir.js'
 import { formatRibuan } from '../utils/formatters/currency.js'
@@ -313,9 +315,16 @@ const {
   load, handleSelectProduct, confirmAddToCart, getProductPackages, checkout
 } = useKasir()
 
+const searchInputRef = ref(null)
 const showMemberPicker = ref(false)
 const showPendingModal = ref(false)
 const completedTransaction = ref(null)
+
+const focusSearchInput = () => {
+  nextTick(() => {
+    searchInputRef.value?.focus()
+  })
+}
 
 const handleMethod = (m) => { 
   store.paymentMethod = m
@@ -365,7 +374,12 @@ const openMemberHandler = () => showMemberPicker.value = true
 
 onMounted(() => { 
   load()
+  focusSearchInput()
   window.addEventListener('open-member-picker', openMemberHandler) 
+})
+
+onActivated(() => {
+  focusSearchInput()
 })
 
 onUnmounted(() => window.removeEventListener('open-member-picker', openMemberHandler))

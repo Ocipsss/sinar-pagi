@@ -111,6 +111,7 @@ const handleDownloadPdf = async () => {
   try {
     await receiptService.downloadPdf(props.transaction)
     toast.success('Nota PDF berhasil diunduh!')
+    emit('close') // Tutup modal otomatis setelah berhasil unduh PDF
   } catch (err) {
     toast.error(`Gagal mengunduh PDF: ${err.message}`)
   }

@@ -101,7 +101,6 @@ export const backupService = {
   },
 
   async resetTransactions() {
-    // 1. Hapus data di Cloud Firestore terlebih dahulu jika perangkat online
     if (navigator.onLine && firestore) {
       const cloudTablesToClear = [
         'transactions',
@@ -139,11 +138,9 @@ export const backupService = {
       }
     }
 
-    // 2. Ambil daftar nama tabel secara eksplisit agar transaksi Dexie tidak gagal
     const tableNames = db.tables.map(t => t.name)
 
     await db.transaction('rw', tableNames, async () => {
-      // 3. Kosongkan seluruh tabel riwayat transaksi & aktivitas lokal[span_1](start_span)[span_1](end_span)
       await db.transactions.clear()
       await db.transaction_items.clear()
       await db.expenses.clear()
@@ -152,7 +149,6 @@ export const backupService = {
       await db.cash_mutations.clear()
       await db.shopping_list.clear()
 
-      // 4. Reset piutang, poin, dan total belanja seluruh member menjadi 0[span_2](start_span)[span_2](end_span)
       const members = await db.members.toArray()
       for (const m of members) {
         await db.members.update(m.id, {
@@ -163,11 +159,62 @@ export const backupService = {
         })
       }
 
-      // 5. Reset saldo seluruh akun kas & bank menjadi 0[span_3](start_span)[span_3](end_span)
       const accounts = await db.cash_accounts.toArray()
       for (const a of accounts) {
         await db.cash_accounts.update(a.id, {
           balance: 0,
+          synced: 0
+        })
+      }
+    })
+  },
+
+  // MIGRASI SEMUA DATA MASTER KE HURUF KAPITAL PERMANEN
+  async convertAllToUppercase() {
+    const tableNames = ['products', 'categories', 'units', 'product_packages']
+    const now = dayjs().toISOString()
+
+    await db.transaction('rw', tableNames, async () => {
+      // 1. Ubah Master Produk
+      const products = await db.products.toArray()
+      for (const p of products) {
+        await db.products.update(p.id, {
+          name: (p.name || '').toUpperCase().trim(),
+          code: (p.code || '').toUpperCase().trim(),
+          category: (p.category || 'UMUM').toUpperCase().trim(),
+          unit: (p.unit || '').toUpperCase().trim(),
+          purchasePackName: (p.purchasePackName || '').toUpperCase().trim(),
+          updatedAt: now,
+          synced: 0
+        })
+      }
+
+      // 2. Ubah Master Kategori
+      const categories = await db.categories.toArray()
+      for (const c of categories) {
+        await db.categories.update(c.id, {
+          name: (c.name || '').toUpperCase().trim(),
+          updatedAt: now,
+          synced: 0
+        })
+      }
+
+      // 3. Ubah Master Satuan
+      const units = await db.units.toArray()
+      for (const u of units) {
+        await db.units.update(u.id, {
+          name: (u.name || '').toUpperCase().trim(),
+          updatedAt: now,
+          synced: 0
+        })
+      }
+
+      // 4. Ubah Paket Eceran Rokok
+      const packages = await db.product_packages.toArray()
+      for (const pkg of packages) {
+        await db.product_packages.update(pkg.id, {
+          name: (pkg.name || '').toUpperCase().trim(),
+          updatedAt: now,
           synced: 0
         })
       }

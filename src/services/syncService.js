@@ -13,7 +13,8 @@ const TABLES_TO_SYNC = [
   'services',
   'units',
   'operators',
-  'cash_accounts'
+  'cash_accounts',
+  'settings'
 ]
 
 const TRANSACTION_TABLES = [
@@ -111,8 +112,6 @@ export const syncRealtime = {
     console.log('[Sync] Realtime ON')
 
     if (!firestore) return
-
-   // const today = dayjs().startOf('day').toISOString()
 
     const handleError = (err) => {
       if (err?.name === 'AbortError' || err?.code === 'aborted' || err?.message?.includes('aborted')) return

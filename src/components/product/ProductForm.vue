@@ -2,13 +2,13 @@
 <form @submit.prevent="onSubmit" class="bg-white p-5 rounded-3xl border flex flex-col gap-4 shadow-sm">
   <!-- Nama Produk -->
   <div class="flex flex-col gap-1">
-    <input v-model="name" placeholder="Nama Produk *" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold"/>
+    <input v-model="name" placeholder="Nama Produk *" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold uppercase"/>
     <span v-if="errors.name" class="text-[10px] text-red-500">{{ errors.name }}</span>
   </div>
 
   <!-- Barcode + Scanner -->
   <div class="flex gap-2">
-    <input v-model="code" placeholder="Barcode" class="flex-1 px-4 py-3 bg-zinc-50 border rounded-xl text-sm"/>
+    <input v-model="code" placeholder="Barcode" class="flex-1 px-4 py-3 bg-zinc-50 border rounded-xl text-sm uppercase"/>
     <button type="button" @click="start(c => code = c)" class="px-4 bg-zinc-900 text-white rounded-xl"><ScanLine class="w-4 h-4"/></button>
   </div>
   <div id="reader" class="w-full rounded-xl overflow-hidden"></div>
@@ -17,20 +17,20 @@
   <div class="grid grid-cols-2 gap-2">
     <div class="flex flex-col gap-1">
       <label class="text-[10px] text-zinc-500 font-bold uppercase">Kategori</label>
-      <select v-model="category" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold">
-        <option value="Umum">Umum</option>
-        <option v-for="cat in categories" :key="cat.id" :value="cat.name">
-          {{ cat.name }}
+      <select v-model="category" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold uppercase">
+        <option value="UMUM">UMUM</option>
+        <option v-for="cat in categories" :key="cat.id" :value="cat.name.toUpperCase()">
+          {{ cat.name.toUpperCase() }}
         </option>
       </select>
     </div>
 
     <div class="flex flex-col gap-1">
       <label class="text-[10px] text-zinc-500 font-bold uppercase">Nama Satuan *</label>
-      <select v-model="unit" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold">
-        <option value="" disabled>-- Pilih Satuan --</option>
-        <option v-for="u in units" :key="u.id" :value="u.name">
-          {{ u.name }}
+      <select v-model="unit" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold uppercase">
+        <option value="" disabled>-- PILIH SATUAN --</option>
+        <option v-for="u in units" :key="u.id" :value="u.name.toUpperCase()">
+          {{ u.name.toUpperCase() }}
         </option>
       </select>
       <span v-if="errors.unit" class="text-[10px] text-red-500">{{ errors.unit }}</span>
@@ -55,15 +55,15 @@
     <div v-if="toNumber(packPrice) > 0" class="flex flex-col gap-2">
       <div class="flex flex-col gap-1">
         <label class="text-[10px] text-zinc-500 font-bold uppercase">Nama Satuan Grosir</label>
-        <select v-model="purchasePackName" class="px-3 py-2.5 bg-white border rounded-xl text-sm font-bold">
-          <option value="">-- Pilih Satuan Grosir --</option>
-          <option v-for="u in units" :key="u.id" :value="u.name">
-            {{ u.name }}
+        <select v-model="purchasePackName" class="px-3 py-2.5 bg-white border rounded-xl text-sm font-bold uppercase">
+          <option value="">-- PILIH SATUAN GROSIR --</option>
+          <option v-for="u in units" :key="u.id" :value="u.name.toUpperCase()">
+            {{ u.name.toUpperCase() }}
           </option>
         </select>
       </div>
 
-      <div class="text-[11px] text-blue-600 bg-white p-2.5 rounded-xl border font-semibold">
+      <div class="text-[11px] text-blue-600 bg-white p-2.5 rounded-xl border font-semibold uppercase">
         Auto modal / {{ unit || 'satuan' }}: {{ formatRp(autoModal) }}
       </div>
     </div>
@@ -134,23 +134,24 @@ const productStore = useProductsStore()
 const autoModal = computed(() => calcModalDariPack(packPrice.value, packQty.value))
 const marginPersen = computed(() => calcMargin(price_sell.value, price_modal.value))
 
-onMounted(() => {
-  loadCategories()
-  loadUnits()
+onMounted(async () => {
+  await loadCategories()
+  await loadUnits()
 
-  // Jika ada initialData (Mode Edit), isi formulir dengan data lama
   if (props.initialData) {
-    name.value = props.initialData.name || ''
-    code.value = props.initialData.code || ''
-    category.value = props.initialData.category || 'Umum'
-    unit.value = props.initialData.unit || ''
-    purchasePackName.value = props.initialData.purchasePackName || ''
+    name.value = (props.initialData.name || '').toUpperCase()
+    code.value = (props.initialData.code || '').toUpperCase()
+    category.value = (props.initialData.category || 'UMUM').toUpperCase()
+    unit.value = (props.initialData.unit || '').toUpperCase()
+    purchasePackName.value = (props.initialData.purchasePackName || '').toUpperCase()
     packPrice.value = props.initialData.packPrice || 0
     packQty.value = props.initialData.packQty || 0
     price_modal.value = props.initialData.price_modal || 0
     price_sell.value = props.initialData.price_sell || 0
     qty.value = props.initialData.qty || 0
     minStock.value = props.initialData.minStock || 5
+  } else {
+    category.value = (category.value || 'UMUM').toUpperCase()
   }
 })
 
@@ -174,11 +175,11 @@ watch(autoModal, (val) => { if (val > 0) price_modal.value = val })
 
 const onSubmit = handleSubmit(async (vals) => {
   const payload = {
-    name: vals.name,
-    code: vals.code || '',
-    category: category.value || 'Umum',
-    unit: unit.value || '',
-    purchasePackName: purchasePackName.value || '',
+    name: (vals.name || '').toUpperCase().trim(),
+    code: (vals.code || '').toUpperCase().trim(),
+    category: (category.value || 'UMUM').toUpperCase().trim(),
+    unit: (unit.value || '').toUpperCase().trim(),
+    purchasePackName: (purchasePackName.value || '').toUpperCase().trim(),
     packPrice: toNumber(packPrice.value),
     packQty: toNumber(packQty.value),
     price_modal: toNumber(price_modal.value),
@@ -188,11 +189,9 @@ const onSubmit = handleSubmit(async (vals) => {
   }
 
   if (props.initialData?.id) {
-    // Mode Update / Edit
     await productStore.update(props.initialData.id, payload)
     emit('success')
   } else {
-    // Mode Tambah Baru
     await productService.createProduct(payload, toNumber(price_modal.value))
     router.push('/products')
   }

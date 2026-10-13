@@ -726,13 +726,16 @@ export const financeRepo = {
 }
 
 ===== src/db/repositories/settingsRepository.js =====
+// src/db/repositories/settingsRepository.js
 import { db } from '../index.js'
+import dayjs from 'dayjs'
 
 export const settingsRepo = {
   async getSettings() {
     const table = db.settings || db.table('settings')
     const item = await table.get('app_config')
     if (!item) {
+      const now = dayjs().toISOString()
       const defaultConfig = {
         id: 'app_config',
         storeName: 'SINAR PAGI',
@@ -741,7 +744,9 @@ export const settingsRepo = {
         receiptFooter: 'Terima kasih telah berbelanja!\nBarang yang sudah dibeli tidak dapat ditukar.',
         printerPaperSize: '58mm',
         autoPrintReceipt: false,
-        theme: 'dark'
+        theme: 'dark',
+        updatedAt: now,
+        synced: 0
       }
       await table.put(defaultConfig)
       return defaultConfig
@@ -751,9 +756,12 @@ export const settingsRepo = {
 
   async saveSettings(data) {
     const table = db.settings || db.table('settings')
+    const now = dayjs().toISOString()
     await table.put({
       ...data,
-      id: 'app_config'
+      id: 'app_config',
+      updatedAt: now,
+      synced: 0
     })
   }
 }
@@ -835,35 +843,36 @@ export const expenseRepository = {
     ]"
   >
     <!-- HEADER STICKY -->
-    <header class="shrink-0 h-[56px] w-full bg-white border-b border-zinc-100 px-4 flex justify-between items-center z-40 sticky top-0">
+    <header class="shrink-0 h-[56px] md:h-16 w-full bg-white border-b border-zinc-100 px-4 md:px-6 flex justify-between items-center z-40 sticky top-0">
       <div class="flex items-center gap-3">
-        <button @click="isOpen = !isOpen" class="p-2.5 bg-zinc-900 text-white rounded-xl active:scale-95 transition">
-          <Menu v-if="!isOpen" class="w-5 h-5"/>
-          <X v-else class="w-5 h-5"/>
+        <!-- TOMBOL BURGER MENU -->
+        <button @click="isOpen = !isOpen" class="p-2.5 md:p-3 bg-zinc-900 text-white rounded-xl md:rounded-2xl active:scale-95 transition">
+          <Menu v-if="!isOpen" class="w-5 h-5 md:w-6 md:h-6"/>
+          <X v-else class="w-5 h-5 md:w-6 md:h-6"/>
         </button>
 
-        <div class="font-black text-sm text-zinc-900">{{ activePage }}</div>
+        <div class="font-black text-sm md:text-base text-zinc-900">{{ activePage }}</div>
       </div>
 
-      <div class="flex items-center gap-2">
+      <div class="flex items-center gap-2 md:gap-3">
         <!-- TOMBOL PRINTER BLUETOOTH -->
         <button 
           @click="toggleConnection" 
           :disabled="isConnecting"
           :title="isConnected ? `Terhubung: ${printerDevice?.name || 'Printer'}` : 'Hubungkan Printer Bluetooth'"
           :class="[
-            'relative p-2.5 rounded-2xl border transition flex items-center justify-center active:scale-95',
+            'relative p-2.5 md:p-3 rounded-2xl border transition flex items-center justify-center active:scale-95',
             isConnected 
               ? 'bg-emerald-50 border-emerald-200 text-emerald-700' 
               : 'bg-white border-zinc-200 text-zinc-500 hover:text-zinc-900'
           ]"
         >
-          <Printer :class="['w-4 h-4', isConnecting ? 'animate-pulse' : '']" />
+          <Printer :class="['w-4 h-4 md:w-5 md:h-5', isConnecting ? 'animate-pulse' : '']" />
 
           <!-- Indikator Status Titik Warna -->
           <span 
             :class="[
-              'absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full border-2 border-white',
+              'absolute -top-1 -right-1 w-2.5 h-2.5 md:w-3 md:h-3 rounded-full border-2 border-white',
               isConnected ? 'bg-emerald-500' : 'bg-zinc-300'
             ]"
           ></span>
@@ -874,14 +883,14 @@ export const expenseRepository = {
           @click="manualSync" 
           :title="syncStatus.isOnline ? (syncStatus.isSyncing ? 'Sedang Sinkronisasi...' : 'Klik untuk sinkronisasi manual') : 'Mode Offline'"
           :class="[
-            'px-2.5 py-1.5 rounded-full text-[10px] font-black flex items-center gap-1.5 border transition active:scale-95',
+            'px-2.5 py-1.5 md:px-3.5 md:py-2 rounded-full text-[10px] md:text-xs font-black flex items-center gap-1.5 md:gap-2 border transition active:scale-95',
             !syncStatus.isOnline ? 'bg-zinc-100 text-zinc-500 border-zinc-200' :
             syncStatus.isSyncing ? 'bg-amber-50 text-amber-700 border-amber-200' :
             syncStatus.unsyncedCount > 0 ? 'bg-red-50 text-red-600 border-red-200' :
             'bg-emerald-50 text-emerald-700 border-emerald-200'
           ]"
         >
-          <RefreshCw :class="['w-3 h-3', syncStatus.isSyncing && 'animate-spin']" />
+          <RefreshCw :class="['w-3 h-3 md:w-4 md:h-4', syncStatus.isSyncing && 'animate-spin']" />
           
           <span class="hidden sm:inline">
             <template v-if="!syncStatus.isOnline">Offline</template>
@@ -901,11 +910,12 @@ export const expenseRepository = {
           ></span>
         </button>
 
-        <router-link v-if="!isKasirPage" to="/kasir" class="p-2.5 bg-zinc-900 text-white rounded-xl active:scale-95 transition">
-          <Store class="w-5 h-5"/>
+        <!-- TOMBOL TOKO / MEMBER -->
+        <router-link v-if="!isKasirPage" to="/kasir" class="p-2.5 md:p-3 bg-zinc-900 text-white rounded-xl md:rounded-2xl active:scale-95 transition">
+          <Store class="w-5 h-5 md:w-6 md:h-6"/>
         </router-link>
-        <button v-else @click="openMember" class="p-2.5 bg-zinc-900 text-white rounded-xl active:scale-95 transition">
-          <Users class="w-5 h-5"/>
+        <button v-else @click="openMember" class="p-2.5 md:p-3 bg-zinc-900 text-white rounded-xl md:rounded-2xl active:scale-95 transition">
+          <Users class="w-5 h-5 md:w-6 md:h-6"/>
         </button>
       </div>
     </header>
@@ -955,14 +965,6 @@ const groups = ref([
     ]
   },
   { 
-    title: 'KEUANGAN', 
-    items: [
-      { name: 'Kas & Keuangan', icon: Wallet, to: '/finance' },
-      { name: 'Pengeluaran Operasional', icon: Receipt, to: '/expenses'},
-      { name: 'Laporan & Rekap', icon: BarChart3, to: '/reports' }
-    ]
-  },
-  { 
     title: 'MASTER DATA', 
     items: [
       { name: 'Dashboard', icon: LayoutDashboard, to: '/dashboard' },
@@ -972,6 +974,14 @@ const groups = ref([
       { name: 'Member', icon: Users, to: '/members' },
       { name: 'Tambah Barang', icon: Plus, to: '/add-products' },
       { name: 'Operator / Kasir', icon: Users, to: '/operators' },
+    ]
+  },
+  { 
+    title: 'KEUANGAN', 
+    items: [
+      { name: 'Kas & Keuangan', icon: Wallet, to: '/finance' },
+      { name: 'Pengeluaran Operasional', icon: Receipt, to: '/expenses'},
+      { name: 'Laporan & Rekap', icon: BarChart3, to: '/reports' }
     ]
   },
   { 
@@ -1165,7 +1175,8 @@ const TABLES_TO_SYNC = [
   'services',
   'units',
   'operators',
-  'cash_accounts'
+  'cash_accounts',
+  'settings'
 ]
 
 const TRANSACTION_TABLES = [
@@ -1263,8 +1274,6 @@ export const syncRealtime = {
     console.log('[Sync] Realtime ON')
 
     if (!firestore) return
-
-   // const today = dayjs().startOf('day').toISOString()
 
     const handleError = (err) => {
       if (err?.name === 'AbortError' || err?.code === 'aborted' || err?.message?.includes('aborted')) return
@@ -2038,7 +2047,6 @@ export const backupService = {
   },
 
   async resetTransactions() {
-    // 1. Hapus data di Cloud Firestore terlebih dahulu jika perangkat online
     if (navigator.onLine && firestore) {
       const cloudTablesToClear = [
         'transactions',
@@ -2076,11 +2084,9 @@ export const backupService = {
       }
     }
 
-    // 2. Ambil daftar nama tabel secara eksplisit agar transaksi Dexie tidak gagal
     const tableNames = db.tables.map(t => t.name)
 
     await db.transaction('rw', tableNames, async () => {
-      // 3. Kosongkan seluruh tabel riwayat transaksi & aktivitas lokal[span_1](start_span)[span_1](end_span)
       await db.transactions.clear()
       await db.transaction_items.clear()
       await db.expenses.clear()
@@ -2089,7 +2095,6 @@ export const backupService = {
       await db.cash_mutations.clear()
       await db.shopping_list.clear()
 
-      // 4. Reset piutang, poin, dan total belanja seluruh member menjadi 0[span_2](start_span)[span_2](end_span)
       const members = await db.members.toArray()
       for (const m of members) {
         await db.members.update(m.id, {
@@ -2100,11 +2105,62 @@ export const backupService = {
         })
       }
 
-      // 5. Reset saldo seluruh akun kas & bank menjadi 0[span_3](start_span)[span_3](end_span)
       const accounts = await db.cash_accounts.toArray()
       for (const a of accounts) {
         await db.cash_accounts.update(a.id, {
           balance: 0,
+          synced: 0
+        })
+      }
+    })
+  },
+
+  // MIGRASI SEMUA DATA MASTER KE HURUF KAPITAL PERMANEN
+  async convertAllToUppercase() {
+    const tableNames = ['products', 'categories', 'units', 'product_packages']
+    const now = dayjs().toISOString()
+
+    await db.transaction('rw', tableNames, async () => {
+      // 1. Ubah Master Produk
+      const products = await db.products.toArray()
+      for (const p of products) {
+        await db.products.update(p.id, {
+          name: (p.name || '').toUpperCase().trim(),
+          code: (p.code || '').toUpperCase().trim(),
+          category: (p.category || 'UMUM').toUpperCase().trim(),
+          unit: (p.unit || '').toUpperCase().trim(),
+          purchasePackName: (p.purchasePackName || '').toUpperCase().trim(),
+          updatedAt: now,
+          synced: 0
+        })
+      }
+
+      // 2. Ubah Master Kategori
+      const categories = await db.categories.toArray()
+      for (const c of categories) {
+        await db.categories.update(c.id, {
+          name: (c.name || '').toUpperCase().trim(),
+          updatedAt: now,
+          synced: 0
+        })
+      }
+
+      // 3. Ubah Master Satuan
+      const units = await db.units.toArray()
+      for (const u of units) {
+        await db.units.update(u.id, {
+          name: (u.name || '').toUpperCase().trim(),
+          updatedAt: now,
+          synced: 0
+        })
+      }
+
+      // 4. Ubah Paket Eceran Rokok
+      const packages = await db.product_packages.toArray()
+      for (const pkg of packages) {
+        await db.product_packages.update(pkg.id, {
+          name: (pkg.name || '').toUpperCase().trim(),
+          updatedAt: now,
           synced: 0
         })
       }
@@ -2380,21 +2436,6 @@ import { settingsRepo } from '../db/repositories/settingsRepository.js'
 import { usePrinter } from '../composables/usePrinter.js'
 import dayjs from 'dayjs'
 
-// Helper untuk format 2 kolom rata kiri & kanan presisi
-function formatTwoColumn(left, right, width) {
-  const leftStr = String(left || '')
-  const rightStr = String(right || '')
-  const spaceAvailable = width - leftStr.length - rightStr.length
-
-  if (spaceAvailable > 0) {
-    return leftStr + ' '.repeat(spaceAvailable) + rightStr
-  }
-
-  const maxLeftLen = Math.max(1, width - rightStr.length - 1)
-  const truncatedLeft = leftStr.substring(0, maxLeftLen)
-  return truncatedLeft + ' ' + rightStr
-}
-
 export const receiptService = {
   // 1. Cetak Struk via Bluetooth Thermal Printer
   async printThermal(transaction) {
@@ -2406,7 +2447,6 @@ export const receiptService = {
 
     let targetChar = printerCharacteristic.value
 
-    // Jika belum terhubung via header, hubungkan otomatis
     if (!isConnected.value || !targetChar) {
       targetChar = await connectPrinter()
     }
@@ -2417,80 +2457,101 @@ export const receiptService = {
 
     const settings = await settingsRepo.getSettings()
     const is58mm = settings.printerPaperSize !== '80mm'
-    
-    const EncoderClass = typeof EscPosEncoder === 'function' ? EscPosEncoder : (EscPosEncoder.default || EscPosEncoder)
-    const encoder = new EncoderClass()
-
     const width = is58mm ? 32 : 48
     const line = '-'.repeat(width)
 
-    let encoded = encoder.initialize()
-      .align('center')
-      .bold(true)
-      .line(settings.storeName || 'SINAR PAGI')
-      .bold(false)
+    // Alokasi lebar kolom (20 karakter detail + 12 karakter subtotal untuk 58mm)
+    const detailWidth = is58mm ? 20 : 32
+    const subtotalWidth = 12
 
-    if (settings.storeAddress) {
-      encoded = encoded.line(settings.storeAddress)
+    const EncoderClass = typeof EscPosEncoder === 'function' ? EscPosEncoder : (EscPosEncoder.default || EscPosEncoder)
+    const encoder = new EncoderClass()
+
+    const storeName = (settings.storeName || 'SINAR PAGI').toUpperCase()
+    const address = settings.storeAddress || settings.address || ''
+    const phone = settings.storePhone || settings.phone || ''
+
+    // Formatter Tanggal & Waktu
+    const dateObj = transaction.date ? new Date(transaction.date) : new Date()
+    const validDate = isNaN(dateObj.getTime()) ? new Date() : dateObj
+    const tglStr = dayjs(validDate).format('DD/MM/YYYY')
+    const jamStr = dayjs(validDate).format('HH:mm')
+
+    let encoded = encoder
+      .initialize()
+      .align('center')
+      .line(storeName)
+
+    if (address) {
+      encoded = encoded.line(address)
     }
-    if (settings.storePhone) {
-      encoded = encoded.line(`Telp: ${settings.storePhone}`)
+    if (phone) {
+      encoded = encoded.line(phone)
     }
 
     encoded = encoded
       .line(line)
       .align('left')
-      .line(formatTwoColumn('No. Nota', `#${String(transaction.id || '').slice(-8)}`, width))
-      .line(formatTwoColumn('Tanggal', dayjs(transaction.date || new Date()).format('DD/MM/YY HH:mm'), width))
-      .line(formatTwoColumn('Kasir', transaction.operatorName || transaction.kasir || 'Admin', width))
-      .line(formatTwoColumn('Pelanggan', transaction.memberName || 'Umum', width))
-      .line(line)
+      .line(`Nota  : #${String(transaction.id || '').slice(-5)}`)
+      .line(`Tgl   : ${tglStr} ${jamStr}`)
+
+    // Member ditaruh di bagian header metadata
+    if (transaction.memberName) {
+      encoded = encoded.line(`Member: ${transaction.memberName}`)
+    }
+
+    encoded = encoded.line(line)
 
     // Rincian Items
     const items = transaction.items || []
     items.forEach(item => {
-      const name = item.name || item.productName || 'Barang'
+      const name = String(item.name || item.productName || 'BARANG').toUpperCase()
       const qty = item.qty || item.cartQty || 1
-      const price = item.price || item.price_sell || 0
+      const price = (Number(item.price || item.price_sell || 0) + Number(item.extraCharge || 0))
       const subtotalVal = item.subtotal || (price * qty)
 
-      const qtyPrice = `${qty} x ${price.toLocaleString('id-ID')}`
+      const detail = `${qty}x${price.toLocaleString('id-ID')}`
       const subtotal = subtotalVal.toLocaleString('id-ID')
-      
+
       encoded = encoded.line(name)
-      encoded = encoded.line(formatTwoColumn(`  ${qtyPrice}`, subtotal, width))
+      encoded = encoded.line(detail.padEnd(detailWidth) + subtotal.padStart(subtotalWidth))
     })
 
-    // Block Total & Pembayaran
+    // Block Total & Pembayaran Rata Kanan
     encoded = encoded
       .line(line)
-      .bold(true)
-      .line(formatTwoColumn('TOTAL', `Rp ${(transaction.total || 0).toLocaleString('id-ID')}`, width))
-      .bold(false)
+      .align('right')
+      .line(`TOTAL:   ${(transaction.total || 0).toLocaleString('id-ID').padStart(subtotalWidth)}`)
 
-    const isCash = String(transaction.paymentMethod || '').toUpperCase() === 'CASH'
-    if (isCash) {
+    const paymentMethod = String(transaction.paymentMethod || '').toLowerCase()
+    if (paymentMethod === 'cash' || paymentMethod === 'tunai') {
       const bayar = transaction.amountPaid || transaction.paidAmount || transaction.total || 0
-      const kembali = Math.max(0, bayar - (transaction.total || 0))
+      const kembali = transaction.change !== undefined ? transaction.change : Math.max(0, bayar - (transaction.total || 0))
+
       encoded = encoded
-        .line(formatTwoColumn('TUNAI', `Rp ${bayar.toLocaleString('id-ID')}`, width))
-        .line(formatTwoColumn('KEMBALI', `Rp ${kembali.toLocaleString('id-ID')}`, width))
+        .line(`BAYAR:   ${bayar.toLocaleString('id-ID').padStart(subtotalWidth)}`)
+        .line(`KEMBALI: ${kembali.toLocaleString('id-ID').padStart(subtotalWidth)}`)
     } else {
-      encoded = encoded.line(formatTwoColumn('METODE', String(transaction.paymentMethod || 'NON-TUNAI').toUpperCase(), width))
+      encoded = encoded.line(`METODE:  ${paymentMethod.toUpperCase().padStart(subtotalWidth)}`)
     }
 
-    // Footer Nota
+    // Footer Nota Rata Tengah
     encoded = encoded
-      .line(line)
       .align('center')
+      .newline()
 
-    const footerText = settings.receiptFooter || 'Terima kasih telah berbelanja!'
+    const footerText = settings.receiptFooter || settings.footerNote || 'Terima kasih telah berbelanja!'
     footerText.split('\n').forEach(fLine => {
       if (fLine.trim()) encoded = encoded.line(fLine.trim())
     })
 
+    // Nama Kasir ditaruh paling bawah (di bawah ucapan terima kasih)
+    const operator = transaction.operatorName || transaction.kasir || 'Admin'
+    encoded = encoded.line(`Kasir: ${operator}`)
+
     const fullData = encoded
-      .line('\n\n\n')
+      .newline()
+      .newline()
       .cut()
       .encode()
 
@@ -2514,7 +2575,7 @@ export const receiptService = {
     const items = transaction.items || []
     
     const paperWidth = is58mm ? 58 : 80
-    const estimatedHeight = 90 + (items.length * 12)
+    const estimatedHeight = 95 + (items.length * 12)
 
     const doc = new jsPDF({
       orientation: 'portrait',
@@ -2525,7 +2586,7 @@ export const receiptService = {
     let y = 7
     doc.setFont('courier', 'bold')
     doc.setFontSize(11)
-    doc.text(settings.storeName || 'SINAR PAGI', paperWidth / 2, y, { align: 'center' })
+    doc.text((settings.storeName || 'SINAR PAGI').toUpperCase(), paperWidth / 2, y, { align: 'center' })
 
     doc.setFont('courier', 'normal')
     doc.setFontSize(8)
@@ -2542,26 +2603,30 @@ export const receiptService = {
     doc.text('-'.repeat(is58mm ? 32 : 45), paperWidth / 2, y, { align: 'center' })
 
     y += 4
-    doc.text(`Nota : #${String(transaction.id || '').slice(-8)}`, 4, y)
+    doc.text(`Nota  : #${String(transaction.id || '').slice(-5)}`, 4, y)
     y += 3.5
-    doc.text(`Tgl  : ${dayjs(transaction.date || new Date()).format('DD/MM/YY HH:mm')}`, 4, y)
-    y += 3.5
-    doc.text(`Kasir: ${transaction.operatorName || transaction.kasir || 'Admin'}`, 4, y)
+    doc.text(`Tgl   : ${dayjs(transaction.date || new Date()).format('DD/MM/YYYY HH:mm')}`, 4, y)
+
+    // Member ditaruh di header
+    if (transaction.memberName) {
+      y += 3.5
+      doc.text(`Member: ${transaction.memberName}`, 4, y)
+    }
 
     y += 4
     doc.text('-'.repeat(is58mm ? 32 : 45), paperWidth / 2, y, { align: 'center' })
 
     items.forEach(item => {
       y += 4
-      const name = item.name || item.productName || 'Barang'
+      const name = String(item.name || item.productName || 'BARANG').toUpperCase()
       doc.text(name, 4, y)
       
       y += 3.5
       const qty = item.qty || item.cartQty || 1
-      const price = item.price || item.price_sell || 0
+      const price = Number(item.price || item.price_sell || 0) + Number(item.extraCharge || 0)
       const subtotalVal = item.subtotal || (price * qty)
 
-      const qtyPrice = `${qty} x ${price.toLocaleString('id-ID')}`
+      const qtyPrice = `${qty}x${price.toLocaleString('id-ID')}`
       const subtotal = subtotalVal.toLocaleString('id-ID')
       doc.text(qtyPrice, 4, y)
       doc.text(subtotal, paperWidth - 4, y, { align: 'right' })
@@ -2575,10 +2640,10 @@ export const receiptService = {
     doc.text('TOTAL :', 4, y)
     doc.text(`Rp ${(transaction.total || 0).toLocaleString('id-ID')}`, paperWidth - 4, y, { align: 'right' })
 
-    const isCash = String(transaction.paymentMethod || '').toUpperCase() === 'CASH'
+    const isCash = String(transaction.paymentMethod || '').toLowerCase() === 'cash' || String(transaction.paymentMethod || '').toLowerCase() === 'tunai'
     if (isCash) {
       const bayar = transaction.amountPaid || transaction.paidAmount || transaction.total || 0
-      const kembali = Math.max(0, bayar - (transaction.total || 0))
+      const kembali = transaction.change !== undefined ? transaction.change : Math.max(0, bayar - (transaction.total || 0))
       
       y += 3.5
       doc.setFont('courier', 'normal')
@@ -2588,14 +2653,24 @@ export const receiptService = {
       y += 3.5
       doc.text('KEMBALI :', 4, y)
       doc.text(`Rp ${kembali.toLocaleString('id-ID')}`, paperWidth - 4, y, { align: 'right' })
+    } else {
+      y += 3.5
+      doc.setFont('courier', 'normal')
+      doc.text('METODE :', 4, y)
+      doc.text(String(transaction.paymentMethod || 'NON-TUNAI').toUpperCase(), paperWidth - 4, y, { align: 'right' })
     }
 
     y += 6
     doc.setFont('courier', 'normal')
     doc.setFontSize(7)
-    doc.text(settings.receiptFooter || 'Terima kasih telah berbelanja!', paperWidth / 2, y, { align: 'center' })
+    doc.text(settings.receiptFooter || settings.footerNote || 'Terima kasih telah berbelanja!', paperWidth / 2, y, { align: 'center' })
 
-    doc.save(`Nota_${String(transaction.id || '').slice(-8)}_${dayjs().format('YYYYMMDD_HHmm')}.pdf`)
+    // Nama Kasir ditaruh di paling bawah (di bawah ucapan terima kasih)
+    y += 3.5
+    const operator = transaction.operatorName || transaction.kasir || 'Admin'
+    doc.text(`Kasir: ${operator}`, paperWidth / 2, y, { align: 'center' })
+
+    doc.save(`Nota_${String(transaction.id || '').slice(-5)}_${dayjs().format('YYYYMMDD_HHmm')}.pdf`)
   }
 }
 
@@ -3129,6 +3204,7 @@ onActivated(() => {
           <Search class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400"/>
           <input 
             id="kasir-search-input"
+            ref="searchInputRef"
             v-model="q" 
             @focus="showSearch=true" 
             placeholder="Ketik nama / scan barcode..." 
@@ -3299,6 +3375,7 @@ onActivated(() => {
     </button>
   </div>
 </div>
+
 <!-- Modal Pilihan Varian & Penyajian -->
 <div v-if="selectedProductForOption" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
   <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl animate-in slide-in-from-bottom duration-200 max-h-[80vh] flex flex-col">
@@ -3418,7 +3495,7 @@ onActivated(() => {
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, onActivated, nextTick, watch } from 'vue'
 import { Search, X, ShoppingBag, Clock, PauseCircle, Trash2 } from 'lucide-vue-next'
 import { useKasir } from '../composables/useKasir.js'
 import { formatRibuan } from '../utils/formatters/currency.js'
@@ -3432,9 +3509,16 @@ const {
   load, handleSelectProduct, confirmAddToCart, getProductPackages, checkout
 } = useKasir()
 
+const searchInputRef = ref(null)
 const showMemberPicker = ref(false)
 const showPendingModal = ref(false)
 const completedTransaction = ref(null)
+
+const focusSearchInput = () => {
+  nextTick(() => {
+    searchInputRef.value?.focus()
+  })
+}
 
 const handleMethod = (m) => { 
   store.paymentMethod = m
@@ -3484,7 +3568,12 @@ const openMemberHandler = () => showMemberPicker.value = true
 
 onMounted(() => { 
   load()
+  focusSearchInput()
   window.addEventListener('open-member-picker', openMemberHandler) 
+})
+
+onActivated(() => {
+  focusSearchInput()
 })
 
 onUnmounted(() => window.removeEventListener('open-member-picker', openMemberHandler))
@@ -4532,7 +4621,7 @@ onActivated(() => {
           v-model="form.storeName" 
           required 
           placeholder="Contoh: SINAR PAGI" 
-          class="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900"
+          class="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 uppercase"
         />
       </div>
 
@@ -4628,9 +4717,19 @@ onActivated(() => {
         <input type="file" accept=".json" @change="importBackup" class="hidden" />
       </label>
     </div>
+
+    <!-- Tombol Migrasi Kapital -->
+    <button 
+      @click="convertDataToUppercase" 
+      :disabled="loading"
+      class="w-full py-3 bg-amber-500 hover:bg-amber-600 disabled:bg-zinc-300 text-zinc-950 font-bold text-xs rounded-xl shadow-md transition active:scale-95 flex items-center justify-center gap-2"
+    >
+      <Type class="w-4 h-4" />
+      <span>Ubah Semua Data Master ke KAPITAL</span>
+    </button>
   </div>
 
-  <!-- Section 4: Reset Data Transaksi (Pengembangan) -->
+  <!-- Section 4: Reset Data Transaksi -->
   <div class="bg-red-50 p-5 rounded-3xl border border-red-200/80 shadow-sm space-y-3">
     <div class="flex items-center gap-2 border-b border-red-200/60 pb-3">
       <Trash2 class="w-5 h-5 text-red-600" />
@@ -4655,10 +4754,19 @@ onActivated(() => {
 
 <script setup>
 import { onMounted } from 'vue'
-import { Store, Printer, Database, Download, Upload, Trash2 } from 'lucide-vue-next'
+import { Store, Printer, Database, Download, Upload, Trash2, Type } from 'lucide-vue-next'
 import { useSettings } from '../composables/useSettings.js'
 
-const { form, loading, loadSettings, saveSettings, exportBackup, importBackup, resetTransactionsData } = useSettings()
+const { 
+  form, 
+  loading, 
+  loadSettings, 
+  saveSettings, 
+  exportBackup, 
+  importBackup, 
+  resetTransactionsData, 
+  convertDataToUppercase 
+} = useSettings()
 
 onMounted(() => {
   loadSettings()
@@ -6374,10 +6482,12 @@ export function useCategories() {
   const saveCategory = async () => {
     if (!formName.value.trim()) return
 
+    const formattedName = formName.value.trim().toUpperCase()
+
     if (editingId.value) {
-      await categoryRepo.update(editingId.value, formName.value.trim())
+      await categoryRepo.update(editingId.value, formattedName)
     } else {
-      await categoryRepo.create(formName.value.trim())
+      await categoryRepo.create(formattedName)
     }
 
     showModal.value = false
@@ -6385,24 +6495,24 @@ export function useCategories() {
     editingId.value = null
 
     await loadCategories()
-    // syncRealtime.pushLocalToCloud() -> Dihapus, ditangani Dexie Hook
   }
 
   const deleteCategory = async (cat) => {
     if (confirm(`Hapus kategori "${cat.name}"?`)) {
       await categoryRepo.delete(cat.id)
       await loadCategories()
-      // syncRealtime.pushLocalToCloud() -> Dihapus, ditangani Dexie Hook
     }
   }
 
   const saveUnit = async () => {
     if (!formName.value.trim()) return
 
+    const formattedName = formName.value.trim().toUpperCase()
+
     if (editingId.value) {
-      await unitRepo.update(editingId.value, formName.value.trim())
+      await unitRepo.update(editingId.value, formattedName)
     } else {
-      await unitRepo.create(formName.value.trim())
+      await unitRepo.create(formattedName)
     }
 
     showModal.value = false
@@ -6410,14 +6520,12 @@ export function useCategories() {
     editingId.value = null
 
     await loadUnits()
-    // syncRealtime.pushLocalToCloud() -> Dihapus, ditangani Dexie Hook
   }
 
   const deleteUnit = async (u) => {
     if (confirm(`Hapus satuan "${u.name}"?`)) {
       await unitRepo.delete(u.id)
       await loadUnits()
-      // syncRealtime.pushLocalToCloud() -> Dihapus, ditangani Dexie Hook
     }
   }
 
@@ -7562,6 +7670,23 @@ export function useSettings() {
     }
   }
 
+  const convertDataToUppercase = async () => {
+    if (!confirm('Ubah seluruh data Barang, Kategori, Satuan, dan Paket Rokok lama menjadi KAPITAL secara permanen?')) {
+      return
+    }
+
+    loading.value = true
+    try {
+      await backupService.convertAllToUppercase()
+      toast.success('Semua data master berhasil diubah menjadi KAPITAL!')
+      setTimeout(() => window.location.reload(), 800)
+    } catch (err) {
+      toast.error(`Gagal mengubah data ke kapital: ${err.message}`)
+    } finally {
+      loading.value = false
+    }
+  }
+
   return {
     form,
     loading,
@@ -7569,7 +7694,8 @@ export function useSettings() {
     saveSettings,
     exportBackup,
     importBackup,
-    resetTransactionsData
+    resetTransactionsData,
+    convertDataToUppercase
   }
 }
 
@@ -7892,13 +8018,13 @@ export const productSchema = z.object({
 <form @submit.prevent="onSubmit" class="bg-white p-5 rounded-3xl border flex flex-col gap-4 shadow-sm">
   <!-- Nama Produk -->
   <div class="flex flex-col gap-1">
-    <input v-model="name" placeholder="Nama Produk *" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold"/>
+    <input v-model="name" placeholder="Nama Produk *" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold uppercase"/>
     <span v-if="errors.name" class="text-[10px] text-red-500">{{ errors.name }}</span>
   </div>
 
   <!-- Barcode + Scanner -->
   <div class="flex gap-2">
-    <input v-model="code" placeholder="Barcode" class="flex-1 px-4 py-3 bg-zinc-50 border rounded-xl text-sm"/>
+    <input v-model="code" placeholder="Barcode" class="flex-1 px-4 py-3 bg-zinc-50 border rounded-xl text-sm uppercase"/>
     <button type="button" @click="start(c => code = c)" class="px-4 bg-zinc-900 text-white rounded-xl"><ScanLine class="w-4 h-4"/></button>
   </div>
   <div id="reader" class="w-full rounded-xl overflow-hidden"></div>
@@ -7907,20 +8033,20 @@ export const productSchema = z.object({
   <div class="grid grid-cols-2 gap-2">
     <div class="flex flex-col gap-1">
       <label class="text-[10px] text-zinc-500 font-bold uppercase">Kategori</label>
-      <select v-model="category" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold">
-        <option value="Umum">Umum</option>
-        <option v-for="cat in categories" :key="cat.id" :value="cat.name">
-          {{ cat.name }}
+      <select v-model="category" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold uppercase">
+        <option value="UMUM">UMUM</option>
+        <option v-for="cat in categories" :key="cat.id" :value="cat.name.toUpperCase()">
+          {{ cat.name.toUpperCase() }}
         </option>
       </select>
     </div>
 
     <div class="flex flex-col gap-1">
       <label class="text-[10px] text-zinc-500 font-bold uppercase">Nama Satuan *</label>
-      <select v-model="unit" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold">
-        <option value="" disabled>-- Pilih Satuan --</option>
-        <option v-for="u in units" :key="u.id" :value="u.name">
-          {{ u.name }}
+      <select v-model="unit" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold uppercase">
+        <option value="" disabled>-- PILIH SATUAN --</option>
+        <option v-for="u in units" :key="u.id" :value="u.name.toUpperCase()">
+          {{ u.name.toUpperCase() }}
         </option>
       </select>
       <span v-if="errors.unit" class="text-[10px] text-red-500">{{ errors.unit }}</span>
@@ -7945,15 +8071,15 @@ export const productSchema = z.object({
     <div v-if="toNumber(packPrice) > 0" class="flex flex-col gap-2">
       <div class="flex flex-col gap-1">
         <label class="text-[10px] text-zinc-500 font-bold uppercase">Nama Satuan Grosir</label>
-        <select v-model="purchasePackName" class="px-3 py-2.5 bg-white border rounded-xl text-sm font-bold">
-          <option value="">-- Pilih Satuan Grosir --</option>
-          <option v-for="u in units" :key="u.id" :value="u.name">
-            {{ u.name }}
+        <select v-model="purchasePackName" class="px-3 py-2.5 bg-white border rounded-xl text-sm font-bold uppercase">
+          <option value="">-- PILIH SATUAN GROSIR --</option>
+          <option v-for="u in units" :key="u.id" :value="u.name.toUpperCase()">
+            {{ u.name.toUpperCase() }}
           </option>
         </select>
       </div>
 
-      <div class="text-[11px] text-blue-600 bg-white p-2.5 rounded-xl border font-semibold">
+      <div class="text-[11px] text-blue-600 bg-white p-2.5 rounded-xl border font-semibold uppercase">
         Auto modal / {{ unit || 'satuan' }}: {{ formatRp(autoModal) }}
       </div>
     </div>
@@ -8024,23 +8150,24 @@ const productStore = useProductsStore()
 const autoModal = computed(() => calcModalDariPack(packPrice.value, packQty.value))
 const marginPersen = computed(() => calcMargin(price_sell.value, price_modal.value))
 
-onMounted(() => {
-  loadCategories()
-  loadUnits()
+onMounted(async () => {
+  await loadCategories()
+  await loadUnits()
 
-  // Jika ada initialData (Mode Edit), isi formulir dengan data lama
   if (props.initialData) {
-    name.value = props.initialData.name || ''
-    code.value = props.initialData.code || ''
-    category.value = props.initialData.category || 'Umum'
-    unit.value = props.initialData.unit || ''
-    purchasePackName.value = props.initialData.purchasePackName || ''
+    name.value = (props.initialData.name || '').toUpperCase()
+    code.value = (props.initialData.code || '').toUpperCase()
+    category.value = (props.initialData.category || 'UMUM').toUpperCase()
+    unit.value = (props.initialData.unit || '').toUpperCase()
+    purchasePackName.value = (props.initialData.purchasePackName || '').toUpperCase()
     packPrice.value = props.initialData.packPrice || 0
     packQty.value = props.initialData.packQty || 0
     price_modal.value = props.initialData.price_modal || 0
     price_sell.value = props.initialData.price_sell || 0
     qty.value = props.initialData.qty || 0
     minStock.value = props.initialData.minStock || 5
+  } else {
+    category.value = (category.value || 'UMUM').toUpperCase()
   }
 })
 
@@ -8064,11 +8191,11 @@ watch(autoModal, (val) => { if (val > 0) price_modal.value = val })
 
 const onSubmit = handleSubmit(async (vals) => {
   const payload = {
-    name: vals.name,
-    code: vals.code || '',
-    category: category.value || 'Umum',
-    unit: unit.value || '',
-    purchasePackName: purchasePackName.value || '',
+    name: (vals.name || '').toUpperCase().trim(),
+    code: (vals.code || '').toUpperCase().trim(),
+    category: (category.value || 'UMUM').toUpperCase().trim(),
+    unit: (unit.value || '').toUpperCase().trim(),
+    purchasePackName: (purchasePackName.value || '').toUpperCase().trim(),
     packPrice: toNumber(packPrice.value),
     packQty: toNumber(packQty.value),
     price_modal: toNumber(price_modal.value),
@@ -8078,11 +8205,9 @@ const onSubmit = handleSubmit(async (vals) => {
   }
 
   if (props.initialData?.id) {
-    // Mode Update / Edit
     await productStore.update(props.initialData.id, payload)
     emit('success')
   } else {
-    // Mode Tambah Baru
     await productService.createProduct(payload, toNumber(price_modal.value))
     router.push('/products')
   }
@@ -8286,6 +8411,7 @@ const handleDownloadPdf = async () => {
   try {
     await receiptService.downloadPdf(props.transaction)
     toast.success('Nota PDF berhasil diunduh!')
+    emit('close') // Tutup modal otomatis setelah berhasil unduh PDF
   } catch (err) {
     toast.error(`Gagal mengunduh PDF: ${err.message}`)
   }
