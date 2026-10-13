@@ -180,7 +180,6 @@
     </button>
   </div>
 </div>
-
 <!-- Modal Pilihan Varian & Penyajian -->
 <div v-if="selectedProductForOption" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
   <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl animate-in slide-in-from-bottom duration-200 max-h-[80vh] flex flex-col">
@@ -194,24 +193,8 @@
       </button>
     </div>
 
-    <!-- Opsi khusus ROKOK -->
+    <!-- KHUSUS ROKOK: Cuma nampilin paket eceran yang udah dibuat -->
     <div v-if="(selectedProductForOption.category || '').toLowerCase() === 'rokok'" class="space-y-2 overflow-auto flex-1 pr-1">
-      <button 
-        @click="confirmAddToCart(selectedProductForOption, { customName: selectedProductForOption.name })"
-        class="w-full p-3.5 bg-zinc-50 border border-zinc-200 rounded-xl font-bold text-sm text-left flex justify-between items-center hover:bg-zinc-100 transition"
-      >
-        <span>1 Bungkus</span>
-        <span class="font-black">Rp {{ formatRibuan(selectedProductForOption.price_sell) }}</span>
-      </button>
-
-      <button 
-        @click="confirmAddToCart(selectedProductForOption, { customName: `1/2 bungkus ${selectedProductForOption.name}`, price_sell: Math.ceil(selectedProductForOption.price_sell / 2) })"
-        class="w-full p-3.5 bg-zinc-50 border border-zinc-200 rounded-xl font-bold text-sm text-left flex justify-between items-center hover:bg-zinc-100 transition"
-      >
-        <span>1/2 Bungkus</span>
-        <span class="font-black">Rp {{ formatRibuan(Math.ceil(selectedProductForOption.price_sell / 2)) }}</span>
-      </button>
-
       <button 
         v-for="pkg in getProductPackages(selectedProductForOption.id)" 
         :key="pkg.id"
@@ -223,7 +206,7 @@
       </button>
     </div>
 
-    <!-- Opsi Jasa Tambahan Dinamis Sesuai Kategori -->
+    <!-- SELAIN ROKOK (SEPERTI SEDUH KOPI): Tampil Opsi Mentah vs Seduh -->
     <div v-else class="space-y-2 overflow-auto flex-1 pr-1">
       <button 
         @click="confirmAddToCart(selectedProductForOption, { isServed: false, customName: selectedProductForOption.name })"

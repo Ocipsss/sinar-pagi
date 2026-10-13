@@ -221,7 +221,7 @@
     <ReceiptModal 
       v-if="showReceiptModal && selectedTransaction" 
       :transaction="selectedTransaction" 
-      @close="showReceiptModal = false" 
+      @close="handleCloseReceipt" 
     />
   </div>
 </template>
@@ -248,6 +248,12 @@ const {
 } = useSalesHistory()
 
 const showReceiptModal = ref(false)
+
+// Menutup modal cetak struk sekaligus modal detail transaksi
+const handleCloseReceipt = () => {
+  showReceiptModal.value = false
+  selectedTransaction.value = null
+}
 
 onMounted(() => {
   loadHistory()

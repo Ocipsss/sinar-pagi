@@ -1,67 +1,9 @@
+// src/services/receiptService.js
 import { jsPDF } from 'jspdf'
 import EscPosEncoder from 'esc-pos-encoder'
 import { settingsRepo } from '../db/repositories/settingsRepository.js'
+import { usePrinter } from '../composables/usePrinter.js'
 import dayjs from 'dayjs'
-
-// Cache koneksi printer agar tidak perlu reconnect tiap cetak
-let cachedDevice = null
-let cachedCharacteristic = null
-
-async function getPrinterCharacteristic() {
-  if (cachedDevice && cachedDevice.gatt?.connected && cachedCharacteristic) {
-    return cachedCharacteristic
-  }
-
-  let device = cachedDevice
-
-  if (!device && navigator.bluetooth?.getDevices) {
-    const devices = await navigator.bluetooth.getDevices()
-    if (devices.length > 0) {
-      device = devices[0]
-    }
-  }
-
-  if (!device) {
-    device = await navigator.bluetooth.requestDevice({
-      acceptAllDevices: true,
-      optionalServices: [
-        '000018f0-0000-1000-8000-00805f9b34fb',
-        '0000ff00-0000-1000-8000-00805f9b34fb',
-        '0000af00-0000-1000-8000-00805f9b34fb',
-        '49535343-fe7d-41aa-a322-3d7a4a2d2bd0',
-        'e7810a71-73ae-4d9d-8c54-be98300d1107'
-      ]
-    })
-  }
-
-  cachedDevice = device
-
-  device.addEventListener('gattserverdisconnected', () => {
-    cachedCharacteristic = null
-  })
-
-  const server = device.gatt.connected ? device.gatt : await device.gatt.connect()
-  const services = await server.getPrimaryServices().catch(() => [])
-  let targetChar = null
-
-  for (const service of services) {
-    const characteristics = await service.getCharacteristics().catch(() => [])
-    for (const char of characteristics) {
-      if (char?.properties?.write || char?.properties?.writeWithoutResponse) {
-        targetChar = char
-        break
-      }
-    }
-    if (targetChar) break
-  }
-
-  if (!targetChar) {
-    throw new Error('Karakteristik printer thermal tidak ditemukan.')
-  }
-
-  cachedCharacteristic = targetChar
-  return targetChar
-}
 
 // Helper untuk format 2 kolom rata kiri & kanan presisi
 function formatTwoColumn(left, right, width) {
@@ -83,6 +25,19 @@ export const receiptService = {
   async printThermal(transaction) {
     if (!navigator.bluetooth) {
       throw new Error('Browser ini belum mendukung Web Bluetooth. Gunakan Chrome di Android.')
+    }
+
+    const { printerCharacteristic, isConnected, connectPrinter } = usePrinter()
+
+    let targetChar = printerCharacteristic.value
+
+    // Jika belum terhubung via header, hubungkan otomatis
+    if (!isConnected.value || !targetChar) {
+      targetChar = await connectPrinter()
+    }
+
+    if (!targetChar) {
+      throw new Error('Printer Bluetooth tidak terhubung.')
     }
 
     const settings = await settingsRepo.getSettings()
@@ -110,17 +65,22 @@ export const receiptService = {
     encoded = encoded
       .line(line)
       .align('left')
-      .line(formatTwoColumn('No. Nota', `#${transaction.id.slice(0, 8)}`, width))
-      .line(formatTwoColumn('Tanggal', dayjs(transaction.date).format('DD/MM/YY HH:mm'), width))
-      .line(formatTwoColumn('Kasir', transaction.operatorName || 'Admin', width))
+      .line(formatTwoColumn('No. Nota', `#${String(transaction.id || '').slice(-8)}`, width))
+      .line(formatTwoColumn('Tanggal', dayjs(transaction.date || new Date()).format('DD/MM/YY HH:mm'), width))
+      .line(formatTwoColumn('Kasir', transaction.operatorName || transaction.kasir || 'Admin', width))
       .line(formatTwoColumn('Pelanggan', transaction.memberName || 'Umum', width))
       .line(line)
 
     // Rincian Items
-    transaction.items.forEach(item => {
+    const items = transaction.items || []
+    items.forEach(item => {
       const name = item.name || item.productName || 'Barang'
-      const qtyPrice = `${item.qty} x ${item.price.toLocaleString('id-ID')}`
-      const subtotal = (item.subtotal || item.price * item.qty).toLocaleString('id-ID')
+      const qty = item.qty || item.cartQty || 1
+      const price = item.price || item.price_sell || 0
+      const subtotalVal = item.subtotal || (price * qty)
+
+      const qtyPrice = `${qty} x ${price.toLocaleString('id-ID')}`
+      const subtotal = subtotalVal.toLocaleString('id-ID')
       
       encoded = encoded.line(name)
       encoded = encoded.line(formatTwoColumn(`  ${qtyPrice}`, subtotal, width))
@@ -130,17 +90,18 @@ export const receiptService = {
     encoded = encoded
       .line(line)
       .bold(true)
-      .line(formatTwoColumn('TOTAL', `Rp ${transaction.total.toLocaleString('id-ID')}`, width))
+      .line(formatTwoColumn('TOTAL', `Rp ${(transaction.total || 0).toLocaleString('id-ID')}`, width))
       .bold(false)
 
-    if (transaction.paymentMethod === 'CASH') {
-      const bayar = transaction.amountPaid || transaction.paidAmount || transaction.total
-      const kembali = Math.max(0, bayar - transaction.total)
+    const isCash = String(transaction.paymentMethod || '').toUpperCase() === 'CASH'
+    if (isCash) {
+      const bayar = transaction.amountPaid || transaction.paidAmount || transaction.total || 0
+      const kembali = Math.max(0, bayar - (transaction.total || 0))
       encoded = encoded
         .line(formatTwoColumn('TUNAI', `Rp ${bayar.toLocaleString('id-ID')}`, width))
         .line(formatTwoColumn('KEMBALI', `Rp ${kembali.toLocaleString('id-ID')}`, width))
     } else {
-      encoded = encoded.line(formatTwoColumn('METODE', transaction.paymentMethod, width))
+      encoded = encoded.line(formatTwoColumn('METODE', String(transaction.paymentMethod || 'NON-TUNAI').toUpperCase(), width))
     }
 
     // Footer Nota
@@ -153,17 +114,21 @@ export const receiptService = {
       if (fLine.trim()) encoded = encoded.line(fLine.trim())
     })
 
-    encoded = encoded
+    const fullData = encoded
       .line('\n\n\n')
       .cut()
       .encode()
 
-    const characteristic = await getPrinterCharacteristic()
-
-    const chunkSize = 512
-    for (let i = 0; i < encoded.length; i += chunkSize) {
-      const chunk = encoded.slice(i, i + chunkSize)
-      await characteristic.writeValue(chunk)
+    // Kirim chunk data via Bluetooth
+    const chunkSize = 20
+    for (let i = 0; i < fullData.length; i += chunkSize) {
+      const chunk = fullData.slice(i, i + chunkSize)
+      if (targetChar.properties?.writeWithoutResponse) {
+        await targetChar.writeValueWithoutResponse(chunk)
+      } else if (targetChar.properties?.write) {
+        await targetChar.writeValue(chunk)
+      }
+      await new Promise(resolve => setTimeout(resolve, 30))
     }
   },
 
@@ -171,9 +136,10 @@ export const receiptService = {
   async downloadPdf(transaction) {
     const settings = await settingsRepo.getSettings()
     const is58mm = settings.printerPaperSize !== '80mm'
+    const items = transaction.items || []
     
     const paperWidth = is58mm ? 58 : 80
-    const estimatedHeight = 90 + (transaction.items.length * 12)
+    const estimatedHeight = 90 + (items.length * 12)
 
     const doc = new jsPDF({
       orientation: 'portrait',
@@ -201,23 +167,27 @@ export const receiptService = {
     doc.text('-'.repeat(is58mm ? 32 : 45), paperWidth / 2, y, { align: 'center' })
 
     y += 4
-    doc.text(`Nota : #${transaction.id.slice(0, 8)}`, 4, y)
+    doc.text(`Nota : #${String(transaction.id || '').slice(-8)}`, 4, y)
     y += 3.5
-    doc.text(`Tgl  : ${dayjs(transaction.date).format('DD/MM/YY HH:mm')}`, 4, y)
+    doc.text(`Tgl  : ${dayjs(transaction.date || new Date()).format('DD/MM/YY HH:mm')}`, 4, y)
     y += 3.5
-    doc.text(`Kasir: ${transaction.operatorName || 'Admin'}`, 4, y)
+    doc.text(`Kasir: ${transaction.operatorName || transaction.kasir || 'Admin'}`, 4, y)
 
     y += 4
     doc.text('-'.repeat(is58mm ? 32 : 45), paperWidth / 2, y, { align: 'center' })
 
-    transaction.items.forEach(item => {
+    items.forEach(item => {
       y += 4
       const name = item.name || item.productName || 'Barang'
       doc.text(name, 4, y)
       
       y += 3.5
-      const qtyPrice = `${item.qty} x ${item.price.toLocaleString('id-ID')}`
-      const subtotal = (item.subtotal || item.price * item.qty).toLocaleString('id-ID')
+      const qty = item.qty || item.cartQty || 1
+      const price = item.price || item.price_sell || 0
+      const subtotalVal = item.subtotal || (price * qty)
+
+      const qtyPrice = `${qty} x ${price.toLocaleString('id-ID')}`
+      const subtotal = subtotalVal.toLocaleString('id-ID')
       doc.text(qtyPrice, 4, y)
       doc.text(subtotal, paperWidth - 4, y, { align: 'right' })
     })
@@ -228,11 +198,12 @@ export const receiptService = {
     y += 4
     doc.setFont('courier', 'bold')
     doc.text('TOTAL :', 4, y)
-    doc.text(`Rp ${transaction.total.toLocaleString('id-ID')}`, paperWidth - 4, y, { align: 'right' })
+    doc.text(`Rp ${(transaction.total || 0).toLocaleString('id-ID')}`, paperWidth - 4, y, { align: 'right' })
 
-    if (transaction.paymentMethod === 'CASH') {
-      const bayar = transaction.amountPaid || transaction.paidAmount || transaction.total
-      const kembali = Math.max(0, bayar - transaction.total)
+    const isCash = String(transaction.paymentMethod || '').toUpperCase() === 'CASH'
+    if (isCash) {
+      const bayar = transaction.amountPaid || transaction.paidAmount || transaction.total || 0
+      const kembali = Math.max(0, bayar - (transaction.total || 0))
       
       y += 3.5
       doc.setFont('courier', 'normal')
@@ -249,6 +220,6 @@ export const receiptService = {
     doc.setFontSize(7)
     doc.text(settings.receiptFooter || 'Terima kasih telah berbelanja!', paperWidth / 2, y, { align: 'center' })
 
-    doc.save(`Nota_${transaction.id.slice(0, 8)}_${dayjs().format('YYYYMMDD_HHmm')}.pdf`)
+    doc.save(`Nota_${String(transaction.id || '').slice(-8)}_${dayjs().format('YYYYMMDD_HHmm')}.pdf`)
   }
 }

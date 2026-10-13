@@ -94,19 +94,19 @@ export function useKasir() {
     return packagesList.value.filter(pkg => pkg.productId === productId)
   }
 
-  const handleSelectProduct = (product) => {
-    const pCat = (product.category || '').toLowerCase()
-    const isRokok = pCat === 'rokok'
-    const hasConfiguredServices = servicesList.value.some(s => (s.category || '').toLowerCase() === pCat)
-
-    if (isRokok || hasConfiguredServices) {
-      selectedProductForOption.value = product
-    } else {
-      store.addToCart(product)
-      q.value = ''
-      showSearch.value = false
-    }
+const handleSelectProduct = (product) => {
+  const pCat = (product.category || '').toLowerCase()
+  const isRokok = pCat === 'rokok'
+  const hasPackages = getProductPackages(product.id).length > 0
+  const hasConfiguredServices = servicesList.value.some(s => (s.category || '').toLowerCase() === pCat)
+  if ((isRokok && hasPackages) || (!isRokok && hasConfiguredServices)) {
+    selectedProductForOption.value = product
+  } else {
+    store.addToCart(product)
+    q.value = ''
+    showSearch.value = false
   }
+}
 
   const confirmAddToCart = (product, options) => {
     const targetPrice = (options.price_sell !== undefined) ? options.price_sell : product.price_sell
@@ -183,7 +183,6 @@ export function useKasir() {
         barcodeBuffer = ''
         processBarcodeScan(scannedCode)
       } else if (isKasirSearchInput && q.value.trim().length > 0) {
-        // Mendukung input manual + Enter dari kasir
         e.preventDefault()
         processBarcodeScan(q.value.trim())
       }

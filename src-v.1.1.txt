@@ -363,24 +363,44 @@ export const operatorRepo = {
 }
 
 ===== src/db/repositories/packageRepository.js =====
+// src/db/repositories/packageRepository.js
 import { db } from '../index.js'
-import dayjs from 'dayjs'
+import { doc, deleteDoc } from 'firebase/firestore'
+import { firestore } from '../../services/firebase.js'
 
 export const packageRepository = {
-  getByProductId: (productId) => db.product_packages.where('productId').equals(productId).toArray(),
-  getAll: () => db.product_packages.toArray(),
-  savePackage: async (data) => {
-    const now = dayjs().toISOString()
-    const id = data.id || crypto.randomUUID()
-    await db.product_packages.put({
-      ...data,
-      id,
-      updatedAt: now,
-      synced: 0
-    })
-    return id
+  async getAll() {
+    return await db.product_packages.toArray()
   },
-  deletePackage: (id) => db.product_packages.delete(id)
+
+  async savePackage(packageData) {
+    const id = packageData.id || `pkg_${Date.now()}`
+    const newItem = { 
+      ...packageData, 
+      id, 
+      updatedAt: new Date().toISOString(),
+      synced: 0 
+    }
+    await db.product_packages.put(newItem)
+    return newItem
+  },
+
+  async deletePackage(id) {
+    const stringId = String(id)
+
+    // 1. Hapus dari Dexie IndexedDB lokal
+    await db.product_packages.delete(stringId)
+
+    // 2. Hapus langsung dari Cloud Firestore agar tidak ditarik lagi oleh listener/onSnapshot
+    if (navigator.onLine && firestore) {
+      try {
+        const docRef = doc(firestore, 'product_packages', stringId)
+        await deleteDoc(docRef)
+      } catch (err) {
+        console.error('Gagal menghapus paket di Firestore:', err)
+      }
+    }
+  }
 }
 
 ===== src/db/repositories/serviceRepository.js =====
@@ -825,8 +845,31 @@ export const expenseRepository = {
         <div class="font-black text-sm text-zinc-900">{{ activePage }}</div>
       </div>
 
-      <!-- INDIKATOR SYNC REALTIME -->
       <div class="flex items-center gap-2">
+        <!-- TOMBOL PRINTER BLUETOOTH -->
+        <button 
+          @click="toggleConnection" 
+          :disabled="isConnecting"
+          :title="isConnected ? `Terhubung: ${printerDevice?.name || 'Printer'}` : 'Hubungkan Printer Bluetooth'"
+          :class="[
+            'relative p-2.5 rounded-2xl border transition flex items-center justify-center active:scale-95',
+            isConnected 
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-700' 
+              : 'bg-white border-zinc-200 text-zinc-500 hover:text-zinc-900'
+          ]"
+        >
+          <Printer :class="['w-4 h-4', isConnecting ? 'animate-pulse' : '']" />
+
+          <!-- Indikator Status Titik Warna -->
+          <span 
+            :class="[
+              'absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full border-2 border-white',
+              isConnected ? 'bg-emerald-500' : 'bg-zinc-300'
+            ]"
+          ></span>
+        </button>
+
+        <!-- INDIKATOR SYNC REALTIME -->
         <button 
           @click="manualSync" 
           :title="syncStatus.isOnline ? (syncStatus.isSyncing ? 'Sedang Sinkronisasi...' : 'Klik untuk sinkronisasi manual') : 'Mode Offline'"
@@ -868,13 +911,13 @@ export const expenseRepository = {
     </header>
 
     <!-- MAIN ROUTER VIEW -->
-<main class="flex-1 overflow-hidden flex flex-col max-w-full md:max-w-4xl lg:max-w-6xl mx-auto w-full relative transition-all">
-  <router-view v-slot="{ Component }">
-    <keep-alive>
-      <component :is="Component" :key="$route.fullPath" />
-    </keep-alive>
-  </router-view>
-</main>
+    <main class="flex-1 overflow-hidden flex flex-col max-w-full md:max-w-4xl lg:max-w-6xl mx-auto w-full relative transition-all">
+      <router-view v-slot="{ Component }">
+        <keep-alive>
+          <component :is="Component" :key="$route.fullPath" />
+        </keep-alive>
+      </router-view>
+    </main>
 
   </div>
 </div>
@@ -885,14 +928,18 @@ import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { 
   Menu, X, Package, Store, LayoutDashboard, Plus, 
-  Users, ShoppingCart, Tags, History, Coffee, Smartphone, Wallet, RefreshCw, BarChart3, Settings, Receipt
+  Users, ShoppingCart, Tags, History, Coffee, Smartphone, Wallet, RefreshCw, BarChart3, Settings, Receipt, Printer
 } from 'lucide-vue-next'
 import SidebarComponent from '../components/Sidebar.vue'
 import { syncStatus, syncRealtime } from '../services/syncService.js'
+import { usePrinter } from '../composables/usePrinter.js'
 
 const isOpen = ref(false)
 const route = useRoute()
 const router = useRouter()
+
+// Inisialisasi composable printer bluetooth
+const { isConnected, isConnecting, printerDevice, toggleConnection } = usePrinter()
 
 const activePage = computed(() => route.meta.title || 'Barang')
 const isKasirPage = computed(() => route.path.startsWith('/kasir'))
@@ -934,8 +981,6 @@ const groups = ref([
     ]
   }
 ])
-
-
 
 const handleSelect = (m) => {
   isOpen.value = false
@@ -2328,70 +2373,12 @@ export const expenseService = {
 }
 
 ===== src/services/receiptService.js =====
+// src/services/receiptService.js
 import { jsPDF } from 'jspdf'
 import EscPosEncoder from 'esc-pos-encoder'
 import { settingsRepo } from '../db/repositories/settingsRepository.js'
+import { usePrinter } from '../composables/usePrinter.js'
 import dayjs from 'dayjs'
-
-// Cache koneksi printer agar tidak perlu reconnect tiap cetak
-let cachedDevice = null
-let cachedCharacteristic = null
-
-async function getPrinterCharacteristic() {
-  if (cachedDevice && cachedDevice.gatt?.connected && cachedCharacteristic) {
-    return cachedCharacteristic
-  }
-
-  let device = cachedDevice
-
-  if (!device && navigator.bluetooth?.getDevices) {
-    const devices = await navigator.bluetooth.getDevices()
-    if (devices.length > 0) {
-      device = devices[0]
-    }
-  }
-
-  if (!device) {
-    device = await navigator.bluetooth.requestDevice({
-      acceptAllDevices: true,
-      optionalServices: [
-        '000018f0-0000-1000-8000-00805f9b34fb',
-        '0000ff00-0000-1000-8000-00805f9b34fb',
-        '0000af00-0000-1000-8000-00805f9b34fb',
-        '49535343-fe7d-41aa-a322-3d7a4a2d2bd0',
-        'e7810a71-73ae-4d9d-8c54-be98300d1107'
-      ]
-    })
-  }
-
-  cachedDevice = device
-
-  device.addEventListener('gattserverdisconnected', () => {
-    cachedCharacteristic = null
-  })
-
-  const server = device.gatt.connected ? device.gatt : await device.gatt.connect()
-  const services = await server.getPrimaryServices().catch(() => [])
-  let targetChar = null
-
-  for (const service of services) {
-    const characteristics = await service.getCharacteristics().catch(() => [])
-    for (const char of characteristics) {
-      if (char?.properties?.write || char?.properties?.writeWithoutResponse) {
-        targetChar = char
-        break
-      }
-    }
-    if (targetChar) break
-  }
-
-  if (!targetChar) {
-    throw new Error('Karakteristik printer thermal tidak ditemukan.')
-  }
-
-  cachedCharacteristic = targetChar
-  return targetChar
-}
 
 // Helper untuk format 2 kolom rata kiri & kanan presisi
 function formatTwoColumn(left, right, width) {
@@ -2413,6 +2400,19 @@ export const receiptService = {
   async printThermal(transaction) {
     if (!navigator.bluetooth) {
       throw new Error('Browser ini belum mendukung Web Bluetooth. Gunakan Chrome di Android.')
+    }
+
+    const { printerCharacteristic, isConnected, connectPrinter } = usePrinter()
+
+    let targetChar = printerCharacteristic.value
+
+    // Jika belum terhubung via header, hubungkan otomatis
+    if (!isConnected.value || !targetChar) {
+      targetChar = await connectPrinter()
+    }
+
+    if (!targetChar) {
+      throw new Error('Printer Bluetooth tidak terhubung.')
     }
 
     const settings = await settingsRepo.getSettings()
@@ -2440,17 +2440,22 @@ export const receiptService = {
     encoded = encoded
       .line(line)
       .align('left')
-      .line(formatTwoColumn('No. Nota', `#${transaction.id.slice(0, 8)}`, width))
-      .line(formatTwoColumn('Tanggal', dayjs(transaction.date).format('DD/MM/YY HH:mm'), width))
-      .line(formatTwoColumn('Kasir', transaction.operatorName || 'Admin', width))
+      .line(formatTwoColumn('No. Nota', `#${String(transaction.id || '').slice(-8)}`, width))
+      .line(formatTwoColumn('Tanggal', dayjs(transaction.date || new Date()).format('DD/MM/YY HH:mm'), width))
+      .line(formatTwoColumn('Kasir', transaction.operatorName || transaction.kasir || 'Admin', width))
       .line(formatTwoColumn('Pelanggan', transaction.memberName || 'Umum', width))
       .line(line)
 
     // Rincian Items
-    transaction.items.forEach(item => {
+    const items = transaction.items || []
+    items.forEach(item => {
       const name = item.name || item.productName || 'Barang'
-      const qtyPrice = `${item.qty} x ${item.price.toLocaleString('id-ID')}`
-      const subtotal = (item.subtotal || item.price * item.qty).toLocaleString('id-ID')
+      const qty = item.qty || item.cartQty || 1
+      const price = item.price || item.price_sell || 0
+      const subtotalVal = item.subtotal || (price * qty)
+
+      const qtyPrice = `${qty} x ${price.toLocaleString('id-ID')}`
+      const subtotal = subtotalVal.toLocaleString('id-ID')
       
       encoded = encoded.line(name)
       encoded = encoded.line(formatTwoColumn(`  ${qtyPrice}`, subtotal, width))
@@ -2460,17 +2465,18 @@ export const receiptService = {
     encoded = encoded
       .line(line)
       .bold(true)
-      .line(formatTwoColumn('TOTAL', `Rp ${transaction.total.toLocaleString('id-ID')}`, width))
+      .line(formatTwoColumn('TOTAL', `Rp ${(transaction.total || 0).toLocaleString('id-ID')}`, width))
       .bold(false)
 
-    if (transaction.paymentMethod === 'CASH') {
-      const bayar = transaction.amountPaid || transaction.paidAmount || transaction.total
-      const kembali = Math.max(0, bayar - transaction.total)
+    const isCash = String(transaction.paymentMethod || '').toUpperCase() === 'CASH'
+    if (isCash) {
+      const bayar = transaction.amountPaid || transaction.paidAmount || transaction.total || 0
+      const kembali = Math.max(0, bayar - (transaction.total || 0))
       encoded = encoded
         .line(formatTwoColumn('TUNAI', `Rp ${bayar.toLocaleString('id-ID')}`, width))
         .line(formatTwoColumn('KEMBALI', `Rp ${kembali.toLocaleString('id-ID')}`, width))
     } else {
-      encoded = encoded.line(formatTwoColumn('METODE', transaction.paymentMethod, width))
+      encoded = encoded.line(formatTwoColumn('METODE', String(transaction.paymentMethod || 'NON-TUNAI').toUpperCase(), width))
     }
 
     // Footer Nota
@@ -2483,17 +2489,21 @@ export const receiptService = {
       if (fLine.trim()) encoded = encoded.line(fLine.trim())
     })
 
-    encoded = encoded
+    const fullData = encoded
       .line('\n\n\n')
       .cut()
       .encode()
 
-    const characteristic = await getPrinterCharacteristic()
-
-    const chunkSize = 512
-    for (let i = 0; i < encoded.length; i += chunkSize) {
-      const chunk = encoded.slice(i, i + chunkSize)
-      await characteristic.writeValue(chunk)
+    // Kirim chunk data via Bluetooth
+    const chunkSize = 20
+    for (let i = 0; i < fullData.length; i += chunkSize) {
+      const chunk = fullData.slice(i, i + chunkSize)
+      if (targetChar.properties?.writeWithoutResponse) {
+        await targetChar.writeValueWithoutResponse(chunk)
+      } else if (targetChar.properties?.write) {
+        await targetChar.writeValue(chunk)
+      }
+      await new Promise(resolve => setTimeout(resolve, 30))
     }
   },
 
@@ -2501,9 +2511,10 @@ export const receiptService = {
   async downloadPdf(transaction) {
     const settings = await settingsRepo.getSettings()
     const is58mm = settings.printerPaperSize !== '80mm'
+    const items = transaction.items || []
     
     const paperWidth = is58mm ? 58 : 80
-    const estimatedHeight = 90 + (transaction.items.length * 12)
+    const estimatedHeight = 90 + (items.length * 12)
 
     const doc = new jsPDF({
       orientation: 'portrait',
@@ -2531,23 +2542,27 @@ export const receiptService = {
     doc.text('-'.repeat(is58mm ? 32 : 45), paperWidth / 2, y, { align: 'center' })
 
     y += 4
-    doc.text(`Nota : #${transaction.id.slice(0, 8)}`, 4, y)
+    doc.text(`Nota : #${String(transaction.id || '').slice(-8)}`, 4, y)
     y += 3.5
-    doc.text(`Tgl  : ${dayjs(transaction.date).format('DD/MM/YY HH:mm')}`, 4, y)
+    doc.text(`Tgl  : ${dayjs(transaction.date || new Date()).format('DD/MM/YY HH:mm')}`, 4, y)
     y += 3.5
-    doc.text(`Kasir: ${transaction.operatorName || 'Admin'}`, 4, y)
+    doc.text(`Kasir: ${transaction.operatorName || transaction.kasir || 'Admin'}`, 4, y)
 
     y += 4
     doc.text('-'.repeat(is58mm ? 32 : 45), paperWidth / 2, y, { align: 'center' })
 
-    transaction.items.forEach(item => {
+    items.forEach(item => {
       y += 4
       const name = item.name || item.productName || 'Barang'
       doc.text(name, 4, y)
       
       y += 3.5
-      const qtyPrice = `${item.qty} x ${item.price.toLocaleString('id-ID')}`
-      const subtotal = (item.subtotal || item.price * item.qty).toLocaleString('id-ID')
+      const qty = item.qty || item.cartQty || 1
+      const price = item.price || item.price_sell || 0
+      const subtotalVal = item.subtotal || (price * qty)
+
+      const qtyPrice = `${qty} x ${price.toLocaleString('id-ID')}`
+      const subtotal = subtotalVal.toLocaleString('id-ID')
       doc.text(qtyPrice, 4, y)
       doc.text(subtotal, paperWidth - 4, y, { align: 'right' })
     })
@@ -2558,11 +2573,12 @@ export const receiptService = {
     y += 4
     doc.setFont('courier', 'bold')
     doc.text('TOTAL :', 4, y)
-    doc.text(`Rp ${transaction.total.toLocaleString('id-ID')}`, paperWidth - 4, y, { align: 'right' })
+    doc.text(`Rp ${(transaction.total || 0).toLocaleString('id-ID')}`, paperWidth - 4, y, { align: 'right' })
 
-    if (transaction.paymentMethod === 'CASH') {
-      const bayar = transaction.amountPaid || transaction.paidAmount || transaction.total
-      const kembali = Math.max(0, bayar - transaction.total)
+    const isCash = String(transaction.paymentMethod || '').toUpperCase() === 'CASH'
+    if (isCash) {
+      const bayar = transaction.amountPaid || transaction.paidAmount || transaction.total || 0
+      const kembali = Math.max(0, bayar - (transaction.total || 0))
       
       y += 3.5
       doc.setFont('courier', 'normal')
@@ -2579,7 +2595,7 @@ export const receiptService = {
     doc.setFontSize(7)
     doc.text(settings.receiptFooter || 'Terima kasih telah berbelanja!', paperWidth / 2, y, { align: 'center' })
 
-    doc.save(`Nota_${transaction.id.slice(0, 8)}_${dayjs().format('YYYYMMDD_HHmm')}.pdf`)
+    doc.save(`Nota_${String(transaction.id || '').slice(-8)}_${dayjs().format('YYYYMMDD_HHmm')}.pdf`)
   }
 }
 
@@ -3283,7 +3299,6 @@ onActivated(() => {
     </button>
   </div>
 </div>
-
 <!-- Modal Pilihan Varian & Penyajian -->
 <div v-if="selectedProductForOption" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
   <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl animate-in slide-in-from-bottom duration-200 max-h-[80vh] flex flex-col">
@@ -3297,24 +3312,8 @@ onActivated(() => {
       </button>
     </div>
 
-    <!-- Opsi khusus ROKOK -->
+    <!-- KHUSUS ROKOK: Cuma nampilin paket eceran yang udah dibuat -->
     <div v-if="(selectedProductForOption.category || '').toLowerCase() === 'rokok'" class="space-y-2 overflow-auto flex-1 pr-1">
-      <button 
-        @click="confirmAddToCart(selectedProductForOption, { customName: selectedProductForOption.name })"
-        class="w-full p-3.5 bg-zinc-50 border border-zinc-200 rounded-xl font-bold text-sm text-left flex justify-between items-center hover:bg-zinc-100 transition"
-      >
-        <span>1 Bungkus</span>
-        <span class="font-black">Rp {{ formatRibuan(selectedProductForOption.price_sell) }}</span>
-      </button>
-
-      <button 
-        @click="confirmAddToCart(selectedProductForOption, { customName: `1/2 bungkus ${selectedProductForOption.name}`, price_sell: Math.ceil(selectedProductForOption.price_sell / 2) })"
-        class="w-full p-3.5 bg-zinc-50 border border-zinc-200 rounded-xl font-bold text-sm text-left flex justify-between items-center hover:bg-zinc-100 transition"
-      >
-        <span>1/2 Bungkus</span>
-        <span class="font-black">Rp {{ formatRibuan(Math.ceil(selectedProductForOption.price_sell / 2)) }}</span>
-      </button>
-
       <button 
         v-for="pkg in getProductPackages(selectedProductForOption.id)" 
         :key="pkg.id"
@@ -3326,7 +3325,7 @@ onActivated(() => {
       </button>
     </div>
 
-    <!-- Opsi Jasa Tambahan Dinamis Sesuai Kategori -->
+    <!-- SELAIN ROKOK (SEPERTI SEDUH KOPI): Tampil Opsi Mentah vs Seduh -->
     <div v-else class="space-y-2 overflow-auto flex-1 pr-1">
       <button 
         @click="confirmAddToCart(selectedProductForOption, { isServed: false, customName: selectedProductForOption.name })"
@@ -4027,6 +4026,7 @@ onMounted(() => {
 </script>
 
 ===== src/views/ProductsList.vue =====
+<!-- src/views/ProductsList.vue -->
 <template>
 <div class="flex-1 overflow-auto p-4 pb-24">
   <!-- HEADER -->
@@ -4049,7 +4049,15 @@ onMounted(() => {
   <!-- SEARCH -->
   <div class="relative mb-3">
     <Search class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400"/>
-    <input v-model="q" placeholder="Cari nama / kode..." class="w-full pl-11 pr-4 py-3 bg-white border border-zinc-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"/>
+    <input 
+      id="product-search-input"
+      v-model="q" 
+      placeholder="Ketik nama / scan barcode..." 
+      class="w-full pl-11 pr-10 py-3 bg-white border border-zinc-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"
+    />
+    <button v-if="q" @click="q=''" class="absolute right-3 top-1/2 -translate-y-1/2 p-1 bg-zinc-100 rounded-full text-zinc-400 hover:text-zinc-600">
+      <X class="w-3.5 h-3.5"/>
+    </button>
   </div>
 
   <!-- CHIP FILTER AKTIF -->
@@ -4156,7 +4164,7 @@ onMounted(() => {
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated } from 'vue'
 import { Plus, Search, Filter, Pencil, Trash2, X } from 'lucide-vue-next'
 import { useProductsStore } from '../stores/productStore.js'
 import { formatRibuan } from '../utils/formatters/currency.js'
@@ -4232,7 +4240,69 @@ const handleDelete = async (p) => {
   }
 }
 
-onMounted(() => store.fetch())
+// --- LOGIKA LISTENER BARCODE SCANNER HID ---
+let barcodeBuffer = ''
+let lastKeyTime = Date.now()
+
+const handleGlobalKeydown = (e) => {
+  if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Tab'].includes(e.key)) return
+
+  const activeEl = document.activeElement
+  const isTypingInInput = activeEl && (
+    activeEl.tagName === 'INPUT' || 
+    activeEl.tagName === 'TEXTAREA' || 
+    activeEl.tagName === 'SELECT'
+  )
+
+  const isProductSearchInput = activeEl && activeEl.id === 'product-search-input'
+  if (isTypingInInput && !isProductSearchInput) return
+
+  const currentTime = Date.now()
+
+  if (currentTime - lastKeyTime > 50) {
+    barcodeBuffer = ''
+  }
+
+  if (e.key === 'Enter') {
+    if (barcodeBuffer.trim().length > 0) {
+      e.preventDefault()
+      q.value = barcodeBuffer.trim()
+      barcodeBuffer = ''
+    }
+  } else if (e.key.length === 1) {
+    if (!isTypingInInput || (currentTime - lastKeyTime < 30)) {
+      barcodeBuffer += e.key
+    }
+  }
+
+  lastKeyTime = currentTime
+}
+
+const attachListener = () => {
+  window.removeEventListener('keydown', handleGlobalKeydown)
+  window.addEventListener('keydown', handleGlobalKeydown)
+}
+
+const detachListener = () => {
+  window.removeEventListener('keydown', handleGlobalKeydown)
+}
+
+onMounted(() => {
+  store.fetch()
+  attachListener()
+})
+
+onUnmounted(() => {
+  detachListener()
+})
+
+onActivated(() => {
+  attachListener()
+})
+
+onDeactivated(() => {
+  detachListener()
+})
 </script>
 
 ===== src/views/Reports.vue =====
@@ -5475,7 +5545,7 @@ onMounted(() => {
     <ReceiptModal 
       v-if="showReceiptModal && selectedTransaction" 
       :transaction="selectedTransaction" 
-      @close="showReceiptModal = false" 
+      @close="handleCloseReceipt" 
     />
   </div>
 </template>
@@ -5502,6 +5572,12 @@ const {
 } = useSalesHistory()
 
 const showReceiptModal = ref(false)
+
+// Menutup modal cetak struk sekaligus modal detail transaksi
+const handleCloseReceipt = () => {
+  showReceiptModal.value = false
+  selectedTransaction.value = null
+}
 
 onMounted(() => {
   loadHistory()
@@ -6499,19 +6575,19 @@ export function useKasir() {
     return packagesList.value.filter(pkg => pkg.productId === productId)
   }
 
-  const handleSelectProduct = (product) => {
-    const pCat = (product.category || '').toLowerCase()
-    const isRokok = pCat === 'rokok'
-    const hasConfiguredServices = servicesList.value.some(s => (s.category || '').toLowerCase() === pCat)
-
-    if (isRokok || hasConfiguredServices) {
-      selectedProductForOption.value = product
-    } else {
-      store.addToCart(product)
-      q.value = ''
-      showSearch.value = false
-    }
+const handleSelectProduct = (product) => {
+  const pCat = (product.category || '').toLowerCase()
+  const isRokok = pCat === 'rokok'
+  const hasPackages = getProductPackages(product.id).length > 0
+  const hasConfiguredServices = servicesList.value.some(s => (s.category || '').toLowerCase() === pCat)
+  if ((isRokok && hasPackages) || (!isRokok && hasConfiguredServices)) {
+    selectedProductForOption.value = product
+  } else {
+    store.addToCart(product)
+    q.value = ''
+    showSearch.value = false
   }
+}
 
   const confirmAddToCart = (product, options) => {
     const targetPrice = (options.price_sell !== undefined) ? options.price_sell : product.price_sell
@@ -6588,7 +6664,6 @@ export function useKasir() {
         barcodeBuffer = ''
         processBarcodeScan(scannedCode)
       } else if (isKasirSearchInput && q.value.trim().length > 0) {
-        // Mendukung input manual + Enter dari kasir
         e.preventDefault()
         processBarcodeScan(q.value.trim())
       }
@@ -7633,6 +7708,123 @@ export function useExpenses() {
   }
 }
 
+===== src/composables/usePrinter.js =====
+// src/composables/usePrinter.js
+import { ref } from 'vue'
+import { toast } from 'vue-sonner'
+
+const isConnected = ref(false)
+const isConnecting = ref(false)
+const printerDevice = ref(null)
+const printerCharacteristic = ref(null)
+
+export function usePrinter() {
+  const onDisconnected = () => {
+    isConnected.value = false
+    printerDevice.value = null
+    printerCharacteristic.value = null
+  }
+
+  const connectPrinter = async () => {
+    if (!navigator.bluetooth) {
+      toast.error('Browser ini tidak mendukung Web Bluetooth')
+      return null
+    }
+
+    try {
+      isConnecting.value = true
+
+      let device = printerDevice.value
+
+      // Cek perangkat yang sudah diizinkan sebelumnya
+      if (!device && navigator.bluetooth.getDevices) {
+        const devices = await navigator.bluetooth.getDevices()
+        if (devices.length > 0) {
+          device = devices[0]
+        }
+      }
+
+      // Jika belum ada, minta pilih perangkat Bluetooth
+      if (!device) {
+        device = await navigator.bluetooth.requestDevice({
+          acceptAllDevices: true,
+          optionalServices: [
+            '000018f0-0000-1000-8000-00805f9b34fb',
+            '0000ff00-0000-1000-8000-00805f9b34fb',
+            '0000af00-0000-1000-8000-00805f9b34fb',
+            '49535343-fe7d-41aa-a322-3d7a4a2d2bd0',
+            'e7810a71-73ae-4d9d-8c54-be98300d1107'
+          ]
+        })
+      }
+
+      printerDevice.value = device
+      device.removeEventListener('gattserverdisconnected', onDisconnected)
+      device.addEventListener('gattserverdisconnected', onDisconnected)
+
+      const server = device.gatt.connected ? device.gatt : await device.gatt.connect()
+      const services = await server.getPrimaryServices().catch(() => [])
+      let targetChar = null
+
+      // Cari characteristic yang mendukung WRITE atau WRITE_WITHOUT_RESPONSE
+      for (const service of services) {
+        const characteristics = await service.getCharacteristics().catch(() => [])
+        for (const char of characteristics) {
+          if (char?.properties?.write || char?.properties?.writeWithoutResponse) {
+            targetChar = char
+            break
+          }
+        }
+        if (targetChar) break
+      }
+
+      if (!targetChar) {
+        throw new Error('Karakteristik cetak printer thermal tidak ditemukan.')
+      }
+
+      printerCharacteristic.value = targetChar
+      isConnected.value = true
+      toast.success(`Terhubung ke printer: ${device.name || 'Printer Thermal'}`)
+      return targetChar
+    } catch (err) {
+      onDisconnected()
+      if (err.name !== 'NotFoundError') {
+        console.error('Gagal terhubung ke printer:', err)
+        toast.error(err.message || 'Gagal menghubungkan printer Bluetooth')
+      }
+      return null
+    } finally {
+      isConnecting.value = false
+    }
+  }
+
+  const disconnectPrinter = () => {
+    if (printerDevice.value && printerDevice.value.gatt?.connected) {
+      printerDevice.value.gatt.disconnect()
+    }
+    onDisconnected()
+    toast.info('Koneksi printer diputuskan')
+  }
+
+  const toggleConnection = () => {
+    if (isConnected.value) {
+      disconnectPrinter()
+    } else {
+      connectPrinter()
+    }
+  }
+
+  return {
+    isConnected,
+    isConnecting,
+    printerDevice,
+    printerCharacteristic,
+    connectPrinter,
+    disconnectPrinter,
+    toggleConnection
+  }
+}
+
 ===== src/utils/calculator/product.js =====
 import Big from 'big.js'
 
@@ -7991,7 +8183,7 @@ const handleLogout = () => {
           <h2 class="font-black text-base text-zinc-900">Transaksi Selesai</h2>
           <p class="text-xs text-zinc-400">ID: #{{ transaction?.id?.slice(0, 8) }}</p>
         </div>
-        <button @click="$emit('close')" class="p-2 bg-zinc-100 rounded-xl">
+        <button @click="emit('close')" class="p-2 bg-zinc-100 rounded-xl">
           <X class="w-4 h-4" />
         </button>
       </div>
@@ -8046,7 +8238,7 @@ const handleLogout = () => {
         </button>
 
         <button 
-          @click="$emit('close')" 
+          @click="emit('close')" 
           class="w-full py-3 bg-zinc-100 text-zinc-700 rounded-2xl font-bold text-xs hover:bg-zinc-200 transition"
         >
           Transaksi Baru
@@ -8071,7 +8263,7 @@ const props = defineProps({
   }
 })
 
-defineEmits(['close'])
+const emit = defineEmits(['close'])
 
 const printing = ref(false)
 
@@ -8082,6 +8274,7 @@ const handlePrintBluetooth = async () => {
   try {
     await receiptService.printThermal(props.transaction)
     toast.success('Struk berhasil dicetak!')
+    emit('close') // Tutup modal otomatis setelah berhasil cetak
   } catch (err) {
     toast.error(`Gagal mencetak: ${err.message}`)
   } finally {

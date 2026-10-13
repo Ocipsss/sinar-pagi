@@ -1,3 +1,4 @@
+<!-- src/views/ProductsList.vue -->
 <template>
 <div class="flex-1 overflow-auto p-4 pb-24">
   <!-- HEADER -->
@@ -20,7 +21,15 @@
   <!-- SEARCH -->
   <div class="relative mb-3">
     <Search class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400"/>
-    <input v-model="q" placeholder="Cari nama / kode..." class="w-full pl-11 pr-4 py-3 bg-white border border-zinc-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"/>
+    <input 
+      id="product-search-input"
+      v-model="q" 
+      placeholder="Ketik nama / scan barcode..." 
+      class="w-full pl-11 pr-10 py-3 bg-white border border-zinc-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"
+    />
+    <button v-if="q" @click="q=''" class="absolute right-3 top-1/2 -translate-y-1/2 p-1 bg-zinc-100 rounded-full text-zinc-400 hover:text-zinc-600">
+      <X class="w-3.5 h-3.5"/>
+    </button>
   </div>
 
   <!-- CHIP FILTER AKTIF -->
@@ -127,7 +136,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated } from 'vue'
 import { Plus, Search, Filter, Pencil, Trash2, X } from 'lucide-vue-next'
 import { useProductsStore } from '../stores/productStore.js'
 import { formatRibuan } from '../utils/formatters/currency.js'
@@ -203,5 +212,67 @@ const handleDelete = async (p) => {
   }
 }
 
-onMounted(() => store.fetch())
+// --- LOGIKA LISTENER BARCODE SCANNER HID ---
+let barcodeBuffer = ''
+let lastKeyTime = Date.now()
+
+const handleGlobalKeydown = (e) => {
+  if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Tab'].includes(e.key)) return
+
+  const activeEl = document.activeElement
+  const isTypingInInput = activeEl && (
+    activeEl.tagName === 'INPUT' || 
+    activeEl.tagName === 'TEXTAREA' || 
+    activeEl.tagName === 'SELECT'
+  )
+
+  const isProductSearchInput = activeEl && activeEl.id === 'product-search-input'
+  if (isTypingInInput && !isProductSearchInput) return
+
+  const currentTime = Date.now()
+
+  if (currentTime - lastKeyTime > 50) {
+    barcodeBuffer = ''
+  }
+
+  if (e.key === 'Enter') {
+    if (barcodeBuffer.trim().length > 0) {
+      e.preventDefault()
+      q.value = barcodeBuffer.trim()
+      barcodeBuffer = ''
+    }
+  } else if (e.key.length === 1) {
+    if (!isTypingInInput || (currentTime - lastKeyTime < 30)) {
+      barcodeBuffer += e.key
+    }
+  }
+
+  lastKeyTime = currentTime
+}
+
+const attachListener = () => {
+  window.removeEventListener('keydown', handleGlobalKeydown)
+  window.addEventListener('keydown', handleGlobalKeydown)
+}
+
+const detachListener = () => {
+  window.removeEventListener('keydown', handleGlobalKeydown)
+}
+
+onMounted(() => {
+  store.fetch()
+  attachListener()
+})
+
+onUnmounted(() => {
+  detachListener()
+})
+
+onActivated(() => {
+  attachListener()
+})
+
+onDeactivated(() => {
+  detachListener()
+})
 </script>

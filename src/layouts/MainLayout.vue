@@ -36,8 +36,31 @@
         <div class="font-black text-sm text-zinc-900">{{ activePage }}</div>
       </div>
 
-      <!-- INDIKATOR SYNC REALTIME -->
       <div class="flex items-center gap-2">
+        <!-- TOMBOL PRINTER BLUETOOTH -->
+        <button 
+          @click="toggleConnection" 
+          :disabled="isConnecting"
+          :title="isConnected ? `Terhubung: ${printerDevice?.name || 'Printer'}` : 'Hubungkan Printer Bluetooth'"
+          :class="[
+            'relative p-2.5 rounded-2xl border transition flex items-center justify-center active:scale-95',
+            isConnected 
+              ? 'bg-emerald-50 border-emerald-200 text-emerald-700' 
+              : 'bg-white border-zinc-200 text-zinc-500 hover:text-zinc-900'
+          ]"
+        >
+          <Printer :class="['w-4 h-4', isConnecting ? 'animate-pulse' : '']" />
+
+          <!-- Indikator Status Titik Warna -->
+          <span 
+            :class="[
+              'absolute -top-1 -right-1 w-2.5 h-2.5 rounded-full border-2 border-white',
+              isConnected ? 'bg-emerald-500' : 'bg-zinc-300'
+            ]"
+          ></span>
+        </button>
+
+        <!-- INDIKATOR SYNC REALTIME -->
         <button 
           @click="manualSync" 
           :title="syncStatus.isOnline ? (syncStatus.isSyncing ? 'Sedang Sinkronisasi...' : 'Klik untuk sinkronisasi manual') : 'Mode Offline'"
@@ -79,13 +102,13 @@
     </header>
 
     <!-- MAIN ROUTER VIEW -->
-<main class="flex-1 overflow-hidden flex flex-col max-w-full md:max-w-4xl lg:max-w-6xl mx-auto w-full relative transition-all">
-  <router-view v-slot="{ Component }">
-    <keep-alive>
-      <component :is="Component" :key="$route.fullPath" />
-    </keep-alive>
-  </router-view>
-</main>
+    <main class="flex-1 overflow-hidden flex flex-col max-w-full md:max-w-4xl lg:max-w-6xl mx-auto w-full relative transition-all">
+      <router-view v-slot="{ Component }">
+        <keep-alive>
+          <component :is="Component" :key="$route.fullPath" />
+        </keep-alive>
+      </router-view>
+    </main>
 
   </div>
 </div>
@@ -96,14 +119,18 @@ import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { 
   Menu, X, Package, Store, LayoutDashboard, Plus, 
-  Users, ShoppingCart, Tags, History, Coffee, Smartphone, Wallet, RefreshCw, BarChart3, Settings, Receipt
+  Users, ShoppingCart, Tags, History, Coffee, Smartphone, Wallet, RefreshCw, BarChart3, Settings, Receipt, Printer
 } from 'lucide-vue-next'
 import SidebarComponent from '../components/Sidebar.vue'
 import { syncStatus, syncRealtime } from '../services/syncService.js'
+import { usePrinter } from '../composables/usePrinter.js'
 
 const isOpen = ref(false)
 const route = useRoute()
 const router = useRouter()
+
+// Inisialisasi composable printer bluetooth
+const { isConnected, isConnecting, printerDevice, toggleConnection } = usePrinter()
 
 const activePage = computed(() => route.meta.title || 'Barang')
 const isKasirPage = computed(() => route.path.startsWith('/kasir'))
@@ -145,8 +172,6 @@ const groups = ref([
     ]
   }
 ])
-
-
 
 const handleSelect = (m) => {
   isOpen.value = false

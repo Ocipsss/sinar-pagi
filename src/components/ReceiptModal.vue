@@ -8,7 +8,7 @@
           <h2 class="font-black text-base text-zinc-900">Transaksi Selesai</h2>
           <p class="text-xs text-zinc-400">ID: #{{ transaction?.id?.slice(0, 8) }}</p>
         </div>
-        <button @click="$emit('close')" class="p-2 bg-zinc-100 rounded-xl">
+        <button @click="emit('close')" class="p-2 bg-zinc-100 rounded-xl">
           <X class="w-4 h-4" />
         </button>
       </div>
@@ -63,7 +63,7 @@
         </button>
 
         <button 
-          @click="$emit('close')" 
+          @click="emit('close')" 
           class="w-full py-3 bg-zinc-100 text-zinc-700 rounded-2xl font-bold text-xs hover:bg-zinc-200 transition"
         >
           Transaksi Baru
@@ -88,7 +88,7 @@ const props = defineProps({
   }
 })
 
-defineEmits(['close'])
+const emit = defineEmits(['close'])
 
 const printing = ref(false)
 
@@ -99,6 +99,7 @@ const handlePrintBluetooth = async () => {
   try {
     await receiptService.printThermal(props.transaction)
     toast.success('Struk berhasil dicetak!')
+    emit('close') // Tutup modal otomatis setelah berhasil cetak
   } catch (err) {
     toast.error(`Gagal mencetak: ${err.message}`)
   } finally {
