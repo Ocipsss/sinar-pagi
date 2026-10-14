@@ -45,7 +45,7 @@
       <div v-show="isScanning" class="mt-3 bg-black rounded-2xl overflow-hidden relative border border-zinc-700 shadow-lg block md:hidden">
         <div id="reader-kasir" class="w-full"></div>
         <button 
-          @click="stopScanner"
+          @click="stopActiveScanner"
           class="absolute top-3 right-3 z-10 px-3 py-1.5 bg-red-600 text-white rounded-xl text-xs font-black shadow-md active:scale-95 transition"
         >
           Tutup Kamera
@@ -332,12 +332,14 @@ const {
   load, handleSelectProduct, confirmAddToCart, getProductPackages, checkout, processBarcodeScan
 } = useKasir()
 
-const { isScanning, start: startScanner, stop: stopScanner } = useProductScanner()
+const { isScanning } = useProductScanner()
 
 const searchInputRef = ref(null)
 const showMemberPicker = ref(false)
 const showPendingModal = ref(false)
 const completedTransaction = ref(null)
+
+let qr = null
 
 const focusSearchInput = () => {
   nextTick(() => {
@@ -347,27 +349,42 @@ const focusSearchInput = () => {
 
 const toggleCameraScanner = async () => {
   if (isScanning.value) {
-    await stopScanner()
+    await stopActiveScanner()
   } else {
-    // Inisialisasi scanner menggunakan elemen ID khusus 'reader-kasir'
     try {
       const { Html5Qrcode } = await import('html5-qrcode')
-      const qr = new Html5Qrcode("reader-kasir")
+      qr = new Html5Qrcode("reader-kasir")
       isScanning.value = true
       await qr.start(
         { facingMode: "environment" },
         { fps: 10, qrbox: 250 },
         (decoded) => {
           processBarcodeScan(decoded)
-          qr.stop().then(() => qr.clear()).catch(() => {})
-          isScanning.value = false
+          stopActiveScanner()
         },
         null
       )
     } catch (err) {
       isScanning.value = false
+      qr = null
       toast.error('Gagal mengakses kamera HP')
     }
+  }
+}
+
+const stopActiveScanner = async () => {
+  if (qr) {
+    try {
+      await qr.stop()
+      qr.clear()
+    } catch (e) {
+      console.warn("Gagal menghentikan scanner:", e)
+    } finally {
+      qr = null
+      isScanning.value = false
+    }
+  } else {
+    isScanning.value = false
   }
 }
 
@@ -429,6 +446,6 @@ onActivated(() => {
 
 onUnmounted(() => {
   window.removeEventListener('open-member-picker', openMemberHandler)
-  stopScanner()
+  stopActiveScanner()
 })
 </script>

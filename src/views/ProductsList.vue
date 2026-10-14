@@ -47,7 +47,7 @@
   <div v-show="isScanning" class="mb-3 bg-black rounded-2xl overflow-hidden relative border border-zinc-700 shadow-lg block md:hidden">
     <div id="reader-products" class="w-full"></div>
     <button 
-      @click="stopScanner"
+      @click="stopActiveScanner"
       class="absolute top-3 right-3 z-10 px-3 py-1.5 bg-red-600 text-white rounded-xl text-xs font-black shadow-md active:scale-95 transition"
     >
       Tutup Kamera
@@ -167,7 +167,7 @@ import ProductForm from '../components/product/ProductForm.vue'
 import { toast } from 'vue-sonner'
 
 const store = useProductsStore()
-const { isScanning, stop: stopScanner } = useProductScanner()
+const { isScanning } = useProductScanner()
 
 const q = ref('')
 const filterKategori = ref('all')
@@ -178,29 +178,47 @@ const showFilter = ref(false)
 const showEditModal = ref(false)
 const selectedProduct = ref(null)
 
+let qr = null
+
 const toggleCameraScanner = async () => {
   if (isScanning.value) {
-    await stopScanner()
+    await stopActiveScanner()
   } else {
     try {
       const { Html5Qrcode } = await import('html5-qrcode')
-      const qr = new Html5Qrcode("reader-products")
+      qr = new Html5Qrcode("reader-products")
       isScanning.value = true
       await qr.start(
         { facingMode: "environment" },
         { fps: 10, qrbox: 250 },
         (decoded) => {
           q.value = decoded.trim()
-          qr.stop().then(() => qr.clear()).catch(() => {})
-          isScanning.value = false
+          stopActiveScanner()
           toast.success(`Barcode terbaca: ${decoded}`)
         },
         null
       )
     } catch (err) {
       isScanning.value = false
+      qr = null
       toast.error('Gagal mengakses kamera HP')
     }
+  }
+}
+
+const stopActiveScanner = async () => {
+  if (qr) {
+    try {
+      await qr.stop()
+      qr.clear()
+    } catch (e) {
+      console.warn("Gagal menghentikan scanner:", e)
+    } finally {
+      qr = null
+      isScanning.value = false
+    }
+  } else {
+    isScanning.value = false
   }
 }
 
@@ -317,7 +335,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   detachListener()
-  stopScanner()
+  stopActiveScanner()
 })
 
 onActivated(() => {
@@ -326,6 +344,6 @@ onActivated(() => {
 
 onDeactivated(() => {
   detachListener()
-  stopScanner()
+  stopActiveScanner()
 })
 </script>

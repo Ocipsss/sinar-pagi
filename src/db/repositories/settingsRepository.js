@@ -11,9 +11,9 @@ export const settingsRepo = {
       const defaultConfig = {
         id: 'app_config',
         storeName: 'SINAR PAGI',
-        storeAddress: 'Jl. Raya Bogor No. 12',
-        storePhone: '081234567890',
-        receiptFooter: 'Terima kasih telah berbelanja!\nBarang yang sudah dibeli tidak dapat ditukar.',
+        storeAddress: 'CIHELEUT JL. TALAS UJUNG NO. 38',
+        storePhone: '089516477760',
+        receiptFooter: 'HATUR NUHUN!',
         printerPaperSize: '58mm',
         autoPrintReceipt: false,
         theme: 'dark',

@@ -29,7 +29,7 @@
         <textarea 
           v-model="form.storeAddress" 
           rows="2" 
-          placeholder="Jl. Raya Bogor No. 12" 
+          placeholder="CIHELEUT JL. TALAS UJUNG NO. 38" 
           class="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900"
         ></textarea>
       </div>
@@ -39,7 +39,7 @@
         <input 
           v-model="form.storePhone" 
           type="tel" 
-          placeholder="081234567890" 
+          placeholder="089516477760" 
           class="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900"
         />
       </div>
@@ -49,7 +49,7 @@
         <textarea 
           v-model="form.receiptFooter" 
           rows="2" 
-          placeholder="Terima kasih telah berbelanja!" 
+          placeholder="HATUR NUHUN!" 
           class="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900"
         ></textarea>
       </div>
