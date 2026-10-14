@@ -256,8 +256,8 @@
 </div>
 
 <!-- Modal Member Picker -->
-<div v-if="showMemberPicker" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end">
-  <div class="w-full max-w-xl mx-auto bg-white rounded-t-[2rem] p-5 max-h-[80vh] flex flex-col">
+<div v-if="showMemberPicker" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+  <div class="w-full max-w-xl mx-auto bg-white rounded-t-[2rem] sm:rounded-[2rem] p-5 max-h-[80vh] flex flex-col shadow-xl">
     <div class="flex justify-between items-center mb-4">
       <div class="font-black text-sm">{{ store.paymentMethod==='TEMPO'? 'Wajib Pilih Member' : 'Pilih Member' }}</div>
       <button @click="showMemberPicker=false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
