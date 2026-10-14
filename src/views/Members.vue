@@ -60,7 +60,7 @@
         <!-- Detail Poin, Total Belanja & Utang -->
         <div class="grid grid-cols-3 gap-2 pt-2 border-t border-zinc-100 text-center">
           <div class="bg-amber-50 p-2 rounded-xl border border-amber-100">
-            <div class="text-[9px] font-black text-amber-600 uppercase">Poin (1% Profit)</div>
+            <div class="text-[9px] font-black text-amber-600 uppercase">Poin Member</div>
             <div class="text-xs font-black text-amber-700 mt-0.5">{{ formatRibuan(m.points || 0) }} pts</div>
           </div>
 
@@ -99,7 +99,12 @@
         <form @submit.prevent="saveMember" class="space-y-3">
           <div>
             <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Nama Lengkap *</label>
-            <input v-model="form.name" required placeholder="Contoh: Budi Santoso" class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold" />
+            <input 
+              v-model="form.name" 
+              required 
+              placeholder="CONTOH: BUDI SANTOSO" 
+              class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold uppercase" 
+            />
           </div>
 
           <div>
@@ -109,7 +114,12 @@
 
           <div>
             <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Alamat</label>
-            <textarea v-model="form.address" rows="2" placeholder="Alamat rumah / toko" class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold"></textarea>
+            <textarea 
+              v-model="form.address" 
+              rows="2" 
+              placeholder="Alamat rumah / toko" 
+              class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold uppercase"
+            ></textarea>
           </div>
 
           <div class="flex gap-2 pt-2">

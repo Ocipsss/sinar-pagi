@@ -31,13 +31,12 @@ let isSyncing = false
 let unsubscribers = []
 let intervalId = null
 
-// --- FIX POIN A: Saklar Penanda Pull dari Cloud ---
+// Saklar Penanda Pull dari Cloud
 let isPullingFromCloud = false
 
 export function getIsPullingFromCloud() {
   return isPullingFromCloud
 }
-// --------------------------------------------------
 
 // State reaktif untuk indikator Sync di UI
 export const syncStatus = reactive({
@@ -64,14 +63,24 @@ async function updateUnsyncedCount() {
 }
 
 async function recalculateMemberDebt(memberId) {
-  if (!memberId || !db?.transactions || !db?.members) return
+  if (!memberId || !db?.transactions || !db?.members || !db?.debt_payments) return
   try {
+    // 1. Hitung total piutang transaksi TEMPO yang belum lunas
     const unpaid = await db.transactions
       .where('memberId').equals(memberId)
-      .filter(t => t.remaining > 0)
+      .filter(t => (t.remaining || 0) > 0 && t.status !== 'void' && t.status !== 'CANCELLED')
       .toArray()
-    const totalDebt = unpaid.reduce((acc, t) => Big(acc).plus(t.remaining || 0).toString(), '0')
-    await db.members.update(memberId, { debt: Number(totalDebt) })
+    const totalTrxDebt = unpaid.reduce((acc, t) => Big(acc).plus(t.remaining || 0).toString(), '0')
+
+    // 2. Hitung total cicilan/pelunasan dari tabel debt_payments
+    const payments = await db.debt_payments
+      .where('memberId').equals(memberId)
+      .toArray()
+    const totalPaid = payments.reduce((acc, p) => Big(acc).plus(p.amount || 0).toString(), '0')
+
+    // 3. Sisa utang riil = Total Utang Transaksi - Total Pembayaran
+    const finalDebt = Math.max(0, Number(Big(totalTrxDebt).minus(totalPaid)))
+    await db.members.update(memberId, { debt: finalDebt })
   } catch (e) {
     console.warn('[Sync] recalc debt fail', e)
   }

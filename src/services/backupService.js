@@ -180,7 +180,7 @@ export const backupService = {
   },
 
   async convertAllToUppercase() {
-    const tableNames = ['products', 'categories', 'units', 'product_packages']
+    const tableNames = ['products', 'categories', 'units', 'product_packages', 'members']
     const now = dayjs().toISOString()
 
     await db.transaction('rw', tableNames, async () => {
@@ -219,6 +219,16 @@ export const backupService = {
       for (const pkg of packages) {
         await db.product_packages.update(pkg.id, {
           name: (pkg.name || '').toUpperCase().trim(),
+          updatedAt: now,
+          synced: 0
+        })
+      }
+
+      const members = await db.members.toArray()
+      for (const m of members) {
+        await db.members.update(m.id, {
+          name: (m.name || '').toUpperCase().trim(),
+          address: (m.address || '').toUpperCase().trim(),
           updatedAt: now,
           synced: 0
         })

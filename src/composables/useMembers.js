@@ -17,10 +17,19 @@ export function useMembers() {
   const payAmount = ref(0)
   const paymentMethod = ref('CASH')
 
+  // Mengurutkan daftar member secara alfabetis A-Z
   const filteredMembers = computed(() => {
     const q = searchQuery.value.toLowerCase().trim()
-    if (!q) return members.value
-    return members.value.filter(m => m.name.toLowerCase().includes(q) || (m.phone || '').includes(q))
+    let list = members.value
+
+    if (q) {
+      list = list.filter(m => 
+        (m.name || '').toLowerCase().includes(q) || 
+        (m.phone || '').includes(q)
+      )
+    }
+
+    return [...list].sort((a, b) => (a.name || '').localeCompare(b.name || ''))
   })
 
   const loadMembers = async () => {
@@ -71,13 +80,11 @@ export function useMembers() {
     const amount = Number(payAmount.value)
     const currentDebt = Number(selectedMemberForPay.value.debt || 0)
 
-    // GUARD 1: Cek Angka Valid
     if (isNaN(amount) || amount <= 0) {
       toast.error('Nominal pembayaran harus berupa angka lebih dari 0!')
       return
     }
 
-    // GUARD 2: Opsi A (Strict) - Tidak boleh melebihi sisa utang
     if (amount > currentDebt) {
       toast.error(`Nominal pembayaran melebihi sisa utang! (Maks: Rp ${currentDebt.toLocaleString('id-ID')})`)
       return

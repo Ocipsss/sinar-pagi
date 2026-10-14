@@ -1,5 +1,7 @@
 import { db } from '../index.js'
 import dayjs from 'dayjs'
+import { firestore } from '../../services/firebase.js'
+import { doc, deleteDoc } from 'firebase/firestore'
 
 export const memberRepo = {
   getAll: () => db.members.toArray(),
@@ -10,9 +12,9 @@ export const memberRepo = {
     const now = dayjs().toISOString()
     await db.members.add({
       id,
-      name: data.name,
-      phone: data.phone || '',
-      address: data.address || '',
+      name: (data.name || '').toUpperCase().trim(), // Otomatis KAPITAL
+      phone: (data.phone || '').trim(),
+      address: (data.address || '').toUpperCase().trim(),
       total_spending: 0,
       points: 0,
       debt: 0,
@@ -24,16 +26,33 @@ export const memberRepo = {
 
   update: async (id, data) => {
     const now = dayjs().toISOString()
-    await db.members.update(id, {
+    const payload = {
       ...data,
       updatedAt: now,
       synced: 0
-    })
+    }
+    if (data.name) payload.name = data.name.toUpperCase().trim() // Otomatis KAPITAL saat edit
+    if (data.address) payload.address = data.address.toUpperCase().trim()
+
+    await db.members.update(id, payload)
   },
 
-  delete: (id) => db.members.delete(id),
+  delete: async (id) => {
+    const stringId = String(id)
+    
+    // 1. Hapus dari IndexedDB lokal
+    await db.members.delete(stringId)
 
-  // Catat riwayat pembayaran utang saja (murni DB operation)
+    // 2. Hapus dari Cloud Firestore agar tidak ter-download kembali
+    if (navigator.onLine && firestore) {
+      try {
+        await deleteDoc(doc(firestore, 'members', stringId))
+      } catch (e) {
+        console.warn('Gagal menghapus member dari cloud:', e)
+      }
+    }
+  },
+
   addDebtPayment: async (paymentData) => {
     const now = dayjs().toISOString()
     const id = paymentData.id || crypto.randomUUID()
