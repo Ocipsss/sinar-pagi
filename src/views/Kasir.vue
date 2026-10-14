@@ -14,10 +14,17 @@
             v-model="q" 
             @focus="showSearch=true" 
             placeholder="Ketik nama / scan barcode..." 
-            class="w-full pl-11 pr-11 py-4 bg-white border border-zinc-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"
+            class="w-full pl-11 pr-12 py-4 bg-white border border-zinc-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"
           />
-          <button v-if="q" @click="q=''" class="absolute right-3 top-1/2 -translate-y-1/2 p-2 bg-zinc-100 rounded-full">
-            <X class="w-3 h-3"/>
+          
+          <!-- TOMBOL SCANNER KAMERA KHUSUS HP (Tampil di HP: block md:hidden, Hilang di Tablet: hidden) -->
+          <button 
+            type="button"
+            @click="toggleCameraScanner"
+            class="absolute right-3 top-1/2 -translate-y-1/2 p-2 bg-zinc-900 text-white rounded-xl block md:hidden active:scale-95 transition flex items-center justify-center"
+            title="Scan Barcode Kamera"
+          >
+            <ScanLine class="w-4 h-4" />
           </button>
         </div>
 
@@ -31,6 +38,17 @@
           <span v-if="store.pendingCarts.length > 0" class="absolute -top-1 -right-1 bg-red-600 text-white text-[10px] w-5 h-5 rounded-full flex items-center justify-center font-black border-2 border-white">
             {{ store.pendingCarts.length }}
           </span>
+        </button>
+      </div>
+
+      <!-- CONTAINER KAMERA SCANNER (Hanya muncul saat tombol kamera di HP ditekan) -->
+      <div v-show="isScanning" class="mt-3 bg-black rounded-2xl overflow-hidden relative border border-zinc-700 shadow-lg block md:hidden">
+        <div id="reader-kasir" class="w-full"></div>
+        <button 
+          @click="stopScanner"
+          class="absolute top-3 right-3 z-10 px-3 py-1.5 bg-red-600 text-white rounded-xl text-xs font-black shadow-md active:scale-95 transition"
+        >
+          Tutup Kamera
         </button>
       </div>
 
@@ -195,7 +213,6 @@
       </button>
     </div>
 
-    <!-- KHUSUS ROKOK: Cuma nampilin paket eceran yang udah dibuat -->
     <div v-if="(selectedProductForOption.category || '').toLowerCase() === 'rokok'" class="space-y-2 overflow-auto flex-1 pr-1">
       <button 
         v-for="pkg in getProductPackages(selectedProductForOption.id)" 
@@ -208,7 +225,6 @@
       </button>
     </div>
 
-    <!-- SELAIN ROKOK (SEPERTI SEDUH KOPI): Tampil Opsi Mentah vs Seduh -->
     <div v-else class="space-y-2 overflow-auto flex-1 pr-1">
       <button 
         @click="confirmAddToCart(selectedProductForOption, { isServed: false, customName: selectedProductForOption.name })"
@@ -302,8 +318,9 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, onActivated, nextTick, watch } from 'vue'
-import { Search, X, ShoppingBag, Clock, PauseCircle, Trash2 } from 'lucide-vue-next'
+import { Search, X, ShoppingBag, Clock, PauseCircle, Trash2, ScanLine } from 'lucide-vue-next'
 import { useKasir } from '../composables/useKasir.js'
+import { useProductScanner } from '../composables/useProductScanner.js'
 import { formatRibuan } from '../utils/formatters/currency.js'
 import { toast } from 'vue-sonner'
 import ReceiptModal from '../components/ReceiptModal.vue'
@@ -312,8 +329,10 @@ const {
   store, q, memberQ, filteredProducts, filteredMembers, 
   total, kembalian, kurangBayar, bayarDisplay, showSearch, 
   selectedProductForOption, filteredServicesByCategory,
-  load, handleSelectProduct, confirmAddToCart, getProductPackages, checkout
+  load, handleSelectProduct, confirmAddToCart, getProductPackages, checkout, processBarcodeScan
 } = useKasir()
+
+const { isScanning, start: startScanner, stop: stopScanner } = useProductScanner()
 
 const searchInputRef = ref(null)
 const showMemberPicker = ref(false)
@@ -324,6 +343,32 @@ const focusSearchInput = () => {
   nextTick(() => {
     searchInputRef.value?.focus()
   })
+}
+
+const toggleCameraScanner = async () => {
+  if (isScanning.value) {
+    await stopScanner()
+  } else {
+    // Inisialisasi scanner menggunakan elemen ID khusus 'reader-kasir'
+    try {
+      const { Html5Qrcode } = await import('html5-qrcode')
+      const qr = new Html5Qrcode("reader-kasir")
+      isScanning.value = true
+      await qr.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: 250 },
+        (decoded) => {
+          processBarcodeScan(decoded)
+          qr.stop().then(() => qr.clear()).catch(() => {})
+          isScanning.value = false
+        },
+        null
+      )
+    } catch (err) {
+      isScanning.value = false
+      toast.error('Gagal mengakses kamera HP')
+    }
+  }
 }
 
 const handleMethod = (m) => { 
@@ -382,5 +427,8 @@ onActivated(() => {
   focusSearchInput()
 })
 
-onUnmounted(() => window.removeEventListener('open-member-picker', openMemberHandler))
+onUnmounted(() => {
+  window.removeEventListener('open-member-picker', openMemberHandler)
+  stopScanner()
+})
 </script>

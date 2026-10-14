@@ -25,10 +25,32 @@
       id="product-search-input"
       v-model="q" 
       placeholder="Ketik nama / scan barcode..." 
-      class="w-full pl-11 pr-10 py-3 bg-white border border-zinc-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"
+      class="w-full pl-11 pr-20 py-3 bg-white border border-zinc-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"
     />
+    
+    <!-- TOMBOL SCANNER KAMERA KHUSUS HP (Tampil di HP: block md:hidden) -->
+    <button 
+      type="button"
+      @click="toggleCameraScanner"
+      class="absolute right-10 top-1/2 -translate-y-1/2 p-1.5 bg-zinc-900 text-white rounded-xl block md:hidden active:scale-95 transition flex items-center justify-center"
+      title="Scan Kamera"
+    >
+      <ScanLine class="w-3.5 h-3.5" />
+    </button>
+
     <button v-if="q" @click="q=''" class="absolute right-3 top-1/2 -translate-y-1/2 p-1 bg-zinc-100 rounded-full text-zinc-400 hover:text-zinc-600">
       <X class="w-3.5 h-3.5"/>
+    </button>
+  </div>
+
+  <!-- CONTAINER KAMERA SCANNER LIST BARANG (Hanya HP) -->
+  <div v-show="isScanning" class="mb-3 bg-black rounded-2xl overflow-hidden relative border border-zinc-700 shadow-lg block md:hidden">
+    <div id="reader-products" class="w-full"></div>
+    <button 
+      @click="stopScanner"
+      class="absolute top-3 right-3 z-10 px-3 py-1.5 bg-red-600 text-white rounded-xl text-xs font-black shadow-md active:scale-95 transition"
+    >
+      Tutup Kamera
     </button>
   </div>
 
@@ -137,21 +159,50 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated } from 'vue'
-import { Plus, Search, Filter, Pencil, Trash2, X } from 'lucide-vue-next'
+import { Plus, Search, Filter, Pencil, Trash2, X, ScanLine } from 'lucide-vue-next'
 import { useProductsStore } from '../stores/productStore.js'
+import { useProductScanner } from '../composables/useProductScanner.js'
 import { formatRibuan } from '../utils/formatters/currency.js'
 import ProductForm from '../components/product/ProductForm.vue'
+import { toast } from 'vue-sonner'
 
 const store = useProductsStore()
+const { isScanning, stop: stopScanner } = useProductScanner()
+
 const q = ref('')
 const filterKategori = ref('all')
 const filterStok = ref('all')
 const sortBy = ref('name-asc')
 const showFilter = ref(false)
 
-// State Modal Edit
 const showEditModal = ref(false)
 const selectedProduct = ref(null)
+
+const toggleCameraScanner = async () => {
+  if (isScanning.value) {
+    await stopScanner()
+  } else {
+    try {
+      const { Html5Qrcode } = await import('html5-qrcode')
+      const qr = new Html5Qrcode("reader-products")
+      isScanning.value = true
+      await qr.start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: 250 },
+        (decoded) => {
+          q.value = decoded.trim()
+          qr.stop().then(() => qr.clear()).catch(() => {})
+          isScanning.value = false
+          toast.success(`Barcode terbaca: ${decoded}`)
+        },
+        null
+      )
+    } catch (err) {
+      isScanning.value = false
+      toast.error('Gagal mengakses kamera HP')
+    }
+  }
+}
 
 const categories = computed(() => {
   const cats = new Set(store.list.map(p => p.category).filter(Boolean))
@@ -266,6 +317,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   detachListener()
+  stopScanner()
 })
 
 onActivated(() => {
@@ -274,5 +326,6 @@ onActivated(() => {
 
 onDeactivated(() => {
   detachListener()
+  stopScanner()
 })
 </script>
