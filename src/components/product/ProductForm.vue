@@ -102,14 +102,13 @@
 </template>
 
 <script setup>
-import { computed, watch, onMounted } from 'vue'
+import { computed, watch, onMounted, onActivated } from 'vue'
 import { ScanLine } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 import { useProductForm } from '../../composables/useProductForm.js'
 import { useProductScanner } from '../../composables/useProductScanner.js'
 import { calcModalDariPack, calcMargin } from '../../utils/calculator/product.js'
 import { formatRp, toNumber } from '../../utils/formatters/currency.js'
-import { productService } from '../../services/productService.js'
 import { useProductsStore } from '../../stores/productStore.js'
 
 const props = defineProps({
@@ -134,7 +133,21 @@ const productStore = useProductsStore()
 const autoModal = computed(() => calcModalDariPack(packPrice.value, packQty.value))
 const marginPersen = computed(() => calcMargin(price_sell.value, price_modal.value))
 
-onMounted(async () => {
+const resetFormFields = () => {
+  name.value = ''
+  code.value = ''
+  category.value = 'UMUM'
+  unit.value = ''
+  purchasePackName.value = ''
+  packPrice.value = 0
+  packQty.value = 0
+  price_modal.value = 0
+  price_sell.value = 0
+  qty.value = 0
+  minStock.value = 5
+}
+
+const initFormData = async () => {
   await loadCategories()
   await loadUnits()
 
@@ -151,7 +164,15 @@ onMounted(async () => {
     qty.value = props.initialData.qty || 0
     minStock.value = props.initialData.minStock || 5
   } else {
-    category.value = (category.value || 'UMUM').toUpperCase()
+    resetFormFields()
+  }
+}
+
+onMounted(initFormData)
+
+onActivated(() => {
+  if (!props.initialData) {
+    resetFormFields()
   }
 })
 
@@ -192,7 +213,8 @@ const onSubmit = handleSubmit(async (vals) => {
     await productStore.update(props.initialData.id, payload)
     emit('success')
   } else {
-    await productService.createProduct(payload, toNumber(price_modal.value))
+    await productStore.add(payload)
+    resetFormFields()
     router.push('/products')
   }
 })

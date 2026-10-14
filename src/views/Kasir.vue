@@ -262,7 +262,12 @@
       <div class="font-black text-sm">{{ store.paymentMethod==='TEMPO'? 'Wajib Pilih Member' : 'Pilih Member' }}</div>
       <button @click="showMemberPicker=false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
     </div>
-    <input v-model="memberQ" placeholder="Cari nama / hp..." class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm mb-3"/>
+    <input 
+      ref="memberSearchInputRef"
+      v-model="memberQ" 
+      placeholder="Cari nama / hp..." 
+      class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm mb-3 focus:outline-none focus:ring-2 focus:ring-zinc-900"
+    />
     <div class="flex-1 overflow-auto">
       <div v-for="m in filteredMembers" :key="m.id" @click="selectMember(m)" class="p-3 border-b border-zinc-50 flex justify-between cursor-pointer">
         <div>
@@ -335,6 +340,7 @@ const {
 const { isScanning } = useProductScanner()
 
 const searchInputRef = ref(null)
+const memberSearchInputRef = ref(null)
 const showMemberPicker = ref(false)
 const showPendingModal = ref(false)
 const completedTransaction = ref(null)
@@ -439,6 +445,15 @@ const onCheckout = async () => {
 }
 
 watch(total, t => { if (store.paymentMethod === 'QRIS') store.bayarNominal = t })
+
+// Otomatis sorot kursor ke searchbar member saat modal member terbuka
+watch(showMemberPicker, (isOpen) => {
+  if (isOpen) {
+    nextTick(() => {
+      memberSearchInputRef.value?.focus()
+    })
+  }
+})
 
 const openMemberHandler = () => showMemberPicker.value = true
 

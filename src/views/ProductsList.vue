@@ -339,6 +339,7 @@ onUnmounted(() => {
 })
 
 onActivated(() => {
+  store.fetch()
   attachListener()
 })
 

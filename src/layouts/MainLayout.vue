@@ -106,7 +106,7 @@
     <!-- MAIN ROUTER VIEW -->
     <main class="flex-1 overflow-hidden flex flex-col max-w-full md:max-w-4xl lg:max-w-6xl mx-auto w-full relative transition-all">
       <router-view v-slot="{ Component }">
-        <keep-alive>
+        <keep-alive :exclude="['ProductsAdd']">
           <component :is="Component" :key="$route.fullPath" />
         </keep-alive>
       </router-view>

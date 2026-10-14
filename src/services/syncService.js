@@ -31,14 +31,12 @@ let isSyncing = false
 let unsubscribers = []
 let intervalId = null
 
-// Saklar Penanda Pull dari Cloud
 let isPullingFromCloud = false
 
 export function getIsPullingFromCloud() {
   return isPullingFromCloud
 }
 
-// State reaktif untuk indikator Sync di UI
 export const syncStatus = reactive({
   isOnline: navigator.onLine,
   isSyncing: false,
@@ -65,20 +63,17 @@ async function updateUnsyncedCount() {
 async function recalculateMemberDebt(memberId) {
   if (!memberId || !db?.transactions || !db?.members || !db?.debt_payments) return
   try {
-    // 1. Hitung total piutang transaksi TEMPO yang belum lunas
     const unpaid = await db.transactions
       .where('memberId').equals(memberId)
       .filter(t => (t.remaining || 0) > 0 && t.status !== 'void' && t.status !== 'CANCELLED')
       .toArray()
     const totalTrxDebt = unpaid.reduce((acc, t) => Big(acc).plus(t.remaining || 0).toString(), '0')
 
-    // 2. Hitung total cicilan/pelunasan dari tabel debt_payments
     const payments = await db.debt_payments
       .where('memberId').equals(memberId)
       .toArray()
     const totalPaid = payments.reduce((acc, p) => Big(acc).plus(p.amount || 0).toString(), '0')
 
-    // 3. Sisa utang riil = Total Utang Transaksi - Total Pembayaran
     const finalDebt = Math.max(0, Number(Big(totalTrxDebt).minus(totalPaid)))
     await db.members.update(memberId, { debt: finalDebt })
   } catch (e) {
@@ -126,7 +121,6 @@ export const syncRealtime = {
 
   initRealtimePull() {
     this.stopRealtime()
-    console.log('[Sync] Realtime ON')
 
     if (!firestore) return
 
@@ -141,6 +135,8 @@ export const syncRealtime = {
         const unsub = onSnapshot(q, async (snapshot) => {
           if (isSyncing) return
           isPullingFromCloud = true
+          let hasProductChanges = false
+
           try {
             for (const change of snapshot.docChanges()) {
               try {
@@ -148,6 +144,7 @@ export const syncRealtime = {
                 const local = await db[tableName]?.get(change.doc.id)
                 if (change.type === 'removed') {
                   if (local) await db[tableName].delete(change.doc.id)
+                  if (tableName === 'products') hasProductChanges = true
                   continue
                 }
                 if (tableName === 'members') {
@@ -159,11 +156,17 @@ export const syncRealtime = {
                 } else {
                   if (!local || cloudData.updatedAt > local.updatedAt) {
                     await db[tableName].put({ ...cloudData, id: change.doc.id, synced: 1 })
+                    if (tableName === 'products') hasProductChanges = true
                   }
                 }
               } catch (e) {}
             }
             await updateUnsyncedCount()
+
+            // Jika ada pembaruan produk dari cloud, kirim sinyal pembaruan event
+            if (hasProductChanges) {
+              window.dispatchEvent(new CustomEvent('products-updated-from-cloud'))
+            }
           } finally {
             isPullingFromCloud = false
           }

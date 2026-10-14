@@ -1,7 +1,6 @@
 // src/stores/productStore.js
 import { defineStore } from 'pinia'
 import { productRepo } from '../db/repositories/productRepository.js'
-import { syncRealtime } from '../services/syncService.js'
 
 export const useProductsStore = defineStore('products', {
   state: () => ({ 
@@ -9,7 +8,8 @@ export const useProductsStore = defineStore('products', {
     searchQuery: '',
     loading: false 
   }),
-    getters: {
+
+  getters: {
     filteredProducts: (state) => {
       const q = state.searchQuery.toLowerCase().trim()
       if (!q) return state.list
@@ -49,17 +49,17 @@ export const useProductsStore = defineStore('products', {
     async add(payload) { 
       await productRepo.create(payload)
       await this.fetch() 
-      syncRealtime.pushLocalToCloud()
+      // Push ke cloud ditangani otomatis oleh Dexie Hook di src/db/index.js
     },
     async update(id, payload) {
       await productRepo.update(id, payload)
       await this.fetch()
-      syncRealtime.pushLocalToCloud()
+      // Push ke cloud ditangani otomatis oleh Dexie Hook di src/db/index.js
     },
     async remove(id) {
       await productRepo.delete(id)
       await this.fetch()
-      syncRealtime.pushLocalToCloud()
+      // Push ke cloud ditangani otomatis oleh Dexie Hook di src/db/index.js
     }
   },
   persist: true
