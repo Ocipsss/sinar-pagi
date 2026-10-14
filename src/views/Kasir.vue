@@ -17,7 +17,7 @@
             class="w-full pl-11 pr-12 py-4 bg-white border border-zinc-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"
           />
           
-          <!-- TOMBOL SCANNER KAMERA KHUSUS HP (Tampil di HP: block md:hidden, Hilang di Tablet: hidden) -->
+          <!-- TOMBOL SCANNER KAMERA KHUSUS HP -->
           <button 
             type="button"
             @click="toggleCameraScanner"
@@ -41,7 +41,7 @@
         </button>
       </div>
 
-      <!-- CONTAINER KAMERA SCANNER (Hanya muncul saat tombol kamera di HP ditekan) -->
+      <!-- CONTAINER KAMERA SCANNER -->
       <div v-show="isScanning" class="mt-3 bg-black rounded-2xl overflow-hidden relative border border-zinc-700 shadow-lg block md:hidden">
         <div id="reader-kasir" class="w-full"></div>
         <button 
@@ -425,6 +425,14 @@ const onCheckout = async () => {
     }
 
     toast.success('Transaksi berhasil diproses!') 
+
+    // GUARD OPSI B: Tampilkan warning toast jika ada stok yang menjadi minus
+    if (res.stockWarnings && res.stockWarnings.length > 0) {
+      setTimeout(() => {
+        toast.warning(`Perhatian! Stok produk berikut menjadi minus:\n${res.stockWarnings.join(', ')}`)
+      }, 400)
+    }
+
   } catch(e) { 
     toast.error(e.message) 
   } 

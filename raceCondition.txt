@@ -1,0 +1,69 @@
+Berdasarkan analisis mendalam terhadap keseluruhan berkas *source code* sistem **Sinar Pagi POS** (terutama fokus pada file **src/services/syncService.js**, **src/db/index.js**, repositori, serta layanan transaksi), berikut adalah hasil evaluasi komprehensif mengenai **mekanisme sync dan potensi Race Condition / Data Inconsistency**:
+### **1. Temuan Utama: Potensi Race Condition & Bug Sinkronisasi**
+#### **A. Infinite Loop / Re-trigger Sync antara Dexie Hooks & Realtime Listener**
+ * **Lokasi Code:** src/db/index.js & src/services/syncService.js
+ * **Mekanisme Problem:**
+   1. Ketika ada perubahan data cloud yang ditarik oleh onSnapshot (initRealtimePull), fungsi tersebut memanggil db[tableName].put(...) dengan menyisipkan synced: 1.
+   2. Di file src/db/index.js, Dexie Hook mengeksekusi pemicu sync (triggerDebouncedSync()) pada event updating jika properti synced === 0 **ATAU** !('synced' in mods).
+   3. Namun, ketika onSnapshot meng-update data via db.put(), sebagian repositori atau operasi internal Dexie memperlakukan synced: 1 dalam objek baru sebagai pembaruan biasa. Jika ada pengubahan bidang lain secara simultan, guard synced === 0 dapat terlewati sehingga memicu pushLocalToCloud() kembali ke Firestore.
+   4. Flag isSyncing di syncService.js memblokir listener saat *push* terjadi, namun **karena sifat onSnapshot yang reaktif, event snapshot yang masuk tepat sesaat sebelum atau sesudah isSyncing diubah dapat menyebabkan siklus pembaruan berulang (*infinite sync loop*)**.
+#### **B. Race Condition pada Pembaruan Utang Member (recalculateMemberDebt)**
+ * **Lokasi Code:** src/services/syncService.js (Fungsi recalculateMemberDebt) & src/services/memberService.js
+ * **Mekanisme Problem:**
+   1. Ketika ada transaksi baru atau pembayaran utang dari perangkat/cloud, initRealtimePull() memanggil recalculateMemberDebt(memberId) secara asinkron.
+   2. Fungsi recalculateMemberDebt menghitung sisa utang dari koleksi db.transactions lokal (remaining > 0) lalu menulis hasilnya ke db.members.update(memberId, { debt: Number(totalDebt) }).
+   3. **Problem Race Condition:**
+     * Jika kasir di lokal sedang memproses pembayaran utang via memberService.payDebt() pada saat yang sama ketika transaksi kasir lain ditarik dari Firestore, dua proses akan menulis nilai debt ke Dexie/Firestore secara bersamaan.
+     * Penulisan memberRepo.update di payDebt menggunakan nilai debt kalkulasi lokal, sementara recalculateMemberDebt menimpa debt berdasarkan kueri transaksi. Nilai utang akhir member berpotensi *stale* (kadaluwarsa) atau salah hitung.
+#### **C. Unhandled Conflict Resolution pada Last-Write-Wins (updatedAt)**
+ * **Lokasi Code:** src/services/syncService.js
+ * **Mekanisme Problem:**
+   1. Pengecekan konflik sinkronisasi menggunakan kondisi sederhana:
+     ```javascript
+     if (!local || cloudData.updatedAt > local.updatedAt) { ... }
+     
+     ```
+   2. **Problem Timestamp Divergence / Clock Skew:**
+     * updatedAt dihasilkan menggunakan dayjs().toISOString() atau new Date().toISOString() di sisi klien lokal.
+     * Jika jam/waktu pada perangkat kasir A terlambat 5 menit dibanding perangkat B, maka perubahan yang dilakukan di perangkat A akan **selalu kalah dan tertimpa** oleh data dari perangkat B, meskipun perubahan di perangkat A dilakukan belakangan secara riil.
+     * Tidak ada penanganan *Firestore ServerTimestamp* untuk menyelaraskan acuan waktu antar perangkat.
+#### **D. Race Condition pada Stok Barang saat Transaksi Bersamaan (Multi-Kasir)**
+ * **Lokasi Code:** src/services/kasirService.js & src/stores/productStore.js
+ * **Mekanisme Problem:**
+   1. Pemotongan stok dilakukan di kasir lokal dengan membaca stok awal via db.products.get(c.id) lalu menghitung newQty = currentQty - qtyDipotong dan memperbaruinya via db.products.update().
+   2. pushLocalToCloud() mengirimkan snapshot dokumen products utuh menggunakan batch.set(..., { merge: true }).
+   3. **Problem Concurrent Write:**
+     * Jika Perangkat A dan Perangkat B sama-sama menjual produk "Indomie" (Stok awal: 10).
+     * Perangkat A menjual 2 (Stok lokal A = 8). Perangkat B menjual 3 (Stok lokal B = 7).
+     * Saat keduanya melakukan push sync ke Firestore, dokumen produk akan menimpa satu sama lain secara utuh (menjadi 8 atau 7, bukan 5). Penjualan dari salah satu kasir tidak akan mengurangi stok cloud secara akumulatif.
+#### **E. Hapus Dokumen Langsung di Repository (Bypass Sync State)**
+ * **Lokasi Code:** src/db/repositories/packageRepository.js & src/db/repositories/operatorRepository.js
+ * **Mekanisme Problem:**
+   1. Pada packageRepository.deletePackage dan operatorRepo.delete, eksekusi hapus dilakukan dengan menghapus data lokal Dexie dan langsung memanggil deleteDoc(doc(firestore, ...)) jika status perangkat online.
+   2. **Problem Offline Deletion:**
+     * Jika pengguna menghapus paket/operator dalam keadaan **OFFLINE**, data di Dexie lokal terhapus, tetapi panggilan deleteDoc ke Firestore tidak dieksekusi.
+     * Tidak ada pencatatan *tombstone* / penanda hapus (misal deleted: true, synced: 0).
+     * Akibatnya, saat perangkat kembali **ONLINE**, listener initRealtimePull() dari Firestore akan menarik kembali dokumen tersebut dari cloud dan memunculkannya lagi di database lokal Dexie.
+#### **F. Kebocoran Transaksi Tidak Tersinkronisasi saat Backup / Reset**
+ * **Lokasi Code:** src/services/backupService.js
+ * **Mekanisme Problem:**
+   1. Fungsi resetTransactions() melakukan iterasi pembersihan koleksi cloud secara langsung via writeBatch() lalu mengosongkan tabel Dexie lokal.
+   2. Jika proses pembersihan cloud terputus di tengah jalan (misal koneksi lambat/drop), tabel lokal sudah terlanjur dibersihkan oleh transaksi Dexie.
+   3. Hal ini menyisakan dokumen "yatim" (*orphan documents*) di Firestore yang tidak dapat dijangkau lagi dari lokal.
+### **2. Ringkasan Matriks Potensi Ringkas**
+| Modul / File | Jenis Isu | Dampak Risiko |
+|---|---|---|
+| syncService.js | Realtime vs Local Sync Loop | Beban kuota Firestore membengkak, performa aplikasi melambat |
+| syncService.js | Clock Skew (updatedAt) | Data kasir dengan jam terlambat selalu hilang/tertimpa |
+| kasirService.js | Non-atomic Stock Deduction | Stok barang di cloud tidak akurat saat digunakan multi-kasir |
+| memberService.js & syncService.js | Debt Recalculation Collision | Sisa utang member salah/tidak konsisten |
+| packageRepository.js | Offline Delete without Tombstone | Data yang dihapus saat offline muncul kembali saat online |
+### **3. Rekomendasi Perbaikan (Actionable Solutions)**
+ 1. **Gunakan Soft Delete / Tombstone Pattern:**
+   * Alih-alih memanggil db.delete(), tambahkan flag { isDeleted: true, updatedAt: now(), synced: 0 } saat menghapus data offline. Hal ini memastikan instruksi penghapusan dapat ikut ter-push ke cloud saat online.
+ 2. **Ubah Pemotongan Stok ke Atomic Field Updates (Firestore FieldValue.increment):**
+   * Untuk transaksi multi-device, gunakan FieldValue.increment(-qty) di Cloud Firestore agar pemotongan stok bersifat akumulatif dan terhindar dari *overwrite race condition*.
+ 3. **Gunakan ServerTimestamp Firestore:**
+   * Gantikan pengujian cloudData.updatedAt > local.updatedAt dengan membandingkan timestamp yang dikirim server atau gunakan *atomic transaction* Firestore untuk data krusial seperti stok dan utang member.
+ 4. **Isolasi Pemicu Sync pada Realtime Pull:**
+   * Di initRealtimePull(), pastikan pembaruan ke Dexie lokal menandai flag internal agar Dexie Hook (db.tables.hook) mengetahui bahwa perubahan berasal dari pendorongan Cloud dan **tidak memicu** triggerDebouncedSync() kembali.

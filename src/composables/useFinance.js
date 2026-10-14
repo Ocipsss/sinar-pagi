@@ -1,6 +1,7 @@
 // src/composables/useFinance.js
 import { ref, computed } from 'vue'
 import { financeRepo } from '../db/repositories/financeRepository.js'
+import { toast } from 'vue-sonner'
 
 export function useFinance() {
   const accounts = ref([])
@@ -32,17 +33,31 @@ export function useFinance() {
   }
 
   const setBalance = async (accountId, amount, note) => {
-    await financeRepo.setInitialBalance(accountId, amount, note)
+    const targetAmount = Number(amount)
+
+    // GUARD: Blokir nilai minus & NaN (0 tetap diperbolehkan)
+    if (isNaN(targetAmount) || targetAmount < 0) {
+      toast.error('Nominal saldo awal tidak boleh bernilai negatif!')
+      return
+    }
+
+    await financeRepo.setInitialBalance(accountId, targetAmount, note)
+    toast.success('Saldo awal berhasil diperbarui!')
     await loadData()
   }
 
   const handleTransfer = async (fromAccId, toAccId, amount, note) => {
-    if (amount <= 0) return
+    const transferAmount = Number(amount)
+
+    if (isNaN(transferAmount) || transferAmount <= 0) {
+      toast.error('Nominal transfer harus lebih besar dari 0!')
+      return
+    }
     
     await financeRepo.addMutation({
       accountId: fromAccId,
       type: 'OUT',
-      amount,
+      amount: transferAmount,
       category: 'Pindah Saldo',
       note: `Transfer ke ${toAccId}: ${note}`
     })
@@ -50,11 +65,12 @@ export function useFinance() {
     await financeRepo.addMutation({
       accountId: toAccId,
       type: 'IN',
-      amount,
+      amount: transferAmount,
       category: 'Pindah Saldo',
       note: `Transfer dari ${fromAccId}: ${note}`
     })
 
+    toast.success('Transfer saldo berhasil!')
     await loadData()
   }
 

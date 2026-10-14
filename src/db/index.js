@@ -1,4 +1,3 @@
-// src/db/index.js
 import Dexie from 'dexie'
 
 export const db = new Dexie('SinarPagiDB')
@@ -41,11 +40,22 @@ db.version(2).stores({
 // --- DEXIE HOOKS UNTUK AUTOMATIC CLOUD SYNC ---
 // Impor dinamis untuk menghindari circular dependency saat inisialisasi DB
 let syncServiceInstance = null
+let getIsPullingFromCloudFn = null
+
 const triggerDebouncedSync = () => {
+  // Cek jika perubahan berasal dari proses pull data cloud (Poin A Fix)
+  if (getIsPullingFromCloudFn && getIsPullingFromCloudFn()) {
+    return
+  }
+
   if (!syncServiceInstance) {
     import('../services/syncService.js').then(module => {
       syncServiceInstance = module.syncRealtime || module.default
-      syncServiceInstance?.pushLocalToCloud()
+      getIsPullingFromCloudFn = module.getIsPullingFromCloud
+      
+      if (!getIsPullingFromCloudFn || !getIsPullingFromCloudFn()) {
+        syncServiceInstance?.pushLocalToCloud()
+      }
     })
   } else {
     syncServiceInstance.pushLocalToCloud()

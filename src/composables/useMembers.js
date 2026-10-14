@@ -2,6 +2,7 @@
 import { ref, computed } from 'vue'
 import { memberRepo } from '../db/repositories/memberRepository.js'
 import { memberService } from '../services/memberService.js'
+import { toast } from 'vue-sonner'
 
 export function useMembers() {
   const members = ref([])
@@ -48,14 +49,12 @@ export function useMembers() {
 
     showModal.value = false
     await loadMembers()
-    // syncRealtime.pushLocalToCloud() -> Dihapus, ditangani Dexie Hook
   }
 
   const deleteMember = async (m) => {
     if (confirm(`Hapus member "${m.name}"?`)) {
       await memberRepo.delete(m.id)
       await loadMembers()
-      // syncRealtime.pushLocalToCloud() -> Dihapus, ditangani Dexie Hook
     }
   }
 
@@ -67,21 +66,40 @@ export function useMembers() {
   }
 
   const submitPayDebt = async () => {
-    if (!selectedMemberForPay.value || payAmount.value <= 0) return
+    if (!selectedMemberForPay.value) return
 
-    await memberService.payDebt({
-      memberId: selectedMemberForPay.value.id,
-      amount: payAmount.value,
-      paymentMethod: paymentMethod.value
-    })
+    const amount = Number(payAmount.value)
+    const currentDebt = Number(selectedMemberForPay.value.debt || 0)
 
-    showPayModal.value = false
-    payAmount.value = 0
-    selectedMemberForPay.value = null
-    paymentMethod.value = 'CASH'
+    // GUARD 1: Cek Angka Valid
+    if (isNaN(amount) || amount <= 0) {
+      toast.error('Nominal pembayaran harus berupa angka lebih dari 0!')
+      return
+    }
 
-    await loadMembers()
-    // syncRealtime.pushLocalToCloud() -> Dihapus, ditangani Dexie Hook
+    // GUARD 2: Opsi A (Strict) - Tidak boleh melebihi sisa utang
+    if (amount > currentDebt) {
+      toast.error(`Nominal pembayaran melebihi sisa utang! (Maks: Rp ${currentDebt.toLocaleString('id-ID')})`)
+      return
+    }
+
+    try {
+      await memberService.payDebt({
+        memberId: selectedMemberForPay.value.id,
+        amount,
+        paymentMethod: paymentMethod.value
+      })
+
+      toast.success('Pembayaran utang berhasil dicatat!')
+      showPayModal.value = false
+      payAmount.value = 0
+      selectedMemberForPay.value = null
+      paymentMethod.value = 'CASH'
+
+      await loadMembers()
+    } catch (e) {
+      toast.error(e.message || 'Gagal memproses pembayaran utang')
+    }
   }
 
   return {

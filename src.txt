@@ -1617,6 +1617,7 @@ export function useSalesHistory() {
 // src/composables/useFinance.js
 import { ref, computed } from 'vue'
 import { financeRepo } from '../db/repositories/financeRepository.js'
+import { toast } from 'vue-sonner'
 
 export function useFinance() {
   const accounts = ref([])
@@ -1648,17 +1649,31 @@ export function useFinance() {
   }
 
   const setBalance = async (accountId, amount, note) => {
-    await financeRepo.setInitialBalance(accountId, amount, note)
+    const targetAmount = Number(amount)
+
+    // GUARD: Blokir nilai minus & NaN (0 tetap diperbolehkan)
+    if (isNaN(targetAmount) || targetAmount < 0) {
+      toast.error('Nominal saldo awal tidak boleh bernilai negatif!')
+      return
+    }
+
+    await financeRepo.setInitialBalance(accountId, targetAmount, note)
+    toast.success('Saldo awal berhasil diperbarui!')
     await loadData()
   }
 
   const handleTransfer = async (fromAccId, toAccId, amount, note) => {
-    if (amount <= 0) return
+    const transferAmount = Number(amount)
+
+    if (isNaN(transferAmount) || transferAmount <= 0) {
+      toast.error('Nominal transfer harus lebih besar dari 0!')
+      return
+    }
     
     await financeRepo.addMutation({
       accountId: fromAccId,
       type: 'OUT',
-      amount,
+      amount: transferAmount,
       category: 'Pindah Saldo',
       note: `Transfer ke ${toAccId}: ${note}`
     })
@@ -1666,11 +1681,12 @@ export function useFinance() {
     await financeRepo.addMutation({
       accountId: toAccId,
       type: 'IN',
-      amount,
+      amount: transferAmount,
       category: 'Pindah Saldo',
       note: `Transfer dari ${fromAccId}: ${note}`
     })
 
+    toast.success('Transfer saldo berhasil!')
     await loadData()
   }
 
@@ -1712,6 +1728,7 @@ export function useRupiah(fieldRef, withPrefix = true) {
 import { ref, computed } from 'vue'
 import { memberRepo } from '../db/repositories/memberRepository.js'
 import { memberService } from '../services/memberService.js'
+import { toast } from 'vue-sonner'
 
 export function useMembers() {
   const members = ref([])
@@ -1758,14 +1775,12 @@ export function useMembers() {
 
     showModal.value = false
     await loadMembers()
-    // syncRealtime.pushLocalToCloud() -> Dihapus, ditangani Dexie Hook
   }
 
   const deleteMember = async (m) => {
     if (confirm(`Hapus member "${m.name}"?`)) {
       await memberRepo.delete(m.id)
       await loadMembers()
-      // syncRealtime.pushLocalToCloud() -> Dihapus, ditangani Dexie Hook
     }
   }
 
@@ -1777,21 +1792,40 @@ export function useMembers() {
   }
 
   const submitPayDebt = async () => {
-    if (!selectedMemberForPay.value || payAmount.value <= 0) return
+    if (!selectedMemberForPay.value) return
 
-    await memberService.payDebt({
-      memberId: selectedMemberForPay.value.id,
-      amount: payAmount.value,
-      paymentMethod: paymentMethod.value
-    })
+    const amount = Number(payAmount.value)
+    const currentDebt = Number(selectedMemberForPay.value.debt || 0)
 
-    showPayModal.value = false
-    payAmount.value = 0
-    selectedMemberForPay.value = null
-    paymentMethod.value = 'CASH'
+    // GUARD 1: Cek Angka Valid
+    if (isNaN(amount) || amount <= 0) {
+      toast.error('Nominal pembayaran harus berupa angka lebih dari 0!')
+      return
+    }
 
-    await loadMembers()
-    // syncRealtime.pushLocalToCloud() -> Dihapus, ditangani Dexie Hook
+    // GUARD 2: Opsi A (Strict) - Tidak boleh melebihi sisa utang
+    if (amount > currentDebt) {
+      toast.error(`Nominal pembayaran melebihi sisa utang! (Maks: Rp ${currentDebt.toLocaleString('id-ID')})`)
+      return
+    }
+
+    try {
+      await memberService.payDebt({
+        memberId: selectedMemberForPay.value.id,
+        amount,
+        paymentMethod: paymentMethod.value
+      })
+
+      toast.success('Pembayaran utang berhasil dicatat!')
+      showPayModal.value = false
+      payAmount.value = 0
+      selectedMemberForPay.value = null
+      paymentMethod.value = 'CASH'
+
+      await loadMembers()
+    } catch (e) {
+      toast.error(e.message || 'Gagal memproses pembayaran utang')
+    }
   }
 
   return {
@@ -2010,14 +2044,20 @@ export function useExpenses() {
   }
 
   const saveExpense = async () => {
-    if (!form.value.amount || form.value.amount <= 0) {
-      toast.error('Nominal pengeluaran harus lebih dari 0')
+    const amount = Number(form.value.amount)
+
+    // GUARD: Angka positif & valid
+    if (isNaN(amount) || amount <= 0) {
+      toast.error('Nominal pengeluaran harus berupa angka lebih dari 0!')
       return
     }
 
     loading.value = true
     try {
-      await expenseService.addExpense(form.value)
+      await expenseService.addExpense({
+        ...form.value,
+        amount
+      })
       toast.success('Pengeluaran berhasil dicatat & kas dipotong!')
       showModal.value = false
       await loadExpenses()
@@ -2225,121 +2265,122 @@ export function useSettings() {
 import { ref } from 'vue'
 import { toast } from 'vue-sonner'
 
-const isConnected = ref(false)
-const isConnecting = ref(false)
-const printerDevice = ref(null)
-const printerCharacteristic = ref(null)
-
 export function usePrinter() {
-  const onDisconnected = () => {
-    isConnected.value = false
-    printerDevice.value = null
-    printerCharacteristic.value = null
+  const isPrinting = ref(false)
+  const connectedDevice = ref(null)
+
+  // GUARD: Cek Dukungan Browser & HTTPS
+  const checkBluetoothSupport = () => {
+    // 1. Cek Secure Context (HTTPS / Localhost)
+    if (!window.isSecureContext) {
+      toast.error('Web Bluetooth membutuhkan koneksi aman (HTTPS).')
+      return false
+    }
+
+    // 2. Cek API Navigator Bluetooth
+    if (!navigator.bluetooth) {
+      toast.error('Browser ini tidak mendukung Web Bluetooth. Gunakan Google Chrome versi Desktop/Android.')
+      return false
+    }
+
+    return true
   }
 
   const connectPrinter = async () => {
-    if (!navigator.bluetooth) {
-      toast.error('Browser ini tidak mendukung Web Bluetooth')
-      return null
-    }
+    if (!checkBluetoothSupport()) return null
 
     try {
-      isConnecting.value = true
+      isPrinting.value = true
+      const device = await navigator.bluetooth.requestDevice({
+        acceptAllDevices: true,
+        optionalServices: ['000018f0-0000-1000-8000-00805f9b34fb', '49535343-fe7d-4ae5-8fa9-9fafd205e455']
+      })
 
-      let device = printerDevice.value
-
-      // Cek perangkat yang sudah diizinkan sebelumnya
-      if (!device && navigator.bluetooth.getDevices) {
-        const devices = await navigator.bluetooth.getDevices()
-        if (devices.length > 0) {
-          device = devices[0]
-        }
-      }
-
-      // Jika belum ada, minta pilih perangkat Bluetooth
-      if (!device) {
-        device = await navigator.bluetooth.requestDevice({
-          acceptAllDevices: true,
-          optionalServices: [
-            '000018f0-0000-1000-8000-00805f9b34fb',
-            '0000ff00-0000-1000-8000-00805f9b34fb',
-            '0000af00-0000-1000-8000-00805f9b34fb',
-            '49535343-fe7d-41aa-a322-3d7a4a2d2bd0',
-            'e7810a71-73ae-4d9d-8c54-be98300d1107'
-          ]
-        })
-      }
-
-      printerDevice.value = device
-      device.removeEventListener('gattserverdisconnected', onDisconnected)
-      device.addEventListener('gattserverdisconnected', onDisconnected)
-
-      const server = device.gatt.connected ? device.gatt : await device.gatt.connect()
-      const services = await server.getPrimaryServices().catch(() => [])
-      let targetChar = null
-
-      // Cari characteristic yang mendukung WRITE atau WRITE_WITHOUT_RESPONSE
-      for (const service of services) {
-        const characteristics = await service.getCharacteristics().catch(() => [])
-        for (const char of characteristics) {
-          if (char?.properties?.write || char?.properties?.writeWithoutResponse) {
-            targetChar = char
-            break
-          }
-        }
-        if (targetChar) break
-      }
-
-      if (!targetChar) {
-        throw new Error('Karakteristik cetak printer thermal tidak ditemukan.')
-      }
-
-      printerCharacteristic.value = targetChar
-      isConnected.value = true
+      connectedDevice.value = device
       toast.success(`Terhubung ke printer: ${device.name || 'Printer Thermal'}`)
-      return targetChar
+      return device
     } catch (err) {
-      onDisconnected()
-      if (err.name !== 'NotFoundError') {
-        console.error('Gagal terhubung ke printer:', err)
-        toast.error(err.message || 'Gagal menghubungkan printer Bluetooth')
+      if (err.name === 'NotFoundError') {
+        toast.info('Pencarian printer dibatalkan.')
+      } else {
+        toast.error(`Gagal menghubungkan printer: ${err.message || 'Bluetooth mati atau printer tidak ditemukan'}`)
       }
       return null
     } finally {
-      isConnecting.value = false
+      isPrinting.value = false
     }
   }
 
-  const disconnectPrinter = () => {
-    if (printerDevice.value && printerDevice.value.gatt?.connected) {
-      printerDevice.value.gatt.disconnect()
-    }
-    onDisconnected()
-    toast.info('Koneksi printer diputuskan')
-  }
+  const printReceipt = async (encoderBytes) => {
+    if (!checkBluetoothSupport()) return false
 
-  const toggleConnection = () => {
-    if (isConnected.value) {
-      disconnectPrinter()
-    } else {
-      connectPrinter()
+    try {
+      isPrinting.value = true
+
+      let device = connectedDevice.value
+      if (!device || !device.gatt.connected) {
+        device = await connectPrinter()
+      }
+
+      if (!device) return false
+
+      const server = await device.gatt.connect()
+      
+      // Cari service pencetakan thermal standar
+      const services = await server.getPrimaryServices()
+      if (!services || services.length === 0) {
+        throw new Error('Service printer tidak ditemukan pada perangkat ini.')
+      }
+
+      let writeCharacteristic = null
+
+      for (const service of services) {
+        const characteristics = await service.getCharacteristics()
+        for (const char of characteristics) {
+          if (char.properties.write || char.properties.writeWithoutResponse) {
+            writeCharacteristic = char
+            break
+          }
+        }
+        if (writeCharacteristic) break
+      }
+
+      if (!writeCharacteristic) {
+        throw new Error('Karakteristik Bluetooth untuk mencetak tidak ditemukan.')
+      }
+
+      // Kirim data dalam bentuk chunk (20 byte per paket) untuk stabilitas printer Bluetooth
+      const chunkSize = 20
+      for (let i = 0; i < encoderBytes.length; i += chunkSize) {
+        const chunk = encoderBytes.slice(i, i + chunkSize)
+        await writeCharacteristic.writeValue(chunk)
+      }
+
+      toast.success('Struk berhasil dikirim ke printer!')
+      return true
+    } catch (err) {
+      console.error('Error saat mencetak via Bluetooth:', err)
+      if (err.name !== 'NotFoundError') {
+        toast.error(`Gagal mencetak struk: ${err.message || 'Koneksi terputus'}`)
+      }
+      return false
+    } finally {
+      isPrinting.value = false
     }
   }
 
   return {
-    isConnected,
-    isConnecting,
-    printerDevice,
-    printerCharacteristic,
+    isPrinting,
+    connectedDevice,
+    checkBluetoothSupport,
     connectPrinter,
-    disconnectPrinter,
-    toggleConnection
+    printReceipt
   }
 }
 
 ===== src/services/backupService.js =====
 // src/services/backupService.js
-import { db } from '../db/index.js'
+import { db } from '../index.js'
 import { firestore } from './firebase.js'
 import { collection, getDocs, writeBatch } from 'firebase/firestore'
 import dayjs from 'dayjs'
@@ -2361,6 +2402,11 @@ export const backupService = {
   },
 
   async importBackup(file) {
+    // GUARD 1: Cek Koneksi Internet
+    if (!navigator.onLine) {
+      throw new Error('Impor backup membutuhkan koneksi internet aktif agar sinkronisasi cloud tetap konsisten.')
+    }
+
     if (!file) return false
 
     return new Promise((resolve, reject) => {
@@ -2441,7 +2487,12 @@ export const backupService = {
   },
 
   async resetTransactions() {
-    if (navigator.onLine && firestore) {
+    // GUARD 2: Cek Koneksi Internet
+    if (!navigator.onLine) {
+      throw new Error('Reset transaksi membutuhkan koneksi internet aktif agar data cloud terhapus bersih.')
+    }
+
+    if (firestore) {
       const cloudTablesToClear = [
         'transactions',
         'transaction_items',
@@ -2509,13 +2560,11 @@ export const backupService = {
     })
   },
 
-  // MIGRASI SEMUA DATA MASTER KE HURUF KAPITAL PERMANEN
   async convertAllToUppercase() {
     const tableNames = ['products', 'categories', 'units', 'product_packages']
     const now = dayjs().toISOString()
 
     await db.transaction('rw', tableNames, async () => {
-      // 1. Ubah Master Produk
       const products = await db.products.toArray()
       for (const p of products) {
         await db.products.update(p.id, {
@@ -2529,7 +2578,6 @@ export const backupService = {
         })
       }
 
-      // 2. Ubah Master Kategori
       const categories = await db.categories.toArray()
       for (const c of categories) {
         await db.categories.update(c.id, {
@@ -2539,7 +2587,6 @@ export const backupService = {
         })
       }
 
-      // 3. Ubah Master Satuan
       const units = await db.units.toArray()
       for (const u of units) {
         await db.units.update(u.id, {
@@ -2549,7 +2596,6 @@ export const backupService = {
         })
       }
 
-      // 4. Ubah Paket Eceran Rokok
       const packages = await db.product_packages.toArray()
       for (const pkg of packages) {
         await db.product_packages.update(pkg.id, {
@@ -3307,10 +3353,16 @@ export const kasirService = {
     const total = cart.reduce((s, c) => s + (c.price_sell * c.cartQty), 0)
     const isTempo = paymentMethod === 'TEMPO'
 
-    if (isTempo && !member) throw new Error('Member wajib untuk TEMPO')
+    // GUARD 1: Validasi metode TEMPO wajib memilih member
+    if (isTempo && !member) throw new Error('Member wajib dipilih untuk metode pembayaran TEMPO!')
+    
+    // GUARD 2: Validasi keranjang tidak boleh kosong
+    if (!cart || cart.length === 0) throw new Error('Keranjang belanja masih kosong!')
 
     let totalProfit = 0
+    const stockWarnings = []
 
+    // 1. Simpan header transaksi
     await db.transactions.add({
       id, 
       date: now, 
@@ -3328,6 +3380,7 @@ export const kasirService = {
       synced: 0
     })
 
+    // 2. Pencatatan mutasi kas/bank
     if (paymentMethod === 'CASH') {
       await financeRepo.addMutation({
         accountId: 'acc_cash',
@@ -3348,11 +3401,13 @@ export const kasirService = {
       })
     }
 
+    // 3. Olah item transaksi & pemotongan stok (OPSI B: Boleh Minus)
     for (const c of cart) {
       const modal = c.price_modal || 0
       const itemProfit = (c.price_sell - modal) * c.cartQty
       totalProfit += Math.max(0, itemProfit)
 
+      // Simpan item transaksi
       await db.transaction_items.add({
         id: crypto.randomUUID(), 
         transactionId: id, 
@@ -3366,15 +3421,27 @@ export const kasirService = {
         synced: 0
       })
 
-      const qtyDipotong = c.packageInfo ? (c.packageInfo.qty_pcs * c.cartQty) : c.cartQty
+      // Cek ketersediaan produk di database
+      const product = await db.products.get(c.id)
+      if (product) {
+        const qtyDipotong = c.packageInfo ? (c.packageInfo.qty_pcs * c.cartQty) : c.cartQty
+        const currentQty = product.qty || 0
+        const newQty = currentQty - qtyDipotong
 
-      await db.products.update(c.id, { 
-        qty: (c.qty || 0) - qtyDipotong, 
-        updatedAt: now, 
-        synced: 0 
-      })
+        // GUARD OPSI B: Catat peringatan jika stok menjadi minus (< 0)
+        if (newQty < 0) {
+          stockWarnings.push(`${product.name} (Sisa Stok: ${newQty})`)
+        }
+
+        await db.products.update(c.id, { 
+          qty: newQty, 
+          updatedAt: now, 
+          synced: 0 
+        })
+      }
     }
 
+    // 4. Update data member (poin, spending, & piutang) jika ada
     if (member) {
       const currentMember = await db.members.get(member.id)
       if (currentMember) {
@@ -3393,7 +3460,7 @@ export const kasirService = {
       }
     }
 
-    return { id, total }
+    return { id, total, stockWarnings }
   },
 
   async getInitialData() {
@@ -6011,7 +6078,7 @@ onDeactivated(() => {
             class="w-full pl-11 pr-12 py-4 bg-white border border-zinc-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"
           />
           
-          <!-- TOMBOL SCANNER KAMERA KHUSUS HP (Tampil di HP: block md:hidden, Hilang di Tablet: hidden) -->
+          <!-- TOMBOL SCANNER KAMERA KHUSUS HP -->
           <button 
             type="button"
             @click="toggleCameraScanner"
@@ -6035,7 +6102,7 @@ onDeactivated(() => {
         </button>
       </div>
 
-      <!-- CONTAINER KAMERA SCANNER (Hanya muncul saat tombol kamera di HP ditekan) -->
+      <!-- CONTAINER KAMERA SCANNER -->
       <div v-show="isScanning" class="mt-3 bg-black rounded-2xl overflow-hidden relative border border-zinc-700 shadow-lg block md:hidden">
         <div id="reader-kasir" class="w-full"></div>
         <button 
@@ -6419,6 +6486,14 @@ const onCheckout = async () => {
     }
 
     toast.success('Transaksi berhasil diproses!') 
+
+    // GUARD OPSI B: Tampilkan warning toast jika ada stok yang menjadi minus
+    if (res.stockWarnings && res.stockWarnings.length > 0) {
+      setTimeout(() => {
+        toast.warning(`Perhatian! Stok produk berikut menjadi minus:\n${res.stockWarnings.join(', ')}`)
+      }, 400)
+    }
+
   } catch(e) { 
     toast.error(e.message) 
   } 
@@ -8261,12 +8336,14 @@ onMounted(() => {
         <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Ukuran Kertas Thermal</label>
         <div class="grid grid-cols-2 gap-2">
           <button 
+            type="button"
             @click="form.printerPaperSize = '58mm'" 
             :class="['py-2.5 rounded-xl font-bold border transition', form.printerPaperSize === '58mm' ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-zinc-50 border-zinc-200 text-zinc-600']"
           >
             58 mm (Kecil)
           </button>
           <button 
+            type="button"
             @click="form.printerPaperSize = '80mm'" 
             :class="['py-2.5 rounded-xl font-bold border transition', form.printerPaperSize === '80mm' ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-zinc-50 border-zinc-200 text-zinc-600']"
           >
@@ -8288,6 +8365,7 @@ onMounted(() => {
 
     <div class="grid grid-cols-2 gap-2">
       <button 
+        type="button"
         @click="exportBackup" 
         class="py-3 bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition active:scale-95"
       >
@@ -8295,15 +8373,24 @@ onMounted(() => {
         <span>Ekspor Backup</span>
       </button>
 
-      <label class="py-3 bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer active:scale-95">
+      <label 
+        :class="[
+          'py-3 border rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition active:scale-95',
+          isOnline 
+            ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100 cursor-pointer' 
+            : 'bg-zinc-100 text-zinc-400 border-zinc-200 cursor-not-allowed opacity-60'
+        ]"
+        :title="!isOnline ? 'Fitur impor backup membutuhkan koneksi internet' : ''"
+      >
         <Upload class="w-4 h-4" />
         <span>Impor Backup</span>
-        <input type="file" accept=".json" @change="importBackup" class="hidden" />
+        <input type="file" accept=".json" :disabled="!isOnline" @change="importBackup" class="hidden" />
       </label>
     </div>
 
     <!-- Tombol Migrasi Kapital -->
     <button 
+      type="button"
       @click="convertDataToUppercase" 
       :disabled="loading"
       class="w-full py-3 bg-amber-500 hover:bg-amber-600 disabled:bg-zinc-300 text-zinc-950 font-bold text-xs rounded-xl shadow-md transition active:scale-95 flex items-center justify-center gap-2"
@@ -8325,19 +8412,25 @@ onMounted(() => {
     </p>
 
     <button 
+      type="button"
       @click="resetTransactionsData" 
-      :disabled="loading"
-      class="w-full py-3 bg-red-600 hover:bg-red-700 disabled:bg-zinc-300 text-white font-bold text-xs rounded-xl shadow-md transition active:scale-95 flex items-center justify-center gap-2"
+      :disabled="loading || !isOnline"
+      :class="[
+        'w-full py-3 font-bold text-xs rounded-xl shadow-md transition active:scale-95 flex items-center justify-center gap-2',
+        isOnline 
+          ? 'bg-red-600 hover:bg-red-700 text-white' 
+          : 'bg-zinc-300 text-zinc-500 cursor-not-allowed'
+      ]"
     >
       <Trash2 class="w-4 h-4" />
-      <span>Kosongkan Semua Riwayat Transaksi</span>
+      <span>{{ !isOnline ? 'Reset Membutuhkan Koneksi Internet' : 'Kosongkan Semua Riwayat Transaksi' }}</span>
     </button>
   </div>
 </div>
 </template>
 
 <script setup>
-import { onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { Store, Printer, Database, Download, Upload, Trash2, Type } from 'lucide-vue-next'
 import { useSettings } from '../composables/useSettings.js'
 
@@ -8352,8 +8445,21 @@ const {
   convertDataToUppercase 
 } = useSettings()
 
+const isOnline = ref(navigator.onLine)
+
+const updateOnlineState = () => {
+  isOnline.value = navigator.onLine
+}
+
 onMounted(() => {
   loadSettings()
+  window.addEventListener('online', updateOnlineState)
+  window.addEventListener('offline', updateOnlineState)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('online', updateOnlineState)
+  window.removeEventListener('offline', updateOnlineState)
 })
 </script>
 

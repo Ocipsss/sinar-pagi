@@ -31,6 +31,14 @@ let isSyncing = false
 let unsubscribers = []
 let intervalId = null
 
+// --- FIX POIN A: Saklar Penanda Pull dari Cloud ---
+let isPullingFromCloud = false
+
+export function getIsPullingFromCloud() {
+  return isPullingFromCloud
+}
+// --------------------------------------------------
+
 // State reaktif untuk indikator Sync di UI
 export const syncStatus = reactive({
   isOnline: navigator.onLine,
@@ -123,28 +131,33 @@ export const syncRealtime = {
         const q = collection(firestore, tableName)
         const unsub = onSnapshot(q, async (snapshot) => {
           if (isSyncing) return
-          for (const change of snapshot.docChanges()) {
-            try {
-              const cloudData = change.doc.data()
-              const local = await db[tableName]?.get(change.doc.id)
-              if (change.type === 'removed') {
-                if (local) await db[tableName].delete(change.doc.id)
-                continue
-              }
-              if (tableName === 'members') {
-                if (!local || cloudData.updatedAt > local.updatedAt) {
-                  const localDebt = local?.debt
-                  await db[tableName].put({ ...cloudData, id: change.doc.id, synced: 1, debt: localDebt ?? cloudData.debt })
-                  await recalculateMemberDebt(change.doc.id)
+          isPullingFromCloud = true
+          try {
+            for (const change of snapshot.docChanges()) {
+              try {
+                const cloudData = change.doc.data()
+                const local = await db[tableName]?.get(change.doc.id)
+                if (change.type === 'removed') {
+                  if (local) await db[tableName].delete(change.doc.id)
+                  continue
                 }
-              } else {
-                if (!local || cloudData.updatedAt > local.updatedAt) {
-                  await db[tableName].put({ ...cloudData, id: change.doc.id, synced: 1 })
+                if (tableName === 'members') {
+                  if (!local || cloudData.updatedAt > local.updatedAt) {
+                    const localDebt = local?.debt
+                    await db[tableName].put({ ...cloudData, id: change.doc.id, synced: 1, debt: localDebt ?? cloudData.debt })
+                    await recalculateMemberDebt(change.doc.id)
+                  }
+                } else {
+                  if (!local || cloudData.updatedAt > local.updatedAt) {
+                    await db[tableName].put({ ...cloudData, id: change.doc.id, synced: 1 })
+                  }
                 }
-              }
-            } catch (e) {}
+              } catch (e) {}
+            }
+            await updateUnsyncedCount()
+          } finally {
+            isPullingFromCloud = false
           }
-          await updateUnsyncedCount()
         }, handleError)
         unsubscribers.push(unsub)
       } catch (e) {}
@@ -155,20 +168,25 @@ export const syncRealtime = {
         const q = collection(firestore, tableName)
         const unsub = onSnapshot(q, async (snapshot) => {
           if (isSyncing) return
-          for (const change of snapshot.docChanges()) {
-            if (change.type === 'removed') continue
-            try {
-              const cloudData = change.doc.data()
-              const local = await db[tableName]?.get(change.doc.id)
-              if (!local || cloudData.updatedAt > local.updatedAt) {
-                await db[tableName].put({ ...cloudData, id: change.doc.id, synced: 1 })
-                if (tableName === 'transactions' || tableName === 'debt_payments') {
-                  await recalculateMemberDebt(cloudData.memberId)
+          isPullingFromCloud = true
+          try {
+            for (const change of snapshot.docChanges()) {
+              if (change.type === 'removed') continue
+              try {
+                const cloudData = change.doc.data()
+                const local = await db[tableName]?.get(change.doc.id)
+                if (!local || cloudData.updatedAt > local.updatedAt) {
+                  await db[tableName].put({ ...cloudData, id: change.doc.id, synced: 1 })
+                  if (tableName === 'transactions' || tableName === 'debt_payments') {
+                    await recalculateMemberDebt(cloudData.memberId)
+                  }
                 }
-              }
-            } catch (e) {}
+              } catch (e) {}
+            }
+            await updateUnsyncedCount()
+          } finally {
+            isPullingFromCloud = false
           }
-          await updateUnsyncedCount()
         }, handleError)
         unsubscribers.push(unsub)
       } catch (e) {}
@@ -178,18 +196,23 @@ export const syncRealtime = {
       const qUnpaid = query(collection(firestore, 'transactions'), where('remaining', '>', 0))
       const unsubUnpaid = onSnapshot(qUnpaid, async (snapshot) => {
         if (isSyncing) return
-        for (const change of snapshot.docChanges()) {
-          if (change.type === 'removed') continue
-          try {
-            const cloudData = change.doc.data()
-            const local = await db.transactions.get(change.doc.id)
-            if (!local || cloudData.updatedAt > local.updatedAt) {
-              await db.transactions.put({ ...cloudData, id: change.doc.id, synced: 1 })
-              await recalculateMemberDebt(cloudData.memberId)
-            }
-          } catch (e) {}
+        isPullingFromCloud = true
+        try {
+          for (const change of snapshot.docChanges()) {
+            if (change.type === 'removed') continue
+            try {
+              const cloudData = change.doc.data()
+              const local = await db.transactions.get(change.doc.id)
+              if (!local || cloudData.updatedAt > local.updatedAt) {
+                await db.transactions.put({ ...cloudData, id: change.doc.id, synced: 1 })
+                await recalculateMemberDebt(cloudData.memberId)
+              }
+            } catch (e) {}
+          }
+          await updateUnsyncedCount()
+        } finally {
+          isPullingFromCloud = false
         }
-        await updateUnsyncedCount()
       }, handleError)
       unsubscribers.push(unsubUnpaid)
     } catch (e) {}

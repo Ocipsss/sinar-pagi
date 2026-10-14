@@ -21,6 +21,11 @@ export const backupService = {
   },
 
   async importBackup(file) {
+    // GUARD 1: Cek Koneksi Internet
+    if (!navigator.onLine) {
+      throw new Error('Impor backup membutuhkan koneksi internet aktif agar sinkronisasi cloud tetap konsisten.')
+    }
+
     if (!file) return false
 
     return new Promise((resolve, reject) => {
@@ -101,7 +106,12 @@ export const backupService = {
   },
 
   async resetTransactions() {
-    if (navigator.onLine && firestore) {
+    // GUARD 2: Cek Koneksi Internet
+    if (!navigator.onLine) {
+      throw new Error('Reset transaksi membutuhkan koneksi internet aktif agar data cloud terhapus bersih.')
+    }
+
+    if (firestore) {
       const cloudTablesToClear = [
         'transactions',
         'transaction_items',
@@ -169,13 +179,11 @@ export const backupService = {
     })
   },
 
-  // MIGRASI SEMUA DATA MASTER KE HURUF KAPITAL PERMANEN
   async convertAllToUppercase() {
     const tableNames = ['products', 'categories', 'units', 'product_packages']
     const now = dayjs().toISOString()
 
     await db.transaction('rw', tableNames, async () => {
-      // 1. Ubah Master Produk
       const products = await db.products.toArray()
       for (const p of products) {
         await db.products.update(p.id, {
@@ -189,7 +197,6 @@ export const backupService = {
         })
       }
 
-      // 2. Ubah Master Kategori
       const categories = await db.categories.toArray()
       for (const c of categories) {
         await db.categories.update(c.id, {
@@ -199,7 +206,6 @@ export const backupService = {
         })
       }
 
-      // 3. Ubah Master Satuan
       const units = await db.units.toArray()
       for (const u of units) {
         await db.units.update(u.id, {
@@ -209,7 +215,6 @@ export const backupService = {
         })
       }
 
-      // 4. Ubah Paket Eceran Rokok
       const packages = await db.product_packages.toArray()
       for (const pkg of packages) {
         await db.product_packages.update(pkg.id, {

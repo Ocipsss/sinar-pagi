@@ -76,12 +76,14 @@
         <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Ukuran Kertas Thermal</label>
         <div class="grid grid-cols-2 gap-2">
           <button 
+            type="button"
             @click="form.printerPaperSize = '58mm'" 
             :class="['py-2.5 rounded-xl font-bold border transition', form.printerPaperSize === '58mm' ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-zinc-50 border-zinc-200 text-zinc-600']"
           >
             58 mm (Kecil)
           </button>
           <button 
+            type="button"
             @click="form.printerPaperSize = '80mm'" 
             :class="['py-2.5 rounded-xl font-bold border transition', form.printerPaperSize === '80mm' ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-zinc-50 border-zinc-200 text-zinc-600']"
           >
@@ -103,6 +105,7 @@
 
     <div class="grid grid-cols-2 gap-2">
       <button 
+        type="button"
         @click="exportBackup" 
         class="py-3 bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition active:scale-95"
       >
@@ -110,15 +113,24 @@
         <span>Ekspor Backup</span>
       </button>
 
-      <label class="py-3 bg-blue-50 text-blue-700 border border-blue-200 hover:bg-blue-100 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition cursor-pointer active:scale-95">
+      <label 
+        :class="[
+          'py-3 border rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition active:scale-95',
+          isOnline 
+            ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100 cursor-pointer' 
+            : 'bg-zinc-100 text-zinc-400 border-zinc-200 cursor-not-allowed opacity-60'
+        ]"
+        :title="!isOnline ? 'Fitur impor backup membutuhkan koneksi internet' : ''"
+      >
         <Upload class="w-4 h-4" />
         <span>Impor Backup</span>
-        <input type="file" accept=".json" @change="importBackup" class="hidden" />
+        <input type="file" accept=".json" :disabled="!isOnline" @change="importBackup" class="hidden" />
       </label>
     </div>
 
     <!-- Tombol Migrasi Kapital -->
     <button 
+      type="button"
       @click="convertDataToUppercase" 
       :disabled="loading"
       class="w-full py-3 bg-amber-500 hover:bg-amber-600 disabled:bg-zinc-300 text-zinc-950 font-bold text-xs rounded-xl shadow-md transition active:scale-95 flex items-center justify-center gap-2"
@@ -140,19 +152,25 @@
     </p>
 
     <button 
+      type="button"
       @click="resetTransactionsData" 
-      :disabled="loading"
-      class="w-full py-3 bg-red-600 hover:bg-red-700 disabled:bg-zinc-300 text-white font-bold text-xs rounded-xl shadow-md transition active:scale-95 flex items-center justify-center gap-2"
+      :disabled="loading || !isOnline"
+      :class="[
+        'w-full py-3 font-bold text-xs rounded-xl shadow-md transition active:scale-95 flex items-center justify-center gap-2',
+        isOnline 
+          ? 'bg-red-600 hover:bg-red-700 text-white' 
+          : 'bg-zinc-300 text-zinc-500 cursor-not-allowed'
+      ]"
     >
       <Trash2 class="w-4 h-4" />
-      <span>Kosongkan Semua Riwayat Transaksi</span>
+      <span>{{ !isOnline ? 'Reset Membutuhkan Koneksi Internet' : 'Kosongkan Semua Riwayat Transaksi' }}</span>
     </button>
   </div>
 </div>
 </template>
 
 <script setup>
-import { onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { Store, Printer, Database, Download, Upload, Trash2, Type } from 'lucide-vue-next'
 import { useSettings } from '../composables/useSettings.js'
 
@@ -167,7 +185,20 @@ const {
   convertDataToUppercase 
 } = useSettings()
 
+const isOnline = ref(navigator.onLine)
+
+const updateOnlineState = () => {
+  isOnline.value = navigator.onLine
+}
+
 onMounted(() => {
   loadSettings()
+  window.addEventListener('online', updateOnlineState)
+  window.addEventListener('offline', updateOnlineState)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('online', updateOnlineState)
+  window.removeEventListener('offline', updateOnlineState)
 })
 </script>

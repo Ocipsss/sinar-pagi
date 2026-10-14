@@ -76,14 +76,20 @@ export function useExpenses() {
   }
 
   const saveExpense = async () => {
-    if (!form.value.amount || form.value.amount <= 0) {
-      toast.error('Nominal pengeluaran harus lebih dari 0')
+    const amount = Number(form.value.amount)
+
+    // GUARD: Angka positif & valid
+    if (isNaN(amount) || amount <= 0) {
+      toast.error('Nominal pengeluaran harus berupa angka lebih dari 0!')
       return
     }
 
     loading.value = true
     try {
-      await expenseService.addExpense(form.value)
+      await expenseService.addExpense({
+        ...form.value,
+        amount
+      })
       toast.success('Pengeluaran berhasil dicatat & kas dipotong!')
       showModal.value = false
       await loadExpenses()

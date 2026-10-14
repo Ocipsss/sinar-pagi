@@ -10,10 +10,16 @@ export const kasirService = {
     const total = cart.reduce((s, c) => s + (c.price_sell * c.cartQty), 0)
     const isTempo = paymentMethod === 'TEMPO'
 
-    if (isTempo && !member) throw new Error('Member wajib untuk TEMPO')
+    // GUARD 1: Validasi metode TEMPO wajib memilih member
+    if (isTempo && !member) throw new Error('Member wajib dipilih untuk metode pembayaran TEMPO!')
+    
+    // GUARD 2: Validasi keranjang tidak boleh kosong
+    if (!cart || cart.length === 0) throw new Error('Keranjang belanja masih kosong!')
 
     let totalProfit = 0
+    const stockWarnings = []
 
+    // 1. Simpan header transaksi
     await db.transactions.add({
       id, 
       date: now, 
@@ -31,6 +37,7 @@ export const kasirService = {
       synced: 0
     })
 
+    // 2. Pencatatan mutasi kas/bank
     if (paymentMethod === 'CASH') {
       await financeRepo.addMutation({
         accountId: 'acc_cash',
@@ -51,11 +58,13 @@ export const kasirService = {
       })
     }
 
+    // 3. Olah item transaksi & pemotongan stok (OPSI B: Boleh Minus)
     for (const c of cart) {
       const modal = c.price_modal || 0
       const itemProfit = (c.price_sell - modal) * c.cartQty
       totalProfit += Math.max(0, itemProfit)
 
+      // Simpan item transaksi
       await db.transaction_items.add({
         id: crypto.randomUUID(), 
         transactionId: id, 
@@ -69,15 +78,27 @@ export const kasirService = {
         synced: 0
       })
 
-      const qtyDipotong = c.packageInfo ? (c.packageInfo.qty_pcs * c.cartQty) : c.cartQty
+      // Cek ketersediaan produk di database
+      const product = await db.products.get(c.id)
+      if (product) {
+        const qtyDipotong = c.packageInfo ? (c.packageInfo.qty_pcs * c.cartQty) : c.cartQty
+        const currentQty = product.qty || 0
+        const newQty = currentQty - qtyDipotong
 
-      await db.products.update(c.id, { 
-        qty: (c.qty || 0) - qtyDipotong, 
-        updatedAt: now, 
-        synced: 0 
-      })
+        // GUARD OPSI B: Catat peringatan jika stok menjadi minus (< 0)
+        if (newQty < 0) {
+          stockWarnings.push(`${product.name} (Sisa Stok: ${newQty})`)
+        }
+
+        await db.products.update(c.id, { 
+          qty: newQty, 
+          updatedAt: now, 
+          synced: 0 
+        })
+      }
     }
 
+    // 4. Update data member (poin, spending, & piutang) jika ada
     if (member) {
       const currentMember = await db.members.get(member.id)
       if (currentMember) {
@@ -96,7 +117,7 @@ export const kasirService = {
       }
     }
 
-    return { id, total }
+    return { id, total, stockWarnings }
   },
 
   async getInitialData() {
