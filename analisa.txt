@@ -1,0 +1,761 @@
+3. MASALAH KRITIS (Harus Diperbaiki)
+
+🔴 3.1 Bug: useKasir.js — Typo & Import Salah
+
+File: src/composables/useKasir.js baris ~50
+
+```javascript
+const [data, packages, services] = await Promise.all([
+  kasirService.getInitialData(),
+  packageRepository.getAll(),
+  serviceRepository.getAll()
+])
+```
+
+Import di atas menggunakan packageRepository (nama file) tapi yang diekspor adalah packageRepository — OK. Tapi:
+
+```javascript
+import { packageRepository } from '../db/repositories/packageRepository.js'
+```
+
+File packageRepository.js mengekspor packageRepository — konsisten. Namun di useSettingsMenu.js juga sama. Ini aman, tapi tidak konsisten dengan konvensi lain (productRepo, memberRepo).
+
+Rekomendasi: Ganti ke packageRepo dan serviceRepo agar konsisten.
+
+---
+
+🔴 3.2 Bug Kritis: financeRepository.recalculateFromHistory() — Kurung Kurawal Hilang
+
+File: src/db/repositories/financeRepository.js baris akhir
+
+```javascript
+        await this.addMutation({
+          accountId: 'acc_bank',
+          type: 'IN',
+          amount: bankIn,
+          category: 'Transaksi Digital',
+          note: `Masuk Saldo Tarik Tunai ${d.provider}`,
+          refId: d.id
+        })
+      }
+    }
+}  // ← INI HARUSNYA `  }` (menutup method recalculateFromHistory)
+}
+```
+
+Lihat akhir file — ada dua } berturut-turut. Seharusnya:
+
+```javascript
+    } // tutup for
+  }   // tutup method recalculateFromHistory
+}     // tutup object financeRepo
+```
+
+Dampak: File ini gagal parse → seluruh aplikasi crash saat import. Ini bug fatal!
+
+Perbaikan:
+
+```javascript
+// src/db/repositories/financeRepository.js (akhir file)
+        await this.addMutation({
+          accountId: 'acc_bank',
+          type: 'IN',
+          amount: bankIn,
+          category: 'Transaksi Digital',
+          note: `Masuk Saldo Tarik Tunai ${d.provider}`,
+          refId: d.id
+        })
+      }
+    }
+  } // ← tutup method recalculateFromHistory
+}   // ← tutup object financeRepo
+```
+
+---
+
+🔴 3.3 Race Condition di syncService.js
+
+```javascript
+async pushLocalToCloud() {
+  if (!navigator.onLine || isSyncing || !db || !firestore) { ... }
+  isSyncing = true
+  // ...
+}
+```
+
+Masalah: isSyncing adalah variabel module-level, bukan reactive. Jika dua panggilan terjadi hampir bersamaan (mis. dari hook Dexie + interval 30 detik), yang kedua akan skip dan data tidak terkirim sampai interval berikutnya.
+
+Rekomendasi: Gunakan queue atau debounce:
+
+```javascript
+let syncPromise = null
+async pushLocalToCloud() {
+  if (syncPromise) return syncPromise
+  syncPromise = this._doPush().finally(() => { syncPromise = null })
+  return syncPromise
+}
+```
+
+---
+
+🔴 3.4 ReceiptModal.vue — Props transaction Bisa Null
+
+```vue
+<div class="text-center font-bold text-sm text-zinc-800">SINAR PAGI</div>
+```
+
+```javascript
+const props = defineProps({
+  transaction: { type: Object, required: true }
+})
+```
+
+Tapi di template: transaction?.id, transaction?.items — pakai optional chaining. Inkonsisten. Jika parent kirim null, Vue akan warning.
+
+Rekomendasi: Tambahkan guard:
+
+```vue
+<div v-if="!transaction" class="p-6 text-center text-zinc-400">Data transaksi tidak tersedia</div>
+<div v-else> ... </div>
+```
+
+---
+
+🟠 3.5 kasirService.checkout() — Tidak Update amountPaid untuk QRIS
+
+```javascript
+if (paymentMethod === 'CASH') {
+  await financeRepo.addMutation({ ... amount: total ... })
+} else if (paymentMethod === 'QRIS') {
+  await financeRepo.addMutation({ ... amount: total ... })
+}
+```
+
+Masalah: Untuk QRIS, amountPaid di transaksi diset total (benar), tapi tidak ada validasi apakah user benar-benar bayar. Minor, tapi bisa jadi celah.
+
+---
+
+🟠 3.6 productService.createProduct() — Typo Spasi
+
+```javascript
+const exist = formData.code? await productRepo.getByCode(formData.code) : null
+```
+
+```javascript
+return await productRepo.create({
+ ...formData,
+  price_modal: modalPerPcs,  // ← indentasi aneh
+  unit: formData.unit || 'pcs',
+})
+```
+
+Tidak fatal, tapi tidak konsisten.
+
+---
+
+🟠 3.7 useProductsDigital.js — adminFee Default 2000 di Reset
+
+```javascript
+form.value = {
+  type: 'topup',
+  provider: '',
+  nominal: null,
+  adminFee: 2000,  // hard-coded
+  adminPaymentMethod: 'cash'
+}
+```
+
+Masalah: Admin fee default 2000 di-hardcode di 3 tempat. Kalau toko mau ubah default, harus edit kode.
+
+Rekomendasi: Simpan di settings:
+
+```javascript
+// settingsRepo.getSettings() → defaultAdminFee: 2000
+```
+
+---
+
+🟠 3.8 useShopping.js — handleAutoRestock Tidak Cek Duplikat dengan Benar
+
+```javascript
+const existingProductIds = new Set(
+  currentShoppingList.filter(i => !i.isBought).map(i => i.productId).filter(Boolean)
+)
+```
+
+Ini benar — hanya cek yang belum dibeli. Tapi kalau produk sudah dibeli lalu stok masih tipis, akan ditambahkan lagi. By design, tapi perlu dokumentasi.
+
+---
+
+🟠 3.9 memberService.payDebt() — Tidak Update total_spending
+
+Saat bayar utang, total_spending tidak berubah (benar — itu akumulasi belanja). Tapi poin tidak dikurangi saat void. Lihat salesHistoryService.voidTransaction():
+
+```javascript
+if (transaction.memberId) {
+  const member = await memberRepo.getById(transaction.memberId)
+  if (member) {
+    const newSpending = Math.max(0, (member.total_spending || 0) - transaction.total)
+    const newDebt = ...
+    await memberRepo.update(transaction.memberId, {
+      total_spending: newSpending,
+      debt: newDebt
+      // ← points tidak dikurangi!
+    })
+  }
+}
+```
+
+Rekomendasi: Hitung ulang poin yang didapat dari transaksi ini dan kurangi.
+
+---
+
+🔴 3.10 kasirStore.addToCart() — crypto.randomUUID() di holdCurrentCart
+
+```javascript
+this.pendingCarts.push({
+  id: crypto.randomUUID(),
+  // ...
+})
+```
+
+Masalah: crypto.randomUUID() hanya tersedia di secure context (HTTPS/localhost). Jika PWA di-serve via HTTP (mis. testing di LAN), akan crash.
+
+Rekomendasi: Fallback:
+
+```javascript
+const uuid = () => crypto?.randomUUID?.() ?? `id_${Date.now()}_${Math.random().toString(36).slice(2)}`
+```
+
+---
+
+🔴 3.11 useKasir.js — Global Keydown Listener Bisa Konflik
+
+```javascript
+const handleGlobalKeydown = (e) => {
+  // ...
+  if (isTypingInInput && !isKasirSearchInput) return
+  // ...
+}
+```
+
+Masalah: Listener ini selalu aktif selama komponen Kasir hidup. Jika user membuka modal (mis. ReceiptModal) dan mengetik di input modal, isTypingInInput akan true → aman. Tapi jika modal tidak fokus ke input, ketikan akan masuk ke buffer barcode.
+
+Rekomendasi: Cek juga apakah ada modal terbuka:
+
+```javascript
+const isModalOpen = document.querySelector('[role="dialog"], .modal-open')
+if (isModalOpen) return
+```
+
+---
+
+🔴 3.12 syncService.js — Listener Firestore Tidak Di-cleanup
+
+```javascript
+initRealtimePull() {
+  this.stopRealtime()
+  // ...
+  TABLES_TO_SYNC.forEach(tableName => {
+    const unsub = onSnapshot(q, ...)
+    unsubscribers.push(unsub)
+  })
+}
+```
+
+Masalah: stopRealtime() dipanggil di awal, tapi jika init() dipanggil berkali-kali (mis. hot reload), listener lama mungkin tidak ter-cleanup dengan benar.
+
+Rekomendasi: Pastikan unsubscribers di-reset:
+
+```javascript
+stopRealtime() {
+  unsubscribers.forEach(unsub => { try { unsub() } catch {} })
+  unsubscribers = []  // ← reset array
+  if (intervalId) { clearInterval(intervalId); intervalId = null }
+}
+```
+
+---
+
+🟠 3.13 MainLayout.vue — Tombol Printer Tidak Cek navigator.bluetooth
+
+```vue
+<button @click="toggleConnection" :disabled="isConnecting" ...>
+```
+
+usePrinter.connectPrinter() cek navigator.bluetooth, tapi tombol tetap bisa diklik. UX buruk di iOS/Safari.
+
+Rekomendasi:
+
+```vue
+<button 
+  @click="toggleConnection" 
+  :disabled="isConnecting || !isBluetoothSupported"
+  ...
+>
+```
+
+---
+
+4. MASALAH ARSITEKTUR
+
+🟡 4.1 Duplikasi Logika Format Tanggal
+
+formatDate didefinisikan ulang di:
+
+· ReceiptModal.vue
+· useSalesHistory.js
+· useExpenses.js
+· SalesHistory.vue
+· Expenses.vue
+· Finance.vue
+
+Rekomendasi: Buat utils/formatters/date.js:
+
+```javascript
+import dayjs from 'dayjs'
+export const formatDate = (d) => dayjs(d).format('DD MMM YYYY • HH:mm')
+export const formatDateShort = (d) => dayjs(d).format('DD/MM/YYYY')
+```
+
+---
+
+🟡 4.2 Duplikasi Pattern CRUD di Repositories
+
+Semua repository punya pola:
+
+```javascript
+create: async (data) => {
+  const id = crypto.randomUUID()
+  const now = dayjs().toISOString()
+  await db.table.add({ ...data, id, updatedAt: now, synced: 0 })
+}
+```
+
+Rekomendasi: Buat db/repositories/baseRepository.js:
+
+```javascript
+export const createBaseRepo = (tableName) => ({
+  getAll: () => db[tableName].toArray(),
+  getById: (id) => db[tableName].get(id),
+  create: async (data) => {
+    const id = crypto.randomUUID()
+    const now = dayjs().toISOString()
+    await db[tableName].add({ ...data, id, updatedAt: now, synced: 0 })
+    return id
+  },
+  update: async (id, data) => {
+    const now = dayjs().toISOString()
+    await db[tableName].update(id, { ...data, updatedAt: now, synced: 0 })
+  },
+  delete: (id) => db[tableName].delete(id)
+})
+```
+
+---
+
+🟡 4.3 composables/useKasir.js Terlalu Gemuk (300+ baris)
+
+Rekomendasi: Pecah jadi:
+
+· useKasirCart.js — keranjang, total, kembalian
+· useKasirProducts.js — filter produk, scanner
+· useKasirCheckout.js — pembayaran, checkout
+
+---
+
+🟡 4.4 Tidak Ada Error Boundary
+
+Jika salah satu view crash, seluruh app putih.
+
+Rekomendasi: Tambahkan onErrorCaptured di MainLayout.vue atau App.vue:
+
+```vue
+<script setup>
+import { onErrorCaptured } from 'vue'
+onErrorCaptured((err) => {
+  console.error('App error:', err)
+  toast.error('Terjadi kesalahan. Silakan muat ulang.')
+  return false
+})
+</script>
+```
+
+---
+
+5. MASALAH PWA SPESIFIK
+
+🔴 5.1 vite.config.js Tidak Ada di Kode yang Dikirim
+
+File vite.config.js tidak disertakan dalam src.txt. Ini penting untuk PWA — pastikan:
+
+· VitePWA plugin terkonfigurasi
+· registerType: 'autoUpdate'
+· manifest lengkap (name, icons, theme_color)
+· workbox runtime caching untuk Firestore
+
+Rekomendasi minimal:
+
+```javascript
+// vite.config.js
+import { VitePWA } from 'vite-plugin-pwa'
+export default defineConfig({
+  plugins: [
+    vue(),
+    VitePWA({
+      registerType: 'autoUpdate',
+      includeAssets: ['favicon.ico', 'apple-touch-icon.png'],
+      manifest: {
+        name: 'Sinar Pagi POS',
+        short_name: 'SinarPagi',
+        theme_color: '#18181b',
+        background_color: '#18181b',
+        display: 'standalone',
+        orientation: 'portrait',
+        icons: [
+          { src: 'pwa-192x192.png', sizes: '192x192', type: 'image/png' },
+          { src: 'pwa-512x512.png', sizes: '512x512', type: 'image/png' }
+        ]
+      },
+      workbox: {
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,woff2}'],
+        runtimeCaching: [
+          {
+            urlPattern: /^https:\/\/firestore\.googleapis\.com\/.*/i,
+            handler: 'NetworkFirst',
+            options: { cacheName: 'firebase-cache', networkTimeoutSeconds: 5 }
+          }
+        ]
+      }
+    })
+  ]
+})
+```
+
+---
+
+🟠 5.2 Firebase Config via import.meta.env — Rawan Error
+
+```javascript
+const firebaseConfig = {
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+  // ...
+}
+```
+
+Jika .env tidak ada (mis. user clone repo tanpa setup), initializeApp akan throw dan app crash.
+
+Rekomendasi: Guard:
+
+```javascript
+const hasFirebaseConfig = !!import.meta.env.VITE_FIREBASE_API_KEY
+export const firestore = hasFirebaseConfig ? getFirestore(app) : null
+```
+
+Lalu di syncService.js:
+
+```javascript
+if (!firestore) {
+  console.warn('[Sync] Firebase tidak dikonfigurasi, mode offline only')
+  return
+}
+```
+
+---
+
+🟠 5.3 IndexedDB Bisa Penuh
+
+Tidak ada mekanisme cleanup data lama. Jika user pakai bertahun-tahun, IndexedDB bisa >100MB (limit browser bervariasi).
+
+Rekomendasi: Tambah fitur "Arsipkan data > 1 tahun" atau kompresi.
+
+---
+
+6. MASALAH KEAMANAN
+
+🔴 6.1 PIN Operator Disimpan Plaintext
+
+```javascript
+// operatorRepo.create
+pin: data.pin || ''
+```
+
+Masalah: Siapa pun yang buka DevTools bisa lihat PIN.
+
+Rekomendasi: Hash sederhana (bukan keamanan tinggi, tapi lebih baik):
+
+```javascript
+const hashPin = async (pin) => {
+  const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pin))
+  return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('')
+}
+```
+
+---
+
+🟠 6.2 Firebase Rules Tidak Terlihat
+
+Pastikan Firestore rules tidak allow read, write: if true. Untuk POS single-tenant, minimal:
+
+```javascript
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /{document=**} {
+      allow read, write: if request.auth != null;
+    }
+  }
+}
+```
+
+Atau gunakan App Check.
+
+---
+
+🟠 6.3 Backup JSON Berisi Semua Data
+
+backupService.exportBackup() mengekspor semua tabel tanpa enkripsi. Jika file bocor, semua data (termasuk PIN) terekspos.
+
+Rekomendasi: Opsi enkripsi dengan password, atau minimal warning.
+
+---
+
+7. MASALAH PERFORMA
+
+🟡 7.1 syncService.updateUnsyncedCount() Loop 17 Tabel
+
+```javascript
+for (const tableName of [...TABLES_TO_SYNC, ...TRANSACTION_TABLES]) {
+  const count = await db[tableName].where('synced').equals(0).count()
+  total += count
+}
+```
+
+Dipanggil setiap kali ada perubahan. Untuk 17 tabel, ini lambat.
+
+Rekomendasi: Debounce atau cache:
+
+```javascript
+let countCache = { value: 0, timestamp: 0 }
+async function updateUnsyncedCount() {
+  if (Date.now() - countCache.timestamp < 2000) {
+    syncStatus.unsyncedCount = countCache.value
+    return
+  }
+  // ... hitung ...
+  countCache = { value: total, timestamp: Date.now() }
+}
+```
+
+---
+
+🟡 7.2 db.tables.forEach Hook di Setiap Tabel
+
+```javascript
+db.tables.forEach(table => {
+  table.hook('creating', ...)
+  table.hook('updating', ...)
+  table.hook('deleting', ...)
+})
+```
+
+Setiap hook memanggil triggerDebouncedSync() yang dynamic import syncService.js. Meski di-cache, ini tetap overhead.
+
+Rekomendasi: Import langsung di atas (setelah fix circular dependency):
+
+```javascript
+// db/index.js
+import { syncRealtime } from '../services/syncService.js' // ← bisa circular!
+```
+
+Atau gunakan event emitter global.
+
+---
+
+🟡 7.3 filteredProducts Sort di Setiap Render
+
+```javascript
+const filteredProducts = computed(() => {
+  // ...
+  .sort((a, b) => {
+    const idxA = nameA.indexOf(qq)
+    const idxB = nameB.indexOf(qq)
+    // ...
+  })
+})
+```
+
+Untuk 1000+ produk, sort ini berat. Meski computed, tetap jalan saat q berubah.
+
+Rekomendasi: Gunakan fuse.js atau index pencarian.
+
+---
+
+8. MASALAH UX
+
+🟠 8.1 Konfirmasi Pakai confirm() Native
+
+```javascript
+if (confirm('Akhiri shift & keluar dari akun operator ini?')) { ... }
+```
+
+Masalah: Tampilan tidak konsisten dengan UI (yang pakai Tailwind). Di PWA standalone, confirm() bisa diblokir di beberapa browser.
+
+Rekomendasi: Buat ConfirmDialog.vue component.
+
+---
+
+🟠 8.2 Tidak Ada Loading State Global
+
+Saat loadData() di berbagai view, tidak ada skeleton/spinner.
+
+Rekomendasi: Tambah <Suspense> di MainLayout.vue atau skeleton component.
+
+---
+
+🟠 8.3 Toast vue-sonner Tidak Dikonfigurasi Durasi
+
+Default 4 detik. Untuk POS, mungkin terlalu lama.
+
+Rekomendasi:
+
+```vue
+<Toaster position="top-center" richColors :duration="2500" />
+```
+
+---
+
+🟠 8.4 Angka Input Tidak Pakai inputmode="decimal"
+
+Beberapa input angka pakai inputmode="numeric" (benar), tapi ada yang tidak:
+
+```vue
+<input v-model.number="qty" type="number" ... />
+```
+
+Rekomendasi: Konsisten pakai inputmode + pattern.
+
+---
+
+9. TESTING & DEBUGGING
+
+🔴 9.1 Tidak Ada Test Sama Sekali
+
+Tidak ada file .test.js atau .spec.js. Untuk aplikasi POS yang handle uang, ini berbahaya.
+
+Rekomendasi minimal:
+
+· Unit test untuk calculator/product.js (kalkulasi margin)
+· Unit test untuk kasirService.checkout() (kalkulasi total)
+· Integration test untuk sync flow
+
+---
+
+🟠 9.2 Tidak Ada Logging Terstruktur
+
+console.warn dan console.error tersebar. Tidak ada level log.
+
+Rekomendasi: Buat utils/logger.js:
+
+```javascript
+export const logger = {
+  info: (...args) => import.meta.env.DEV && console.log('[INFO]', ...args),
+  warn: (...args) => console.warn('[WARN]', ...args),
+  error: (...args) => console.error('[ERROR]', ...args)
+}
+```
+
+---
+
+10. RINGKASAN PRIORITAS PERBAIKAN
+
+Prioritas Masalah File Dampak
+🔴 P0 Kurung kurawal hilang financeRepository.js App crash
+🔴 P0 Race condition sync syncService.js Data loss
+🔴 P0 PIN plaintext operatorRepository.js Keamanan
+🔴 P0 vite.config.js tidak ada root PWA tidak jalan
+🟠 P1 Firebase config tanpa guard firebase.js Crash tanpa .env
+🟠 P1 crypto.randomUUID tanpa fallback kasirStore.js Crash di HTTP
+🟠 P1 Listener global tanpa cleanup modal useKasir.js Bug input
+🟠 P1 Poin tidak dikurangi saat void salesHistoryService.js Akuntansi
+🟡 P2 Duplikasi kode banyak Maintainability
+🟡 P2 Tidak ada test - Reliability
+🟡 P2 useKasir.js gemuk useKasir.js Maintainability
+
+---
+
+11. REKOMENDASI ARSITEKTUR JANGKA PANJANG
+
+11.1 Pindah ke Event-Driven Sync
+
+Daripada hook Dexie memanggil pushLocalToCloud langsung, gunakan event bus:
+
+```javascript
+// services/eventBus.js
+import { reactive } from 'vue'
+export const eventBus = reactive({ events: [] })
+export const emit = (event, payload) => {
+  eventBus.events.push({ event, payload, ts: Date.now() })
+}
+
+// Di hook Dexie:
+emit('db:change', { table: table.name, id: primKey })
+
+// Di syncService:
+watch(() => eventBus.events.length, () => {
+  debouncedPush()
+})
+```
+
+11.2 Tambah State Machine untuk Sync
+
+```
+IDLE → SYNCING → SUCCESS/ERROR → IDLE
+```
+
+Dengan timeout dan retry exponential backoff.
+
+11.3 Gunakan Web Worker untuk Sync
+
+Agar UI tidak block saat sync data besar:
+
+```javascript
+// workers/syncWorker.js
+self.onmessage = async (e) => {
+  const { action } = e.data
+  if (action === 'push') await pushToCloud()
+}
+```
+
+11.4 Tambah Fitur "Mode Demo"
+
+Untuk testing tanpa Firebase:
+
+```javascript
+// services/firebase.js
+export const firestore = import.meta.env.VITE_DEMO_MODE === 'true' 
+  ? null 
+  : getFirestore(app)
+```
+
+---
+
+12. KESIMPULAN
+
+Sinar Pagi POS adalah aplikasi PWA yang cukup matang dengan fitur lengkap untuk warung/toko kecil. Arsitektur offline-first dengan Dexie + Firebase adalah pilihan tepat.
+
+Namun, ada 3 bug fatal yang harus segera diperbaiki:
+
+1. financeRepository.js — kurung kurawal hilang (app crash)
+2. syncService.js — race condition (data loss)
+3. firebase.js — tanpa guard (crash tanpa .env)
+
+Untuk jangka panjang, fokus pada:
+
+· Testing (minimal unit test untuk kalkulasi uang)
+· Refactor useKasir.js yang terlalu gemuk
+· Hash PIN
+· Error boundary
+· Dokumentasi vite.config.js untuk PWA
+
+Apakah Anda ingin saya bantu memperbaiki salah satu bug spesifik di atas?

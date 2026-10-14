@@ -403,6 +403,42 @@ const onSubmit = handleSubmit(async (vals) => {
 })
 </script>
 
+===== src/components/Numpad.vue =====
+<script setup>
+const props = defineProps({
+  modelValue: { type: String, default: '' },
+  maxLength: { type: Number, default: 6 }
+})
+
+const emit = defineEmits(['update:modelValue', 'submit', 'close'])
+
+function onPress(num) {
+  if (props.modelValue.length < props.maxLength) {
+    emit('update:modelValue', props.modelValue + num)
+  }
+}
+function onDelete() {
+  emit('update:modelValue', props.modelValue.slice(0, -1))
+}
+function onClear() {
+  emit('update:modelValue', '')
+}
+</script>
+
+<template>
+  <div class="mt-4 animate-in slide-in-from-bottom-2 duration-200">
+    <div class="grid grid-cols-3 gap-3">
+      <button v-for="n in 9" :key="n" type="button" @click="onPress(String(n))" class="h-[56px] bg-zinc-800 hover:bg-zinc-700 text-white rounded-2xl text-xl font-black active:scale-95 transition">
+        {{ n }}
+      </button>
+      <button type="button" @click="onClear" class="h-[56px] bg-zinc-800 text-zinc-400 rounded-2xl text-[11px] font-black tracking-widest active:scale-95">CLEAR</button>
+      <button type="button" @click="onPress('0')" class="h-[56px] bg-zinc-800 text-white rounded-2xl text-xl font-black active:scale-95">0</button>
+      <button type="button" @click="onDelete" class="h-[56px] bg-zinc-800 text-amber-400 rounded-2xl font-bold active:scale-95">⌫</button>
+    </div>
+    <button type="button" @click="emit('submit')" class="w-full mt-3 h-12 bg-amber-500 hover:bg-amber-400 text-black rounded-2xl font-black text-xs tracking-widest active:scale-95 transition">MASUK SHIFT</button>
+    <button type="button" @click="emit('close')" class="w-full mt-2 text-[10px] font-bold text-zinc-500">Tutup Numpad</button>
+  </div>
+</template>
 ===== src/stores/operatorStore.js =====
 import { defineStore } from 'pinia'
 import { operatorRepo } from '../db/repositories/operatorRepository.js'
@@ -4653,7 +4689,7 @@ export const financeRepo = {
         })
       }
     }
-}
+  }
 }
 
 ===== src/db/repositories/packageRepository.js =====
@@ -4724,7 +4760,7 @@ import Dexie from 'dexie'
 
 export const db = new Dexie('SinarPagiDB')
 
-db.version(1).stores({
+db.version(2).stores({
   // Produk (Code/Barcode diindeks untuk scanner)
   products: 'id, code, name, category, price_modal, price_sell, qty, unit, minStock, idealStock, purchasePackName, packQty, packPrice, updatedAt, synced',
 
@@ -4756,7 +4792,7 @@ db.version(1).stores({
   services: 'id, name, price, updatedAt, synced',
   units: 'id, name, updatedAt, synced',
   operators: 'id, name, role, pin, updatedAt, synced',
-  settings: 'id'
+  settings: 'id, updatedAt, synced'
 })
 
 // --- DEXIE HOOKS UNTUK AUTOMATIC CLOUD SYNC ---
@@ -7338,7 +7374,7 @@ onActivated(() => {
 <template>
 <div class="min-h-screen bg-zinc-900 text-white flex items-center justify-center p-4">
   <div class="w-full max-w-sm bg-zinc-800 border border-zinc-700/60 p-6 rounded-[2.5rem] shadow-2xl flex flex-col gap-5">
-    
+
     <!-- Header -->
     <div class="text-center space-y-1">
       <div class="w-12 h-12 bg-amber-500/20 text-amber-400 rounded-2xl flex items-center justify-center mx-auto mb-2 font-black text-xl">
@@ -7352,9 +7388,9 @@ onActivated(() => {
     <div class="space-y-3">
       <div>
         <label class="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1.5 block">Pilih Operator</label>
-        <select 
-          v-model="selectedOperatorId" 
-          @change="pin = ''"
+        <select
+          v-model="selectedOperatorId"
+          @change="pin = ''; showNumpad = false"
           class="w-full px-4 py-3 bg-zinc-900 border border-zinc-700 rounded-2xl text-sm font-bold text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
         >
           <option value="" disabled>-- Pilih Operator --</option>
@@ -7364,27 +7400,35 @@ onActivated(() => {
         </select>
       </div>
 
-      <!-- Input PIN (jika operator punya PIN) -->
+      <!-- Input PIN dengan Numpad Custom -->
       <div v-if="activeSelectedOperator?.pin">
         <label class="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1.5 block">PIN Otorisasi</label>
-        <input 
-          v-model="pin" 
-          type="password" 
-          maxlength="6" 
-          placeholder="••••" 
-          @keyup.enter="handleLogin"
-          class="w-full px-4 py-3 bg-zinc-900 border border-zinc-700 rounded-2xl text-center text-lg font-black tracking-widest text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+        <input
+          :value="'•'.repeat(pin.length)"
+          readonly
+          placeholder="••••"
+          @click="showNumpad = true"
+          @focus="showNumpad = true"
+          class="w-full px-4 py-3 bg-zinc-900 border border-zinc-700 rounded-2xl text-center text-lg font-black tracking-widest text-white focus:outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer"
+        />
+        <Numpad
+          v-if="showNumpad"
+          v-model="pin"
+          :max-length="6"
+          @submit="handleLogin"
+          @close="showNumpad = false"
         />
       </div>
     </div>
 
-    <!-- Button Submit -->
-    <button 
-      @click="handleLogin" 
+    <!-- Button Submit - sembunyikan kalau numpad lagi terbuka biar fokus PIN -->
+    <button
+      v-if="!showNumpad"
+      @click="handleLogin"
       :disabled="!selectedOperatorId || loading"
       class="w-full py-4 bg-white hover:bg-zinc-100 disabled:bg-zinc-700 disabled:text-zinc-500 text-zinc-900 font-black text-xs rounded-2xl transition active:scale-95 shadow-lg mt-2"
     >
-      {{ loading ? 'VERIFIKASI...' : 'MASUK SHIFT' }}
+      {{ loading? 'VERIFIKASI...' : 'MASUK SHIFT' }}
     </button>
   </div>
 </div>
@@ -7396,6 +7440,7 @@ import { useRouter } from 'vue-router'
 import { operatorRepo } from '../db/repositories/operatorRepository.js'
 import { useOperatorStore } from '../stores/operatorStore.js'
 import { toast } from 'vue-sonner'
+import Numpad from '../components/Numpad.vue'
 
 const router = useRouter()
 const operatorStore = useOperatorStore()
@@ -7404,6 +7449,7 @@ const operators = ref([])
 const selectedOperatorId = ref('')
 const pin = ref('')
 const loading = ref(false)
+const showNumpad = ref(false)
 
 const activeSelectedOperator = computed(() => {
   return operators.value.find(o => o.id === selectedOperatorId.value)
@@ -7411,7 +7457,6 @@ const activeSelectedOperator = computed(() => {
 
 const loadOperators = async () => {
   let list = await operatorRepo.getAll()
-  
   operators.value = list
   if (list.length > 0) {
     selectedOperatorId.value = list[0].id
@@ -7420,7 +7465,6 @@ const loadOperators = async () => {
 
 const handleLogin = async () => {
   if (!selectedOperatorId.value) return
-
   loading.value = true
   try {
     await operatorStore.login(selectedOperatorId.value, pin.value)
@@ -7428,6 +7472,7 @@ const handleLogin = async () => {
     router.push('/kasir')
   } catch (err) {
     toast.error(err.message)
+    pin.value = ''
   } finally {
     loading.value = false
   }
@@ -7435,7 +7480,6 @@ const handleLogin = async () => {
 
 onMounted(loadOperators)
 </script>
-
 ===== src/views/Reports.vue =====
 <template>
 <div class="flex-1 overflow-auto p-4 pb-28 space-y-4">

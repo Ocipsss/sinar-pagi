@@ -3,7 +3,7 @@ import Dexie from 'dexie'
 
 export const db = new Dexie('SinarPagiDB')
 
-db.version(1).stores({
+db.version(2).stores({
   // Produk (Code/Barcode diindeks untuk scanner)
   products: 'id, code, name, category, price_modal, price_sell, qty, unit, minStock, idealStock, purchasePackName, packQty, packPrice, updatedAt, synced',
 
@@ -35,7 +35,7 @@ db.version(1).stores({
   services: 'id, name, price, updatedAt, synced',
   units: 'id, name, updatedAt, synced',
   operators: 'id, name, role, pin, updatedAt, synced',
-  settings: 'id'
+  settings: 'id, updatedAt, synced'
 })
 
 // --- DEXIE HOOKS UNTUK AUTOMATIC CLOUD SYNC ---
