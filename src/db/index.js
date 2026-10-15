@@ -38,12 +38,11 @@ db.version(2).stores({
 })
 
 // --- DEXIE HOOKS UNTUK AUTOMATIC CLOUD SYNC ---
-// Impor dinamis untuk menghindari circular dependency saat inisialisasi DB
 let syncServiceInstance = null
 let getIsPullingFromCloudFn = null
+let syncStatusRef = null
 
 const triggerDebouncedSync = () => {
-  // Cek jika perubahan berasal dari proses pull data cloud (Poin A Fix)
   if (getIsPullingFromCloudFn && getIsPullingFromCloudFn()) {
     return
   }
@@ -52,27 +51,28 @@ const triggerDebouncedSync = () => {
     import('../services/syncService.js').then(module => {
       syncServiceInstance = module.syncRealtime || module.default
       getIsPullingFromCloudFn = module.getIsPullingFromCloud
+      syncStatusRef = module.syncStatus
       
-      if (!getIsPullingFromCloudFn || !getIsPullingFromCloudFn()) {
+      if (syncStatusRef?.isAutoSyncEnabled && (!getIsPullingFromCloudFn || !getIsPullingFromCloudFn())) {
         syncServiceInstance?.pushLocalToCloud()
       }
     })
   } else {
-    syncServiceInstance.pushLocalToCloud()
+    if (syncStatusRef?.isAutoSyncEnabled) {
+      syncServiceInstance.pushLocalToCloud()
+    }
   }
 }
 
 // Pasang hook pada semua tabel
 db.tables.forEach(table => {
   table.hook('creating', function (primKey, obj, transaction) {
-    // Jalankan sync setelah transaksi database lokal sukses disimpan
     transaction.on('complete', () => {
       triggerDebouncedSync()
     })
   })
 
   table.hook('updating', function (mods, primKey, obj, transaction) {
-    // Hanya picu sync jika pembaruan berasal dari perubahan lokal (synced: 0)
     if (mods.synced === 0 || !('synced' in mods)) {
       transaction.on('complete', () => {
         triggerDebouncedSync()

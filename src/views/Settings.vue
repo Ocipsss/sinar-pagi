@@ -64,7 +64,32 @@
     </form>
   </div>
 
-  <!-- Section 2: Opsi Cetak & Printer -->
+  <!-- Section 2: Sinkronisasi Cloud (Firebase) -->
+  <div class="bg-white p-5 rounded-3xl border border-zinc-100 shadow-sm space-y-4">
+    <div class="flex items-center gap-2 border-b border-zinc-50 pb-3">
+      <Cloud class="w-5 h-5 text-zinc-900" />
+      <span class="font-black text-sm text-zinc-900">Sinkronisasi Cloud (Firebase)</span>
+    </div>
+
+    <div class="flex items-center justify-between">
+      <div>
+        <span class="font-bold text-xs text-zinc-900 block">Otomatis Sinkron Ke Cloud</span>
+        <span class="text-[11px] text-zinc-400">Matikan jika ingin menjalankan aplikasi 100% offline</span>
+      </div>
+
+      <label class="relative inline-flex items-center cursor-pointer">
+        <input 
+          type="checkbox" 
+          :checked="syncStatus.isAutoSyncEnabled" 
+          @change="handleToggleSync" 
+          class="sr-only peer"
+        />
+        <div class="w-11 h-6 bg-zinc-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-emerald-500"></div>
+      </label>
+    </div>
+  </div>
+
+  <!-- Section 3: Opsi Cetak & Printer -->
   <div class="bg-white p-5 rounded-3xl border border-zinc-100 shadow-sm space-y-4">
     <div class="flex items-center gap-2 border-b border-zinc-50 pb-3">
       <Printer class="w-5 h-5 text-zinc-900" />
@@ -94,7 +119,7 @@
     </div>
   </div>
 
-  <!-- Section 3: Backup & Restore Data Lokal -->
+  <!-- Section 4: Backup & Restore Data Lokal -->
   <div class="bg-white p-5 rounded-3xl border border-zinc-100 shadow-sm space-y-4">
     <div class="flex items-center gap-2 border-b border-zinc-50 pb-3">
       <Database class="w-5 h-5 text-zinc-900" />
@@ -140,7 +165,7 @@
     </button>
   </div>
 
-  <!-- Section 4: Reset Data Transaksi -->
+  <!-- Section 5: Reset Data Transaksi -->
   <div class="bg-red-50 p-5 rounded-3xl border border-red-200/80 shadow-sm space-y-3">
     <div class="flex items-center gap-2 border-b border-red-200/60 pb-3">
       <Trash2 class="w-5 h-5 text-red-600" />
@@ -171,8 +196,9 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
-import { Store, Printer, Database, Download, Upload, Trash2, Type } from 'lucide-vue-next'
+import { Store, Cloud, Printer, Database, Download, Upload, Trash2, Type } from 'lucide-vue-next'
 import { useSettings } from '../composables/useSettings.js'
+import { syncStatus, syncRealtime } from '../services/syncService.js'
 
 const { 
   form, 
@@ -189,6 +215,10 @@ const isOnline = ref(navigator.onLine)
 
 const updateOnlineState = () => {
   isOnline.value = navigator.onLine
+}
+
+const handleToggleSync = (e) => {
+  syncRealtime.toggleAutoSync(e.target.checked)
 }
 
 onMounted(() => {

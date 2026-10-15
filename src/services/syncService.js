@@ -41,7 +41,8 @@ export const syncStatus = reactive({
   isOnline: navigator.onLine,
   isSyncing: false,
   unsyncedCount: 0,
-  lastSyncedAt: null
+  lastSyncedAt: null,
+  isAutoSyncEnabled: localStorage.getItem('auto_sync_enabled') !== 'false'
 })
 
 async function updateUnsyncedCount() {
@@ -82,9 +83,21 @@ async function recalculateMemberDebt(memberId) {
 }
 
 export const syncRealtime = {
+  toggleAutoSync(enabled) {
+    syncStatus.isAutoSyncEnabled = enabled
+    localStorage.setItem('auto_sync_enabled', enabled ? 'true' : 'false')
+
+    if (enabled) {
+      this.initRealtimePull()
+      this.pushLocalToCloud()
+    } else {
+      this.stopRealtime()
+    }
+  },
+
   async pushLocalToCloud() {
     syncStatus.isOnline = navigator.onLine
-    if (!navigator.onLine || isSyncing || !db || !firestore) {
+    if (!syncStatus.isAutoSyncEnabled || !navigator.onLine || isSyncing || !db || !firestore) {
       await updateUnsyncedCount()
       return
     }
@@ -122,7 +135,7 @@ export const syncRealtime = {
   initRealtimePull() {
     this.stopRealtime()
 
-    if (!firestore) return
+    if (!syncStatus.isAutoSyncEnabled || !firestore) return
 
     const handleError = (err) => {
       if (err?.name === 'AbortError' || err?.code === 'aborted' || err?.message?.includes('aborted')) return
@@ -163,7 +176,6 @@ export const syncRealtime = {
             }
             await updateUnsyncedCount()
 
-            // Jika ada pembaruan produk dari cloud, kirim sinyal pembaruan event
             if (hasProductChanges) {
               window.dispatchEvent(new CustomEvent('products-updated-from-cloud'))
             }
@@ -247,17 +259,21 @@ export const syncRealtime = {
       
       const updateOnlineStatus = () => {
         syncStatus.isOnline = navigator.onLine
-        if (navigator.onLine) this.pushLocalToCloud()
+        if (navigator.onLine && syncStatus.isAutoSyncEnabled) this.pushLocalToCloud()
       }
 
       window.addEventListener('online', updateOnlineStatus)
       window.addEventListener('offline', updateOnlineStatus)
 
       if (intervalId) clearInterval(intervalId)
-      intervalId = setInterval(() => this.pushLocalToCloud(), 30 * 1000)
+      intervalId = setInterval(() => {
+        if (syncStatus.isAutoSyncEnabled) this.pushLocalToCloud()
+      }, 30 * 1000)
 
-      this.initRealtimePull()
-      this.pushLocalToCloud()
+      if (syncStatus.isAutoSyncEnabled) {
+        this.initRealtimePull()
+        this.pushLocalToCloud()
+      }
       updateUnsyncedCount()
     } catch (e) {
       console.error('[Sync] init error:', e?.message, e)
