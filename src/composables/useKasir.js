@@ -94,19 +94,19 @@ export function useKasir() {
     return packagesList.value.filter(pkg => pkg.productId === productId)
   }
 
-const handleSelectProduct = (product) => {
-  const pCat = (product.category || '').toLowerCase()
-  const isRokok = pCat === 'rokok'
-  const hasPackages = getProductPackages(product.id).length > 0
-  const hasConfiguredServices = servicesList.value.some(s => (s.category || '').toLowerCase() === pCat)
-  if ((isRokok && hasPackages) || (!isRokok && hasConfiguredServices)) {
-    selectedProductForOption.value = product
-  } else {
-    store.addToCart(product)
-    q.value = ''
-    showSearch.value = false
+  const handleSelectProduct = (product) => {
+    const pCat = (product.category || '').toLowerCase()
+    const isRokok = pCat === 'rokok'
+    const hasPackages = getProductPackages(product.id).length > 0
+    const hasConfiguredServices = servicesList.value.some(s => (s.category || '').toLowerCase() === pCat)
+    if ((isRokok && hasPackages) || (!isRokok && hasConfiguredServices)) {
+      selectedProductForOption.value = product
+    } else {
+      store.addToCart(product)
+      q.value = ''
+      showSearch.value = false
+    }
   }
-}
 
   const confirmAddToCart = (product, options) => {
     const targetPrice = (options.price_sell !== undefined) ? options.price_sell : product.price_sell
@@ -147,7 +147,7 @@ const handleSelectProduct = (product) => {
 
     if (matchedProduct) {
       handleSelectProduct(matchedProduct)
-      toast.success(`Barang ditambahkan: ${matchedProduct.name}`)
+      //toast.success(`Barang ditambahkan: ${matchedProduct.name}`)
       q.value = ''
       showSearch.value = false
       return true
@@ -177,14 +177,17 @@ const handleSelectProduct = (product) => {
     }
 
     if (e.key === 'Enter') {
-      if (barcodeBuffer.trim().length > 0) {
+      // Prioritaskan nilai dari q.value jika searchbar sedang fokus
+      if (isKasirSearchInput && q.value.trim().length > 0) {
+        e.preventDefault()
+        const codeToScan = q.value.trim()
+        barcodeBuffer = ''
+        processBarcodeScan(codeToScan)
+      } else if (barcodeBuffer.trim().length > 0) {
         e.preventDefault()
         const scannedCode = barcodeBuffer.trim()
         barcodeBuffer = ''
         processBarcodeScan(scannedCode)
-      } else if (isKasirSearchInput && q.value.trim().length > 0) {
-        e.preventDefault()
-        processBarcodeScan(q.value.trim())
       }
     } else if (e.key.length === 1) {
       if (!isTypingInInput || (currentTime - lastKeyTime < 30)) {

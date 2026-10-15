@@ -1,5 +1,5 @@
 <template>
-<form @submit.prevent="onSubmit" class="bg-white p-5 rounded-3xl border flex flex-col gap-4 shadow-sm">
+<form @submit.prevent="onSubmit" @keydown="handleFormKeydown" class="bg-white p-5 rounded-3xl border flex flex-col gap-4 shadow-sm">
   <!-- Nama Produk -->
   <div class="flex flex-col gap-1">
     <input v-model="name" placeholder="Nama Produk *" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold uppercase"/>
@@ -8,8 +8,17 @@
 
   <!-- Barcode + Scanner -->
   <div class="flex gap-2">
-    <input v-model="code" placeholder="Barcode" class="flex-1 px-4 py-3 bg-zinc-50 border rounded-xl text-sm uppercase"/>
-    <button type="button" @click="start(c => code = c)" class="px-4 bg-zinc-900 text-white rounded-xl"><ScanLine class="w-4 h-4"/></button>
+    <input 
+      id="product-barcode-input"
+      v-model="code" 
+      @keydown.enter.prevent="handleBarcodeEnter"
+      @blur="handleBarcodeBlur"
+      placeholder="Barcode" 
+      class="flex-1 px-4 py-3 bg-zinc-50 border rounded-xl text-sm uppercase"
+    />
+    <button type="button" @click="handleCameraScan" class="px-4 bg-zinc-900 text-white rounded-xl">
+      <ScanLine class="w-4 h-4"/>
+    </button>
   </div>
   <div id="reader" class="w-full rounded-xl overflow-hidden"></div>
 
@@ -110,6 +119,8 @@ import { useProductScanner } from '../../composables/useProductScanner.js'
 import { calcModalDariPack, calcMargin } from '../../utils/calculator/product.js'
 import { formatRp, toNumber } from '../../utils/formatters/currency.js'
 import { useProductsStore } from '../../stores/productStore.js'
+import { productRepo } from '../../db/repositories/productRepository.js'
+import { toast } from 'vue-sonner'
 
 const props = defineProps({
   initialData: {
@@ -133,6 +144,41 @@ const productStore = useProductsStore()
 const autoModal = computed(() => calcModalDariPack(packPrice.value, packQty.value))
 const marginPersen = computed(() => calcMargin(price_sell.value, price_modal.value))
 
+// --- LOGIKA BLOKIR SCANNER DI LUAR INPUT BARCODE ---
+let lastKeyTime = 0
+let fastKeyBurstCount = 0
+
+const handleFormKeydown = (e) => {
+  // Jika fokus di input barcode, biarkan scanner berfungsi normal
+  const isBarcodeInput = e.target && e.target.id === 'product-barcode-input'
+  if (isBarcodeInput) return
+
+  const now = Date.now()
+  const timeDiff = now - lastKeyTime
+  lastKeyTime = now
+
+  if (timeDiff < 40) {
+    fastKeyBurstCount++
+  } else {
+    fastKeyBurstCount = 0
+  }
+
+  // Jika terdeteksi input cepat khas scanner pada input selain barcode
+  if (fastKeyBurstCount >= 1) {
+    e.preventDefault()
+    e.stopPropagation()
+
+    // Hapus karakter pertama yang terlanjur ketik sebelum terdeteksi
+    if (fastKeyBurstCount === 1 && e.target && 'value' in e.target) {
+      const val = e.target.value
+      if (val.length > 0) {
+        e.target.value = val.slice(0, -1)
+        e.target.dispatchEvent(new Event('input'))
+      }
+    }
+  }
+}
+
 const resetFormFields = () => {
   name.value = ''
   code.value = ''
@@ -145,6 +191,40 @@ const resetFormFields = () => {
   price_sell.value = 0
   qty.value = 0
   minStock.value = 5
+}
+
+const checkExistingBarcode = async (barcodeVal) => {
+  if (!barcodeVal) return false
+  const cleanCode = String(barcodeVal).toUpperCase().trim()
+  if (!cleanCode) return false
+
+  const allProducts = await productRepo.getAll()
+  const existingProduct = allProducts.find(
+    p => String(p.code || '').toUpperCase().trim() === cleanCode
+  )
+
+  if (existingProduct && existingProduct.id !== props.initialData?.id) {
+    const productName = existingProduct.name || 'Tanpa Nama'
+    toast.error(`Barcode "${cleanCode}" sudah digunakan oleh: ${productName}`)
+    code.value = '' // Reset input barcode jika duplikat
+    return true
+  }
+  return false
+}
+
+const handleBarcodeEnter = async () => {
+  await checkExistingBarcode(code.value)
+}
+
+const handleBarcodeBlur = async () => {
+  await checkExistingBarcode(code.value)
+}
+
+const handleCameraScan = () => {
+  start(async (scannedCode) => {
+    code.value = scannedCode
+    await checkExistingBarcode(scannedCode)
+  })
 }
 
 const initFormData = async () => {
@@ -209,11 +289,16 @@ const onSubmit = handleSubmit(async (vals) => {
     minStock: toNumber(minStock.value) || 5
   }
 
+  const isDuplicate = await checkExistingBarcode(payload.code)
+  if (isDuplicate) return
+
   if (props.initialData?.id) {
     await productStore.update(props.initialData.id, payload)
+    toast.success('Barang berhasil diperbarui!')
     emit('success')
   } else {
     await productStore.add(payload)
+    toast.success('Barang berhasil ditambahkan!')
     resetFormFields()
     router.push('/products')
   }
