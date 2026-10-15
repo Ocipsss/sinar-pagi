@@ -1,9 +1,10 @@
+<!-- src/views/SettingsMenu.vue -->
 <template>
   <div class="flex-1 overflow-auto p-4 pb-24 space-y-6">
     <!-- Header -->
     <div>
       <h1 class="font-black text-xl text-zinc-900">Pengaturan Menu & Jasa</h1>
-      <p class="text-xs text-zinc-400">Atur paket eceran rokok dan tarif jasa per kategori</p>
+      <p class="text-xs text-zinc-400">Atur paket eceran (rokok/permen) dan tarif jasa per kategori</p>
     </div>
 
     <!-- Tab Navigasi -->
@@ -18,7 +19,7 @@
         @click="activeTab = 'rokok'" 
         :class="['flex-1 py-2.5 rounded-xl text-xs font-bold transition', activeTab === 'rokok' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500']"
       >
-        Eceran Rokok
+        Harga Paket
       </button>
     </div>
 
@@ -65,10 +66,10 @@
       </div>
     </div>
 
-    <!-- TAB 2: ECERAN ROKOK -->
+    <!-- TAB 2: HARGA PAKET (ROKOK & PERMEN) -->
     <div v-if="activeTab === 'rokok'" class="space-y-4">
       <div v-if="rokokProducts.length === 0" class="py-12 text-center text-zinc-400 text-xs bg-white rounded-2xl border border-zinc-100">
-        Belum ada produk dengan kategori "Rokok"
+        Belum ada produk dengan kategori "Rokok" atau "Permen"
       </div>
 
       <div v-else class="space-y-3">
@@ -79,14 +80,19 @@
         >
           <div class="flex justify-between items-center border-b border-zinc-50 pb-2">
             <div>
-              <div class="font-bold text-sm text-zinc-900">{{ p.name }}</div>
+              <div class="font-bold text-sm text-zinc-900 flex items-center gap-2">
+                <span>{{ p.name }}</span>
+                <span class="px-2 py-0.5 bg-zinc-100 text-zinc-600 rounded-md text-[10px] font-black uppercase">
+                  {{ p.category }}
+                </span>
+              </div>
               <div class="text-[11px] text-zinc-400">Harga Utuh: Rp {{ formatRibuan(p.price_sell) }}</div>
             </div>
             <button 
               @click="openPackageModal(p)" 
               class="px-3 py-1.5 bg-zinc-100 text-zinc-800 rounded-xl text-xs font-bold hover:bg-zinc-200 active:scale-95 transition"
             >
-              + Opsi Ecer
+              + Opsi Paket
             </button>
           </div>
 
@@ -153,7 +159,7 @@
       </div>
     </div>
 
-    <!-- Modal Form Paket Eceran Rokok -->
+    <!-- Modal Form Paket Eceran (Rokok / Permen) -->
     <div v-if="showPackageModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl space-y-4">
         <div class="flex justify-between items-center">
@@ -167,10 +173,10 @@
         <form @submit.prevent="handleSavePackage" class="space-y-3">
           <div>
             <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Nama Varian *</label>
-            <input v-model="packageForm.name" required placeholder="Contoh: 1 Batang, 1/2 Bungkus" class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold"/>
+            <input v-model="packageForm.name" required placeholder="Contoh: 1 Batang, 3 Biji, 1 Renteng" class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold"/>
           </div>
           <div>
-            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Jumlah Batang Dipotong *</label>
+            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Jumlah Pcs/Batang Dipotong *</label>
             <input v-model.number="packageForm.qty_pcs" type="number" required placeholder="1" class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold"/>
           </div>
           <div>
@@ -219,7 +225,7 @@ const showServiceModal = ref(false)
 const editingServiceId = ref(null)
 const serviceForm = ref({ name: '', price: 0, category: 'Mie' })
 
-// Modal State Paket Rokok
+// Modal State Paket Eceran
 const showPackageModal = ref(false)
 const selectedRokokProduct = ref(null)
 const packageForm = ref({ name: '', qty_pcs: 1, price_sell: 0 })
@@ -240,7 +246,7 @@ const handleSaveService = async () => {
     id: editingServiceId.value,
     name: serviceForm.value.name,
     price: serviceForm.value.price,
-    category: serviceForm.value.category
+    category: serviceForm.category
   })
   showServiceModal.value = false
 }

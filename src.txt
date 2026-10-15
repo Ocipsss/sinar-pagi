@@ -4390,27 +4390,36 @@ onMounted(() => {
     <Search class="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400"/>
     <input 
       id="product-search-input"
+      ref="searchInputRef"
       v-model="q" 
+      autofocus
       placeholder="Ketik nama / scan barcode..." 
       class="w-full pl-11 pr-20 py-3 bg-white border border-zinc-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"
     />
     
-    <!-- TOMBOL SCANNER KAMERA KHUSUS HP (Tampil di HP: block md:hidden) -->
+    <!-- TOMBOL SCANNER KAMERA KHUSUS HP -->
     <button 
       type="button"
       @click="toggleCameraScanner"
-      class="absolute right-10 top-1/2 -translate-y-1/2 p-1.5 bg-zinc-900 text-white rounded-xl block md:hidden active:scale-95 transition flex items-center justify-center"
+      class="absolute right-11 top-1/2 -translate-y-1/2 p-1.5 bg-zinc-900 text-white rounded-xl block md:hidden active:scale-95 transition flex items-center justify-center"
       title="Scan Kamera"
     >
-      <ScanLine class="w-3.5 h-3.5" />
+      <ScanLine class="w-4 h-4" />
     </button>
 
-    <button v-if="q" @click="q=''" class="absolute right-3 top-1/2 -translate-y-1/2 p-1 bg-zinc-100 rounded-full text-zinc-400 hover:text-zinc-600">
-      <X class="w-3.5 h-3.5"/>
+    <!-- TOMBOL HAPUS SEARCHBAR & OTOMATIS FOKUS -->
+    <button 
+      v-if="q" 
+      type="button"
+      @click="clearSearch" 
+      class="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 bg-zinc-100 hover:bg-zinc-200 rounded-full text-zinc-500 hover:text-zinc-800 transition active:scale-95"
+      title="Bersihkan Pencarian"
+    >
+      <X class="w-4 h-4"/>
     </button>
   </div>
 
-  <!-- CONTAINER KAMERA SCANNER LIST BARANG (Hanya HP) -->
+  <!-- CONTAINER KAMERA SCANNER LIST BARANG -->
   <div v-show="isScanning" class="mb-3 bg-black rounded-2xl overflow-hidden relative border border-zinc-700 shadow-lg block md:hidden">
     <div id="reader-products" class="w-full"></div>
     <button 
@@ -4465,7 +4474,7 @@ onMounted(() => {
 
   <div v-if="filtered.length===0" class="py-20 text-center text-sm text-zinc-400 font-bold">Barang tidak ditemukan</div>
 
-  <!-- MODAL EDIT BARANG (PRODUCT FORM) -->
+  <!-- MODAL EDIT BARANG -->
   <div v-if="showEditModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
     <div class="w-full max-w-lg bg-white rounded-t-[2rem] sm:rounded-[2rem] p-5 shadow-xl max-h-[90vh] flex flex-col">
       <div class="flex justify-between items-center mb-3 shrink-0">
@@ -4525,7 +4534,7 @@ onMounted(() => {
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated } from 'vue'
+import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
 import { Plus, Search, Filter, Pencil, Trash2, X, ScanLine } from 'lucide-vue-next'
 import { useProductsStore } from '../stores/productStore.js'
 import { useProductScanner } from '../composables/useProductScanner.js'
@@ -4536,6 +4545,7 @@ import { toast } from 'vue-sonner'
 const store = useProductsStore()
 const { isScanning } = useProductScanner()
 
+const searchInputRef = ref(null)
 const q = ref('')
 const filterKategori = ref('all')
 const filterStok = ref('all')
@@ -4546,6 +4556,17 @@ const showEditModal = ref(false)
 const selectedProduct = ref(null)
 
 let qr = null
+
+const focusSearchInput = () => {
+  nextTick(() => {
+    searchInputRef.value?.focus()
+  })
+}
+
+const clearSearch = () => {
+  q.value = ''
+  focusSearchInput()
+}
 
 const toggleCameraScanner = async () => {
   if (isScanning.value) {
@@ -4672,15 +4693,23 @@ const handleGlobalKeydown = (e) => {
   }
 
   if (e.key === 'Enter') {
-    if (barcodeBuffer.trim().length > 0) {
+    if (isProductSearchInput) {
+      e.preventDefault()
+      barcodeBuffer = ''
+      nextTick(() => {
+        searchInputRef.value?.select()
+      })
+    } else if (barcodeBuffer.trim().length > 0) {
       e.preventDefault()
       q.value = barcodeBuffer.trim()
       barcodeBuffer = ''
+      nextTick(() => {
+        searchInputRef.value?.focus()
+        searchInputRef.value?.select()
+      })
     }
   } else if (e.key.length === 1) {
-    if (!isTypingInInput || (currentTime - lastKeyTime < 30)) {
-      barcodeBuffer += e.key
-    }
+    barcodeBuffer += e.key
   }
 
   lastKeyTime = currentTime
@@ -4697,6 +4726,7 @@ const detachListener = () => {
 
 onMounted(() => {
   store.fetch()
+  focusSearchInput()
   attachListener()
 })
 
@@ -4707,6 +4737,7 @@ onUnmounted(() => {
 
 onActivated(() => {
   store.fetch()
+  focusSearchInput()
   attachListener()
 })
 
@@ -6080,12 +6111,13 @@ onActivated(() => {
 </script>
 
 ===== src/views/SettingsMenu.vue =====
+<!-- src/views/SettingsMenu.vue -->
 <template>
   <div class="flex-1 overflow-auto p-4 pb-24 space-y-6">
     <!-- Header -->
     <div>
       <h1 class="font-black text-xl text-zinc-900">Pengaturan Menu & Jasa</h1>
-      <p class="text-xs text-zinc-400">Atur paket eceran rokok dan tarif jasa per kategori</p>
+      <p class="text-xs text-zinc-400">Atur paket eceran (rokok/permen) dan tarif jasa per kategori</p>
     </div>
 
     <!-- Tab Navigasi -->
@@ -6100,7 +6132,7 @@ onActivated(() => {
         @click="activeTab = 'rokok'" 
         :class="['flex-1 py-2.5 rounded-xl text-xs font-bold transition', activeTab === 'rokok' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500']"
       >
-        Eceran Rokok
+        Harga Paket
       </button>
     </div>
 
@@ -6147,10 +6179,10 @@ onActivated(() => {
       </div>
     </div>
 
-    <!-- TAB 2: ECERAN ROKOK -->
+    <!-- TAB 2: HARGA PAKET (ROKOK & PERMEN) -->
     <div v-if="activeTab === 'rokok'" class="space-y-4">
       <div v-if="rokokProducts.length === 0" class="py-12 text-center text-zinc-400 text-xs bg-white rounded-2xl border border-zinc-100">
-        Belum ada produk dengan kategori "Rokok"
+        Belum ada produk dengan kategori "Rokok" atau "Permen"
       </div>
 
       <div v-else class="space-y-3">
@@ -6161,14 +6193,19 @@ onActivated(() => {
         >
           <div class="flex justify-between items-center border-b border-zinc-50 pb-2">
             <div>
-              <div class="font-bold text-sm text-zinc-900">{{ p.name }}</div>
+              <div class="font-bold text-sm text-zinc-900 flex items-center gap-2">
+                <span>{{ p.name }}</span>
+                <span class="px-2 py-0.5 bg-zinc-100 text-zinc-600 rounded-md text-[10px] font-black uppercase">
+                  {{ p.category }}
+                </span>
+              </div>
               <div class="text-[11px] text-zinc-400">Harga Utuh: Rp {{ formatRibuan(p.price_sell) }}</div>
             </div>
             <button 
               @click="openPackageModal(p)" 
               class="px-3 py-1.5 bg-zinc-100 text-zinc-800 rounded-xl text-xs font-bold hover:bg-zinc-200 active:scale-95 transition"
             >
-              + Opsi Ecer
+              + Opsi Paket
             </button>
           </div>
 
@@ -6235,7 +6272,7 @@ onActivated(() => {
       </div>
     </div>
 
-    <!-- Modal Form Paket Eceran Rokok -->
+    <!-- Modal Form Paket Eceran (Rokok / Permen) -->
     <div v-if="showPackageModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl space-y-4">
         <div class="flex justify-between items-center">
@@ -6249,10 +6286,10 @@ onActivated(() => {
         <form @submit.prevent="handleSavePackage" class="space-y-3">
           <div>
             <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Nama Varian *</label>
-            <input v-model="packageForm.name" required placeholder="Contoh: 1 Batang, 1/2 Bungkus" class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold"/>
+            <input v-model="packageForm.name" required placeholder="Contoh: 1 Batang, 3 Biji, 1 Renteng" class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold"/>
           </div>
           <div>
-            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Jumlah Batang Dipotong *</label>
+            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Jumlah Pcs/Batang Dipotong *</label>
             <input v-model.number="packageForm.qty_pcs" type="number" required placeholder="1" class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold"/>
           </div>
           <div>
@@ -6301,7 +6338,7 @@ const showServiceModal = ref(false)
 const editingServiceId = ref(null)
 const serviceForm = ref({ name: '', price: 0, category: 'Mie' })
 
-// Modal State Paket Rokok
+// Modal State Paket Eceran
 const showPackageModal = ref(false)
 const selectedRokokProduct = ref(null)
 const packageForm = ref({ name: '', qty_pcs: 1, price_sell: 0 })
@@ -6322,7 +6359,7 @@ const handleSaveService = async () => {
     id: editingServiceId.value,
     name: serviceForm.value.name,
     price: serviceForm.value.price,
-    category: serviceForm.value.category
+    category: serviceForm.category
   })
   showServiceModal.value = false
 }
@@ -7074,19 +7111,19 @@ export function useKasir() {
     return packagesList.value.filter(pkg => pkg.productId === productId)
   }
 
-const handleSelectProduct = (product) => {
-  const pCat = (product.category || '').toLowerCase()
-  const isRokok = pCat === 'rokok'
-  const hasPackages = getProductPackages(product.id).length > 0
-  const hasConfiguredServices = servicesList.value.some(s => (s.category || '').toLowerCase() === pCat)
-  if ((isRokok && hasPackages) || (!isRokok && hasConfiguredServices)) {
-    selectedProductForOption.value = product
-  } else {
-    store.addToCart(product)
-    q.value = ''
-    showSearch.value = false
+  const handleSelectProduct = (product) => {
+    const pCat = (product.category || '').toLowerCase()
+    const isRokok = pCat === 'rokok'
+    const hasPackages = getProductPackages(product.id).length > 0
+    const hasConfiguredServices = servicesList.value.some(s => (s.category || '').toLowerCase() === pCat)
+    if ((isRokok && hasPackages) || (!isRokok && hasConfiguredServices)) {
+      selectedProductForOption.value = product
+    } else {
+      store.addToCart(product)
+      q.value = ''
+      showSearch.value = false
+    }
   }
-}
 
   const confirmAddToCart = (product, options) => {
     const targetPrice = (options.price_sell !== undefined) ? options.price_sell : product.price_sell
@@ -7127,7 +7164,7 @@ const handleSelectProduct = (product) => {
 
     if (matchedProduct) {
       handleSelectProduct(matchedProduct)
-      toast.success(`Barang ditambahkan: ${matchedProduct.name}`)
+      //toast.success(`Barang ditambahkan: ${matchedProduct.name}`)
       q.value = ''
       showSearch.value = false
       return true
@@ -7157,14 +7194,17 @@ const handleSelectProduct = (product) => {
     }
 
     if (e.key === 'Enter') {
-      if (barcodeBuffer.trim().length > 0) {
+      // Prioritaskan nilai dari q.value jika searchbar sedang fokus
+      if (isKasirSearchInput && q.value.trim().length > 0) {
+        e.preventDefault()
+        const codeToScan = q.value.trim()
+        barcodeBuffer = ''
+        processBarcodeScan(codeToScan)
+      } else if (barcodeBuffer.trim().length > 0) {
         e.preventDefault()
         const scannedCode = barcodeBuffer.trim()
         barcodeBuffer = ''
         processBarcodeScan(scannedCode)
-      } else if (isKasirSearchInput && q.value.trim().length > 0) {
-        e.preventDefault()
-        processBarcodeScan(q.value.trim())
       }
     } else if (e.key.length === 1) {
       if (!isTypingInInput || (currentTime - lastKeyTime < 30)) {
@@ -7631,7 +7671,7 @@ import { categoryRepo } from '../db/repositories/categoryRepository.js'
 import { syncRealtime } from '../services/syncService.js'
 
 export function useSettingsMenu() {
-  const rokokProducts = ref([])
+  const rokokProducts = ref([]) // Dapat menampung produk Rokok & Permen
   const packages = ref([])
   const services = ref([])
   const categoryOptions = ref([])
@@ -7647,8 +7687,12 @@ export function useSettingsMenu() {
         categoryRepo.getAll()
       ])
       
-      // Filter khusus produk kategori Rokok
-      rokokProducts.value = allProducts.filter(p => (p.category || '').toLowerCase() === 'rokok')
+      // Filter produk dengan kategori Rokok atau Permen
+      const packageCategories = ['rokok', 'permen']
+      rokokProducts.value = allProducts.filter(p => 
+        packageCategories.includes((p.category || '').toLowerCase())
+      )
+
       packages.value = allPackages
       services.value = allServices
       categoryOptions.value = allCategories
@@ -8454,7 +8498,7 @@ export const productSchema = z.object({
 
 ===== src/components/product/ProductForm.vue =====
 <template>
-<form @submit.prevent="onSubmit" class="bg-white p-5 rounded-3xl border flex flex-col gap-4 shadow-sm">
+<form @submit.prevent="onSubmit" @keydown="handleFormKeydown" class="bg-white p-5 rounded-3xl border flex flex-col gap-4 shadow-sm">
   <!-- Nama Produk -->
   <div class="flex flex-col gap-1">
     <input v-model="name" placeholder="Nama Produk *" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold uppercase"/>
@@ -8463,8 +8507,17 @@ export const productSchema = z.object({
 
   <!-- Barcode + Scanner -->
   <div class="flex gap-2">
-    <input v-model="code" placeholder="Barcode" class="flex-1 px-4 py-3 bg-zinc-50 border rounded-xl text-sm uppercase"/>
-    <button type="button" @click="start(c => code = c)" class="px-4 bg-zinc-900 text-white rounded-xl"><ScanLine class="w-4 h-4"/></button>
+    <input 
+      id="product-barcode-input"
+      v-model="code" 
+      @keydown.enter.prevent="handleBarcodeEnter"
+      @blur="handleBarcodeBlur"
+      placeholder="Barcode" 
+      class="flex-1 px-4 py-3 bg-zinc-50 border rounded-xl text-sm uppercase"
+    />
+    <button type="button" @click="handleCameraScan" class="px-4 bg-zinc-900 text-white rounded-xl">
+      <ScanLine class="w-4 h-4"/>
+    </button>
   </div>
   <div id="reader" class="w-full rounded-xl overflow-hidden"></div>
 
@@ -8565,6 +8618,8 @@ import { useProductScanner } from '../../composables/useProductScanner.js'
 import { calcModalDariPack, calcMargin } from '../../utils/calculator/product.js'
 import { formatRp, toNumber } from '../../utils/formatters/currency.js'
 import { useProductsStore } from '../../stores/productStore.js'
+import { productRepo } from '../../db/repositories/productRepository.js'
+import { toast } from 'vue-sonner'
 
 const props = defineProps({
   initialData: {
@@ -8588,6 +8643,41 @@ const productStore = useProductsStore()
 const autoModal = computed(() => calcModalDariPack(packPrice.value, packQty.value))
 const marginPersen = computed(() => calcMargin(price_sell.value, price_modal.value))
 
+// --- LOGIKA BLOKIR SCANNER DI LUAR INPUT BARCODE ---
+let lastKeyTime = 0
+let fastKeyBurstCount = 0
+
+const handleFormKeydown = (e) => {
+  // Jika fokus di input barcode, biarkan scanner berfungsi normal
+  const isBarcodeInput = e.target && e.target.id === 'product-barcode-input'
+  if (isBarcodeInput) return
+
+  const now = Date.now()
+  const timeDiff = now - lastKeyTime
+  lastKeyTime = now
+
+  if (timeDiff < 40) {
+    fastKeyBurstCount++
+  } else {
+    fastKeyBurstCount = 0
+  }
+
+  // Jika terdeteksi input cepat khas scanner pada input selain barcode
+  if (fastKeyBurstCount >= 1) {
+    e.preventDefault()
+    e.stopPropagation()
+
+    // Hapus karakter pertama yang terlanjur ketik sebelum terdeteksi
+    if (fastKeyBurstCount === 1 && e.target && 'value' in e.target) {
+      const val = e.target.value
+      if (val.length > 0) {
+        e.target.value = val.slice(0, -1)
+        e.target.dispatchEvent(new Event('input'))
+      }
+    }
+  }
+}
+
 const resetFormFields = () => {
   name.value = ''
   code.value = ''
@@ -8600,6 +8690,40 @@ const resetFormFields = () => {
   price_sell.value = 0
   qty.value = 0
   minStock.value = 5
+}
+
+const checkExistingBarcode = async (barcodeVal) => {
+  if (!barcodeVal) return false
+  const cleanCode = String(barcodeVal).toUpperCase().trim()
+  if (!cleanCode) return false
+
+  const allProducts = await productRepo.getAll()
+  const existingProduct = allProducts.find(
+    p => String(p.code || '').toUpperCase().trim() === cleanCode
+  )
+
+  if (existingProduct && existingProduct.id !== props.initialData?.id) {
+    const productName = existingProduct.name || 'Tanpa Nama'
+    toast.error(`Barcode "${cleanCode}" sudah digunakan oleh: ${productName}`)
+    code.value = '' // Reset input barcode jika duplikat
+    return true
+  }
+  return false
+}
+
+const handleBarcodeEnter = async () => {
+  await checkExistingBarcode(code.value)
+}
+
+const handleBarcodeBlur = async () => {
+  await checkExistingBarcode(code.value)
+}
+
+const handleCameraScan = () => {
+  start(async (scannedCode) => {
+    code.value = scannedCode
+    await checkExistingBarcode(scannedCode)
+  })
 }
 
 const initFormData = async () => {
@@ -8664,11 +8788,16 @@ const onSubmit = handleSubmit(async (vals) => {
     minStock: toNumber(minStock.value) || 5
   }
 
+  const isDuplicate = await checkExistingBarcode(payload.code)
+  if (isDuplicate) return
+
   if (props.initialData?.id) {
     await productStore.update(props.initialData.id, payload)
+    toast.success('Barang berhasil diperbarui!')
     emit('success')
   } else {
     await productStore.add(payload)
+    toast.success('Barang berhasil ditambahkan!')
     resetFormFields()
     router.push('/products')
   }

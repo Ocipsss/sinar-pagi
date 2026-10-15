@@ -7,7 +7,7 @@ import { categoryRepo } from '../db/repositories/categoryRepository.js'
 import { syncRealtime } from '../services/syncService.js'
 
 export function useSettingsMenu() {
-  const rokokProducts = ref([])
+  const rokokProducts = ref([]) // Dapat menampung produk Rokok & Permen
   const packages = ref([])
   const services = ref([])
   const categoryOptions = ref([])
@@ -23,8 +23,12 @@ export function useSettingsMenu() {
         categoryRepo.getAll()
       ])
       
-      // Filter khusus produk kategori Rokok
-      rokokProducts.value = allProducts.filter(p => (p.category || '').toLowerCase() === 'rokok')
+      // Filter produk dengan kategori Rokok atau Permen
+      const packageCategories = ['rokok', 'permen']
+      rokokProducts.value = allProducts.filter(p => 
+        packageCategories.includes((p.category || '').toLowerCase())
+      )
+
       packages.value = allPackages
       services.value = allServices
       categoryOptions.value = allCategories
