@@ -37,31 +37,41 @@ db.version(2).stores({
   settings: 'id, updatedAt, synced'
 })
 
-// --- DEXIE HOOKS UNTUK AUTOMATIC CLOUD SYNC ---
+// --- DEXIE HOOKS DENGAN DEBOUNCE UNTUK AUTOMATIC CLOUD SYNC ---
 let syncServiceInstance = null
 let getIsPullingFromCloudFn = null
 let syncStatusRef = null
+let syncTimeoutId = null // Timer penampung Debounce
 
 const triggerDebouncedSync = () => {
+  // Jika perubahan berasal dari download Realtime Pull, jangan dipush balik
   if (getIsPullingFromCloudFn && getIsPullingFromCloudFn()) {
     return
   }
 
-  if (!syncServiceInstance) {
-    import('../services/syncService.js').then(module => {
-      syncServiceInstance = module.syncRealtime || module.default
-      getIsPullingFromCloudFn = module.getIsPullingFromCloud
-      syncStatusRef = module.syncStatus
-      
-      if (syncStatusRef?.isAutoSyncEnabled && (!getIsPullingFromCloudFn || !getIsPullingFromCloudFn())) {
-        syncServiceInstance?.pushLocalToCloud()
-      }
-    })
-  } else {
-    if (syncStatusRef?.isAutoSyncEnabled) {
-      syncServiceInstance.pushLocalToCloud()
-    }
+  // Batal timer sebelumnya jika ada aktivitas penulisan baru yang berdekatan
+  if (syncTimeoutId) {
+    clearTimeout(syncTimeoutId)
   }
+
+  // Pasang timer jeda 1.5 detik (1500ms)
+  syncTimeoutId = setTimeout(() => {
+    if (!syncServiceInstance) {
+      import('../services/syncService.js').then(module => {
+        syncServiceInstance = module.syncRealtime || module.default
+        getIsPullingFromCloudFn = module.getIsPullingFromCloud
+        syncStatusRef = module.syncStatus
+        
+        if (syncStatusRef?.isAutoSyncEnabled && (!getIsPullingFromCloudFn || !getIsPullingFromCloudFn())) {
+          syncServiceInstance?.pushLocalToCloud()
+        }
+      })
+    } else {
+      if (syncStatusRef?.isAutoSyncEnabled) {
+        syncServiceInstance.pushLocalToCloud()
+      }
+    }
+  }, 1500)
 }
 
 // Pasang hook pada semua tabel

@@ -82,6 +82,18 @@ async function recalculateMemberDebt(memberId) {
   }
 }
 
+// Helper untuk mengambil timestamp 'updatedAt' paling baru dari IndexedDB lokal
+async function getLastSyncTime(tableName) {
+  try {
+    if (!db[tableName]) return '1970-01-01T00:00:00.000Z'
+    const lastRecord = await db[tableName].orderBy('updatedAt').last()
+    return lastRecord?.updatedAt || '1970-01-01T00:00:00.000Z'
+  } catch (e) {
+    console.warn(`[Sync] Gagal mengambil lastSyncTime untuk ${tableName}:`, e)
+    return '1970-01-01T00:00:00.000Z'
+  }
+}
+
 export const syncRealtime = {
   toggleAutoSync(enabled) {
     syncStatus.isAutoSyncEnabled = enabled
@@ -132,7 +144,7 @@ export const syncRealtime = {
     }
   },
 
-  initRealtimePull() {
+  async initRealtimePull() {
     this.stopRealtime()
 
     if (!syncStatus.isAutoSyncEnabled || !firestore) return
@@ -142,9 +154,15 @@ export const syncRealtime = {
       console.error('[Sync] Snapshot error:', err)
     }
 
-    TABLES_TO_SYNC.forEach(tableName => {
+    // 1. Terapkan Filter Delta untuk TABLES_TO_SYNC
+    for (const tableName of TABLES_TO_SYNC) {
       try {
-        const q = collection(firestore, tableName)
+        const lastSyncTime = await getLastSyncTime(tableName)
+        const q = query(
+          collection(firestore, tableName),
+          where('updatedAt', '>', lastSyncTime)
+        )
+
         const unsub = onSnapshot(q, async (snapshot) => {
           if (isSyncing) return
           isPullingFromCloud = true
@@ -185,11 +203,17 @@ export const syncRealtime = {
         }, handleError)
         unsubscribers.push(unsub)
       } catch (e) {}
-    })
+    }
 
-    TRANSACTION_TABLES.forEach(tableName => {
+    // 2. Terapkan Filter Delta untuk TRANSACTION_TABLES
+    for (const tableName of TRANSACTION_TABLES) {
       try {
-        const q = collection(firestore, tableName)
+        const lastSyncTime = await getLastSyncTime(tableName)
+        const q = query(
+          collection(firestore, tableName),
+          where('updatedAt', '>', lastSyncTime)
+        )
+
         const unsub = onSnapshot(q, async (snapshot) => {
           if (isSyncing) return
           isPullingFromCloud = true
@@ -214,8 +238,9 @@ export const syncRealtime = {
         }, handleError)
         unsubscribers.push(unsub)
       } catch (e) {}
-    })
+    }
 
+    // Listener khusus transaksi piutang/unpaid
     try {
       const qUnpaid = query(collection(firestore, 'transactions'), where('remaining', '>', 0))
       const unsubUnpaid = onSnapshot(qUnpaid, async (snapshot) => {
@@ -266,9 +291,11 @@ export const syncRealtime = {
       window.addEventListener('offline', updateOnlineStatus)
 
       if (intervalId) clearInterval(intervalId)
+      
+      // Polling diubah dari 30 detik menjadi 5 menit (5 * 60 * 1000 ms)
       intervalId = setInterval(() => {
         if (syncStatus.isAutoSyncEnabled) this.pushLocalToCloud()
-      }, 30 * 1000)
+      }, 5 * 60 * 1000)
 
       if (syncStatus.isAutoSyncEnabled) {
         this.initRealtimePull()
