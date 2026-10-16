@@ -1,31 +1,38 @@
 // src/services/backupService.js
 import { db } from '../db/index.js'
-import { firestore } from './firebase.js'
-import { collection, getDocs, writeBatch } from 'firebase/firestore'
 import dayjs from 'dayjs'
 
 export const backupService = {
   async exportBackup() {
-    const backupData = {}
-    for (const table of db.tables) {
-      backupData[table.name] = await table.toArray()
-    }
+    try {
+      const backupData = {}
+      for (const table of db.tables) {
+        backupData[table.name] = await table.toArray()
+      }
 
-    const blob = new Blob([JSON.stringify(backupData, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `Backup_SinarPagi_${dayjs().format('YYYYMMDD_HHmmss')}.json`
-    a.click()
-    URL.revokeObjectURL(url)
+      const jsonString = JSON.stringify(backupData, null, 2)
+      const blob = new Blob([jsonString], { type: 'application/json' })
+
+      // Format nama file: DDMMYYYY-HH.mm.ss.json
+      const fileName = `${dayjs().format('DDMMYYYY-HH.mm.ss')}.json`
+
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = fileName
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
+
+      return true
+    } catch (error) {
+      console.error('Gagal export backup:', error)
+      throw error
+    }
   },
 
   async importBackup(file) {
-    // GUARD 1: Cek Koneksi Internet
-    if (!navigator.onLine) {
-      throw new Error('Impor backup membutuhkan koneksi internet aktif agar sinkronisasi cloud tetap konsisten.')
-    }
-
     if (!file) return false
 
     return new Promise((resolve, reject) => {
@@ -106,48 +113,6 @@ export const backupService = {
   },
 
   async resetTransactions() {
-    // GUARD 2: Cek Koneksi Internet
-    if (!navigator.onLine) {
-      throw new Error('Reset transaksi membutuhkan koneksi internet aktif agar data cloud terhapus bersih.')
-    }
-
-    if (firestore) {
-      const cloudTablesToClear = [
-        'transactions',
-        'transaction_items',
-        'expenses',
-        'digital_transactions',
-        'debt_payments',
-        'cash_mutations',
-        'shopping_list'
-      ]
-
-      for (const tableName of cloudTablesToClear) {
-        try {
-          const querySnapshot = await getDocs(collection(firestore, tableName))
-          const batches = []
-          let currentBatch = writeBatch(firestore)
-          let count = 0
-
-          querySnapshot.forEach((document) => {
-            currentBatch.delete(document.ref)
-            count++
-            if (count >= 400) {
-              batches.push(currentBatch.commit())
-              currentBatch = writeBatch(firestore)
-              count = 0
-            }
-          })
-          if (count > 0) {
-            batches.push(currentBatch.commit())
-          }
-          await Promise.all(batches)
-        } catch (err) {
-          console.warn(`Gagal menghapus koleksi cloud ${tableName}:`, err)
-        }
-      }
-    }
-
     const tableNames = db.tables.map(t => t.name)
 
     await db.transaction('rw', tableNames, async () => {
