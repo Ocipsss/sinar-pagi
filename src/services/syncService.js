@@ -88,10 +88,22 @@ async function getLastSyncTime(tableName) {
   try {
     if (!db[tableName]) return '1970-01-01T00:00:00.000Z'
     const lastRecord = await db[tableName].orderBy('updatedAt').last()
-    return lastRecord?.updatedAt || '1970-01-01T00:00:00.000Z'
+    
+    if (lastRecord?.updatedAt) {
+      return lastRecord.updatedAt
+    }
+
+    // Jika tabel transaksi lokal kosong, batasi hanya ditarik 30 hari terakhir agar hemat Read Firestore
+    if (TRANSACTION_TABLES.includes(tableName)) {
+      return dayjs().subtract(30, 'day').toISOString()
+    }
+
+    return '1970-01-01T00:00:00.000Z'
   } catch (e) {
     console.warn(`[Sync] Gagal mengambil lastSyncTime untuk ${tableName}:`, e)
-    return '1970-01-01T00:00:00.000Z'
+    return TRANSACTION_TABLES.includes(tableName) 
+      ? dayjs().subtract(30, 'day').toISOString() 
+      : '1970-01-01T00:00:00.000Z'
   }
 }
 
@@ -155,7 +167,7 @@ export const syncRealtime = {
       console.error('[Sync] Snapshot error:', err)
     }
 
-    // 1. Terapkan Filter Delta untuk TABLES_TO_SYNC
+    // 1. Filter Delta untuk TABLES_TO_SYNC
     for (const tableName of TABLES_TO_SYNC) {
       try {
         const lastSyncTime = await getLastSyncTime(tableName)
@@ -175,7 +187,6 @@ export const syncRealtime = {
                 const cloudData = change.doc.data()
                 const local = await db[tableName]?.get(change.doc.id)
                 
-                // Jika dari cloud bertanda hapus (hard remove atau soft delete)
                 if (change.type === 'removed' || cloudData.deleted) {
                   if (local) await db[tableName].delete(change.doc.id)
                   if (tableName === 'products') hasProductChanges = true
@@ -209,7 +220,7 @@ export const syncRealtime = {
       } catch (e) {}
     }
 
-    // 2. Terapkan Filter Delta untuk TRANSACTION_TABLES
+    // 2. Filter Delta untuk TRANSACTION_TABLES
     for (const tableName of TRANSACTION_TABLES) {
       try {
         const lastSyncTime = await getLastSyncTime(tableName)
@@ -253,13 +264,12 @@ export const syncRealtime = {
       } catch (e) {}
     }
 
-    // 3. Listener khusus transaksi piutang/unpaid (Filter Delta updatedAt diterapkan)
+    // 3. Listener khusus transaksi piutang/unpaid yang aktif
     try {
-      const lastSyncTime = await getLastSyncTime('transactions')
       const qUnpaid = query(
         collection(firestore, 'transactions'),
         where('remaining', '>', 0),
-        where('updatedAt', '>', lastSyncTime)
+        where('deleted', '==', false)
       )
       const unsubUnpaid = onSnapshot(qUnpaid, async (snapshot) => {
         if (isSyncing) return
@@ -270,12 +280,6 @@ export const syncRealtime = {
             try {
               const cloudData = change.doc.data()
               const local = await db.transactions.get(change.doc.id)
-              
-              if (cloudData.deleted) {
-                if (local) await db.transactions.delete(change.doc.id)
-                await recalculateMemberDebt(cloudData.memberId)
-                continue
-              }
 
               if (!local || cloudData.updatedAt > local.updatedAt) {
                 await db.transactions.put({ ...cloudData, id: change.doc.id, synced: 1 })

@@ -1551,10 +1551,9 @@ import { productRepo } from '../db/repositories/productRepository.js'
 import { packageRepository } from '../db/repositories/packageRepository.js'
 import { serviceRepository } from '../db/repositories/serviceRepository.js'
 import { categoryRepo } from '../db/repositories/categoryRepository.js'
-import { syncRealtime } from '../services/syncService.js'
 
 export function useSettingsMenu() {
-  const rokokProducts = ref([]) // Dapat menampung produk Rokok & Permen
+  const rokokProducts = ref([]) // Menampung produk Rokok & Permen
   const packages = ref([])
   const services = ref([])
   const categoryOptions = ref([])
@@ -1591,25 +1590,21 @@ export function useSettingsMenu() {
   const savePackage = async (pkgData) => {
     await packageRepository.savePackage(pkgData)
     await loadData()
-    syncRealtime.pushLocalToCloud()
   }
 
   const deletePackage = async (id) => {
     await packageRepository.deletePackage(id)
     await loadData()
-    syncRealtime.pushLocalToCloud()
   }
 
   const saveService = async (serviceData) => {
     await serviceRepository.saveService(serviceData)
     await loadData()
-    syncRealtime.pushLocalToCloud()
   }
 
   const deleteService = async (id) => {
     await serviceRepository.deleteService(id)
     await loadData()
-    syncRealtime.pushLocalToCloud()
   }
 
   return {
@@ -3708,10 +3703,22 @@ async function getLastSyncTime(tableName) {
   try {
     if (!db[tableName]) return '1970-01-01T00:00:00.000Z'
     const lastRecord = await db[tableName].orderBy('updatedAt').last()
-    return lastRecord?.updatedAt || '1970-01-01T00:00:00.000Z'
+    
+    if (lastRecord?.updatedAt) {
+      return lastRecord.updatedAt
+    }
+
+    // Jika tabel transaksi lokal kosong, batasi hanya ditarik 30 hari terakhir agar hemat Read Firestore
+    if (TRANSACTION_TABLES.includes(tableName)) {
+      return dayjs().subtract(30, 'day').toISOString()
+    }
+
+    return '1970-01-01T00:00:00.000Z'
   } catch (e) {
     console.warn(`[Sync] Gagal mengambil lastSyncTime untuk ${tableName}:`, e)
-    return '1970-01-01T00:00:00.000Z'
+    return TRANSACTION_TABLES.includes(tableName) 
+      ? dayjs().subtract(30, 'day').toISOString() 
+      : '1970-01-01T00:00:00.000Z'
   }
 }
 
@@ -3775,7 +3782,7 @@ export const syncRealtime = {
       console.error('[Sync] Snapshot error:', err)
     }
 
-    // 1. Terapkan Filter Delta untuk TABLES_TO_SYNC
+    // 1. Filter Delta untuk TABLES_TO_SYNC
     for (const tableName of TABLES_TO_SYNC) {
       try {
         const lastSyncTime = await getLastSyncTime(tableName)
@@ -3795,7 +3802,6 @@ export const syncRealtime = {
                 const cloudData = change.doc.data()
                 const local = await db[tableName]?.get(change.doc.id)
                 
-                // Jika dari cloud bertanda hapus (hard remove atau soft delete)
                 if (change.type === 'removed' || cloudData.deleted) {
                   if (local) await db[tableName].delete(change.doc.id)
                   if (tableName === 'products') hasProductChanges = true
@@ -3829,7 +3835,7 @@ export const syncRealtime = {
       } catch (e) {}
     }
 
-    // 2. Terapkan Filter Delta untuk TRANSACTION_TABLES
+    // 2. Filter Delta untuk TRANSACTION_TABLES
     for (const tableName of TRANSACTION_TABLES) {
       try {
         const lastSyncTime = await getLastSyncTime(tableName)
@@ -3873,13 +3879,12 @@ export const syncRealtime = {
       } catch (e) {}
     }
 
-    // 3. Listener khusus transaksi piutang/unpaid (Filter Delta updatedAt diterapkan)
+    // 3. Listener khusus transaksi piutang/unpaid yang aktif
     try {
-      const lastSyncTime = await getLastSyncTime('transactions')
       const qUnpaid = query(
         collection(firestore, 'transactions'),
         where('remaining', '>', 0),
-        where('updatedAt', '>', lastSyncTime)
+        where('deleted', '==', false)
       )
       const unsubUnpaid = onSnapshot(qUnpaid, async (snapshot) => {
         if (isSyncing) return
@@ -3890,12 +3895,6 @@ export const syncRealtime = {
             try {
               const cloudData = change.doc.data()
               const local = await db.transactions.get(change.doc.id)
-              
-              if (cloudData.deleted) {
-                if (local) await db.transactions.delete(change.doc.id)
-                await recalculateMemberDebt(cloudData.memberId)
-                continue
-              }
 
               if (!local || cloudData.updatedAt > local.updatedAt) {
                 await db.transactions.put({ ...cloudData, id: change.doc.id, synced: 1 })
@@ -4539,26 +4538,34 @@ export const transactionRepo = {
 }
 
 ===== src/db/repositories/memberRepository.js =====
+// src/db/repositories/memberRepository.js
 import { db } from '../index.js'
 import dayjs from 'dayjs'
-import { firestore } from '../../services/firebase.js'
-import { doc, deleteDoc } from 'firebase/firestore'
 
 export const memberRepo = {
-  getAll: () => db.members.toArray(),
-  getById: (id) => db.members.get(id),
+  // Hanya ambil member yang belum di-soft-delete
+  getAll: async () => {
+    const list = await db.members.toArray()
+    return list.filter(m => !m.deleted)
+  },
+
+  getById: async (id) => {
+    const item = await db.members.get(id)
+    return item && !item.deleted ? item : null
+  },
   
   create: async (data) => {
     const id = crypto.randomUUID()
     const now = dayjs().toISOString()
     await db.members.add({
       id,
-      name: (data.name || '').toUpperCase().trim(), // Otomatis KAPITAL
+      name: (data.name || '').toUpperCase().trim(),
       phone: (data.phone || '').trim(),
       address: (data.address || '').toUpperCase().trim(),
       total_spending: 0,
       points: 0,
       debt: 0,
+      deleted: false,
       updatedAt: now,
       synced: 0
     })
@@ -4572,7 +4579,7 @@ export const memberRepo = {
       updatedAt: now,
       synced: 0
     }
-    if (data.name) payload.name = data.name.toUpperCase().trim() // Otomatis KAPITAL saat edit
+    if (data.name) payload.name = data.name.toUpperCase().trim()
     if (data.address) payload.address = data.address.toUpperCase().trim()
 
     await db.members.update(id, payload)
@@ -4580,18 +4587,14 @@ export const memberRepo = {
 
   delete: async (id) => {
     const stringId = String(id)
+    const now = dayjs().toISOString()
     
-    // 1. Hapus dari IndexedDB lokal
-    await db.members.delete(stringId)
-
-    // 2. Hapus dari Cloud Firestore agar tidak ter-download kembali
-    if (navigator.onLine && firestore) {
-      try {
-        await deleteDoc(doc(firestore, 'members', stringId))
-      } catch (e) {
-        console.warn('Gagal menghapus member dari cloud:', e)
-      }
-    }
+    // Soft Delete di IndexedDB lokal agar status hapus tersinkron dengan aman saat offline/online
+    await db.members.update(stringId, {
+      deleted: true,
+      updatedAt: now,
+      synced: 0
+    })
   },
 
   addDebtPayment: async (paymentData) => {
@@ -5031,24 +5034,46 @@ export const packageRepository = {
 }
 
 ===== src/db/repositories/serviceRepository.js =====
+// src/db/repositories/serviceRepository.js
 import { db } from '../index.js'
 import dayjs from 'dayjs'
 
 export const serviceRepository = {
-  getAll: () => db.services.toArray(),
-  getById: (id) => db.services.get(id),
+  // Hanya ambil jasa yang belum di-soft-delete
+  getAll: async () => {
+    const list = await db.services.toArray()
+    return list.filter(s => !s.deleted)
+  },
+
+  getById: async (id) => {
+    const item = await db.services.get(id)
+    return item && !item.deleted ? item : null
+  },
+
   saveService: async (data) => {
     const now = dayjs().toISOString()
     const id = data.id || crypto.randomUUID()
     await db.services.put({
       ...data,
       id,
+      deleted: false,
       updatedAt: now,
       synced: 0
     })
     return id
   },
-  deleteService: (id) => db.services.delete(id)
+
+  deleteService: async (id) => {
+    const stringId = String(id)
+    const now = dayjs().toISOString()
+
+    // Soft Delete di IndexedDB lokal agar sinkron ke cloud via syncService
+    await db.services.update(stringId, {
+      deleted: true,
+      updatedAt: now,
+      synced: 0
+    })
+  }
 }
 
 ===== src/db/index.js =====
