@@ -1,7 +1,7 @@
 import { reactive } from 'vue'
 import { db } from '../db'
 import { firestore } from './firebase'
-import { collection, doc, writeBatch, query, where, onSnapshot } from 'firebase/firestore'
+import { collection, doc, writeBatch } from 'firebase/firestore'
 import dayjs from 'dayjs'
 import Big from 'big.js'
 
@@ -28,9 +28,7 @@ const TRANSACTION_TABLES = [
 ]
 
 let isSyncing = false
-let unsubscribers = []
 let intervalId = null
-
 let isPullingFromCloud = false
 
 export function getIsPullingFromCloud() {
@@ -42,7 +40,8 @@ export const syncStatus = reactive({
   isSyncing: false,
   unsyncedCount: 0,
   lastSyncedAt: null,
-  isAutoSyncEnabled: localStorage.getItem('auto_sync_enabled') !== 'false'
+  // DIPAKSA DEFAULT FALSE: Tidak ada auto sync/realtime
+  isAutoSyncEnabled: false
 })
 
 async function updateUnsyncedCount() {
@@ -83,46 +82,21 @@ async function recalculateMemberDebt(memberId) {
   }
 }
 
-// Helper untuk mengambil timestamp 'updatedAt' paling baru dari IndexedDB lokal
-async function getLastSyncTime(tableName) {
-  try {
-    if (!db[tableName]) return '1970-01-01T00:00:00.000Z'
-    const lastRecord = await db[tableName].orderBy('updatedAt').last()
-    
-    if (lastRecord?.updatedAt) {
-      return lastRecord.updatedAt
-    }
-
-    // Jika tabel transaksi lokal kosong, batasi hanya ditarik 30 hari terakhir agar hemat Read Firestore
-    if (TRANSACTION_TABLES.includes(tableName)) {
-      return dayjs().subtract(30, 'day').toISOString()
-    }
-
-    return '1970-01-01T00:00:00.000Z'
-  } catch (e) {
-    console.warn(`[Sync] Gagal mengambil lastSyncTime untuk ${tableName}:`, e)
-    return TRANSACTION_TABLES.includes(tableName) 
-      ? dayjs().subtract(30, 'day').toISOString() 
-      : '1970-01-01T00:00:00.000Z'
-  }
-}
-
 export const syncRealtime = {
+  // Toggle opsional jika suatu saat mau nyalakan/matikan dari setting
   toggleAutoSync(enabled) {
     syncStatus.isAutoSyncEnabled = enabled
     localStorage.setItem('auto_sync_enabled', enabled ? 'true' : 'false')
-
-    if (enabled) {
-      this.initRealtimePull()
-      this.pushLocalToCloud()
-    } else {
+    if (!enabled) {
       this.stopRealtime()
     }
   },
 
+  // FUNGSI PUSH MANUAL DARI LOKAL KE CLOUD (DIPANGGIL SAAT TOMBOL DIKLIK)
   async pushLocalToCloud() {
     syncStatus.isOnline = navigator.onLine
-    if (!syncStatus.isAutoSyncEnabled || !navigator.onLine || isSyncing || !db || !firestore) {
+    
+    if (!navigator.onLine || isSyncing || !db || !firestore) {
       await updateUnsyncedCount()
       return
     }
@@ -136,20 +110,25 @@ export const syncRealtime = {
         const unsynced = await db[tableName].where('synced').equals(0).toArray()
         if (!unsynced.length) continue
         
+        // Push batch per 400 dokumen (Aman dari limit Firebase 500 ops)
         for (let i = 0; i < unsynced.length; i += 400) {
           const batch = writeBatch(firestore)
           const chunk = unsynced.slice(i, i + 400)
+          
           chunk.forEach(item => {
             const { synced, ...clean } = item
             batch.set(doc(firestore, tableName, item.id), clean, { merge: true })
           })
+          
           await batch.commit()
+          
+          // Tandai di IndexedDB lokal bahwa data sudah ter-sync
           await db[tableName].bulkUpdate(chunk.map(c => ({ key: c.id, changes: { synced: 1 } })))
         }
       }
       syncStatus.lastSyncedAt = dayjs().format('HH:mm')
     } catch (e) {
-      console.warn('[Sync] push fail', e?.message)
+      console.warn('[Sync] Push manual gagal:', e?.message)
     } finally {
       isSyncing = false
       syncStatus.isSyncing = false
@@ -157,150 +136,12 @@ export const syncRealtime = {
     }
   },
 
-  async initRealtimePull() {
+  // MATIKAN LISTENERS REALTIME TOTAL (TIDAK ADA ONSNAPSHOT)
+  initRealtimePull() {
     this.stopRealtime()
-
-    if (!syncStatus.isAutoSyncEnabled || !firestore) return
-
-    const handleError = (err) => {
-      if (err?.name === 'AbortError' || err?.code === 'aborted' || err?.message?.includes('aborted')) return
-      console.error('[Sync] Snapshot error:', err)
-    }
-
-    // 1. Filter Delta untuk TABLES_TO_SYNC
-    for (const tableName of TABLES_TO_SYNC) {
-      try {
-        const lastSyncTime = await getLastSyncTime(tableName)
-        const q = query(
-          collection(firestore, tableName),
-          where('updatedAt', '>', lastSyncTime)
-        )
-
-        const unsub = onSnapshot(q, async (snapshot) => {
-          if (isSyncing) return
-          isPullingFromCloud = true
-          let hasProductChanges = false
-
-          try {
-            for (const change of snapshot.docChanges()) {
-              try {
-                const cloudData = change.doc.data()
-                const local = await db[tableName]?.get(change.doc.id)
-                
-                if (change.type === 'removed' || cloudData.deleted) {
-                  if (local) await db[tableName].delete(change.doc.id)
-                  if (tableName === 'products') hasProductChanges = true
-                  continue
-                }
-
-                if (tableName === 'members') {
-                  if (!local || cloudData.updatedAt > local.updatedAt) {
-                    const localDebt = local?.debt
-                    await db[tableName].put({ ...cloudData, id: change.doc.id, synced: 1, debt: localDebt ?? cloudData.debt })
-                    await recalculateMemberDebt(change.doc.id)
-                  }
-                } else {
-                  if (!local || cloudData.updatedAt > local.updatedAt) {
-                    await db[tableName].put({ ...cloudData, id: change.doc.id, synced: 1 })
-                    if (tableName === 'products') hasProductChanges = true
-                  }
-                }
-              } catch (e) {}
-            }
-            await updateUnsyncedCount()
-
-            if (hasProductChanges) {
-              window.dispatchEvent(new CustomEvent('products-updated-from-cloud'))
-            }
-          } finally {
-            isPullingFromCloud = false
-          }
-        }, handleError)
-        unsubscribers.push(unsub)
-      } catch (e) {}
-    }
-
-    // 2. Filter Delta untuk TRANSACTION_TABLES
-    for (const tableName of TRANSACTION_TABLES) {
-      try {
-        const lastSyncTime = await getLastSyncTime(tableName)
-        const q = query(
-          collection(firestore, tableName),
-          where('updatedAt', '>', lastSyncTime)
-        )
-
-        const unsub = onSnapshot(q, async (snapshot) => {
-          if (isSyncing) return
-          isPullingFromCloud = true
-          try {
-            for (const change of snapshot.docChanges()) {
-              if (change.type === 'removed') continue
-              try {
-                const cloudData = change.doc.data()
-                const local = await db[tableName]?.get(change.doc.id)
-                
-                if (cloudData.deleted) {
-                  if (local) await db[tableName].delete(change.doc.id)
-                  if (tableName === 'transactions' || tableName === 'debt_payments') {
-                    await recalculateMemberDebt(cloudData.memberId)
-                  }
-                  continue
-                }
-
-                if (!local || cloudData.updatedAt > local.updatedAt) {
-                  await db[tableName].put({ ...cloudData, id: change.doc.id, synced: 1 })
-                  if (tableName === 'transactions' || tableName === 'debt_payments') {
-                    await recalculateMemberDebt(cloudData.memberId)
-                  }
-                }
-              } catch (e) {}
-            }
-            await updateUnsyncedCount()
-          } finally {
-            isPullingFromCloud = false
-          }
-        }, handleError)
-        unsubscribers.push(unsub)
-      } catch (e) {}
-    }
-
-    // 3. Listener khusus transaksi piutang/unpaid yang aktif
-    try {
-      const qUnpaid = query(
-        collection(firestore, 'transactions'),
-        where('remaining', '>', 0),
-        where('deleted', '==', false)
-      )
-      const unsubUnpaid = onSnapshot(qUnpaid, async (snapshot) => {
-        if (isSyncing) return
-        isPullingFromCloud = true
-        try {
-          for (const change of snapshot.docChanges()) {
-            if (change.type === 'removed') continue
-            try {
-              const cloudData = change.doc.data()
-              const local = await db.transactions.get(change.doc.id)
-
-              if (!local || cloudData.updatedAt > local.updatedAt) {
-                await db.transactions.put({ ...cloudData, id: change.doc.id, synced: 1 })
-                await recalculateMemberDebt(cloudData.memberId)
-              }
-            } catch (e) {}
-          }
-          await updateUnsyncedCount()
-        } finally {
-          isPullingFromCloud = false
-        }
-      }, handleError)
-      unsubscribers.push(unsubUnpaid)
-    } catch (e) {}
   },
 
   stopRealtime() {
-    try {
-      unsubscribers.forEach(unsub => { try { unsub() } catch {} })
-    } catch {}
-    unsubscribers = []
     if (intervalId) {
       clearInterval(intervalId)
       intervalId = null
@@ -310,29 +151,21 @@ export const syncRealtime = {
   init() {
     try {
       if (!firestore || !db) return
-      
+
       const updateOnlineStatus = () => {
         syncStatus.isOnline = navigator.onLine
-        if (navigator.onLine && syncStatus.isAutoSyncEnabled) this.pushLocalToCloud()
       }
 
       window.addEventListener('online', updateOnlineStatus)
       window.addEventListener('offline', updateOnlineStatus)
 
-      if (intervalId) clearInterval(intervalId)
+      // Matikan interval polling otomatis
+      this.stopRealtime()
       
-      // Polling 5 menit
-      intervalId = setInterval(() => {
-        if (syncStatus.isAutoSyncEnabled) this.pushLocalToCloud()
-      }, 5 * 60 * 1000)
-
-      if (syncStatus.isAutoSyncEnabled) {
-        this.initRealtimePull()
-        this.pushLocalToCloud()
-      }
+      // Cukup hitung sisa data lokal yang belum ter-upload
       updateUnsyncedCount()
     } catch (e) {
-      console.error('[Sync] init error:', e?.message, e)
+      console.error('[Sync] Init error:', e?.message, e)
     }
   }
 }

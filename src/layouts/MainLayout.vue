@@ -61,10 +61,11 @@
           ></span>
         </button>
 
-        <!-- INDIKATOR SYNC REALTIME -->
+        <!-- INDIKATOR & TOMBOL PUSH MANUAL KE CLOUD -->
         <button 
           @click="manualSync" 
-          :title="syncStatus.isOnline ? (syncStatus.isSyncing ? 'Sedang Sinkronisasi...' : 'Klik untuk sinkronisasi manual') : 'Mode Offline'"
+          :disabled="syncStatus.isSyncing"
+          :title="syncStatus.isOnline ? (syncStatus.isSyncing ? 'Sedang Upload ke Cloud...' : 'Klik untuk Upload Manual ke Cloud') : 'Mode Offline'"
           :class="[
             'px-2.5 py-1.5 md:px-3.5 md:py-2 rounded-full text-[10px] md:text-xs font-black flex items-center gap-1.5 md:gap-2 border transition active:scale-95',
             !syncStatus.isOnline ? 'bg-zinc-100 text-zinc-500 border-zinc-200' :
@@ -77,9 +78,9 @@
           
           <span class="hidden sm:inline">
             <template v-if="!syncStatus.isOnline">Offline</template>
-            <template v-else-if="syncStatus.isSyncing">Syncing...</template>
-            <template v-else-if="syncStatus.unsyncedCount > 0">{{ syncStatus.unsyncedCount }} belum sync</template>
-            <template v-else>Synced {{ syncStatus.lastSyncedAt || '' }}</template>
+            <template v-else-if="syncStatus.isSyncing">Mengunggah...</template>
+            <template v-else-if="syncStatus.unsyncedCount > 0">{{ syncStatus.unsyncedCount }} belum di-upload</template>
+            <template v-else>Backup {{ syncStatus.lastSyncedAt || 'OK' }}</template>
           </span>
 
           <!-- Indikator Dot untuk Layar HP -->
@@ -123,6 +124,7 @@ import {
   Menu, X, Package, Store, LayoutDashboard, Plus, 
   Users, ShoppingCart, Tags, History, Coffee, Smartphone, Wallet, RefreshCw, BarChart3, Settings, Receipt, Printer
 } from 'lucide-vue-next'
+import { toast } from 'vue-sonner'
 import SidebarComponent from '../components/Sidebar.vue'
 import { syncStatus, syncRealtime } from '../services/syncService.js'
 import { usePrinter } from '../composables/usePrinter.js'
@@ -182,9 +184,25 @@ const handleSelect = (m) => {
   }
 }
 
-const manualSync = () => {
-  if (syncStatus.isOnline) {
-    syncRealtime.pushLocalToCloud()
+// Fungsi Manual Push dengan Feedback Notifikasi Toast
+const manualSync = async () => {
+  if (!syncStatus.isOnline) {
+    toast.error('Perangkat sedang offline')
+    return
+  }
+
+  if (syncStatus.unsyncedCount === 0) {
+    toast.info('Semua data lokal sudah ter-upload')
+    return
+  }
+
+  toast.info('Memulai upload data ke Cloud...')
+  await syncRealtime.pushLocalToCloud()
+
+  if (syncStatus.unsyncedCount === 0) {
+    toast.success('Berhasil backup data ke Cloud!')
+  } else {
+    toast.warning(`Sisa ${syncStatus.unsyncedCount} data belum terupload`)
   }
 }
 
