@@ -1,30 +1,29 @@
 <template>
 <div class="min-h-screen bg-zinc-900 overflow-hidden">
   <!-- SIDEBAR -->
-  <aside 
-    :class="[
-      'fixed top-0 left-0 h-full w-[280px] z-[60] transition-transform duration-300 ease-in-out will-change-transform', 
-      isOpen ? 'translate-x-0' : '-translate-x-full'
-    ]"
-  >
-    <SidebarComponent 
-      :groups="groups" 
-      :activePage="activePage" 
-      @select-page="handleSelect" 
-      @close="isOpen = false" 
-    />
-  </aside>
+  <!-- SIDEBAR -->
+<aside 
+  :class="[
+    'fixed top-0 left-0 h-full w-[280px] md:w-[320px] z-[60] transition-transform duration-300 ease-in-out will-change-transform', 
+    isOpen ? 'translate-x-0' : '-translate-x-full'
+  ]"
+>
+  <SidebarComponent 
+    :groups="groups" 
+    :activePage="activePage" 
+    @select-page="handleSelect" 
+    @close="isOpen = false" 
+  />
+</aside>
 
-  <!-- BACKDROP OVERLAY -->
-  <div v-if="isOpen" @click="isOpen = false" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50"></div>
+<!-- MAIN CONTAINER -->
+<div 
+  :class="[
+    'min-h-screen bg-zinc-50 flex flex-col overflow-hidden transition-transform duration-300 ease-in-out h-screen will-change-transform', 
+    isOpen ? 'translate-x-[280px] md:translate-x-[320px]' : 'translate-x-0'
+  ]"
+>
 
-  <!-- MAIN CONTAINER -->
-  <div 
-    :class="[
-      'min-h-screen bg-zinc-50 flex flex-col overflow-hidden transition-transform duration-300 ease-in-out h-screen will-change-transform', 
-      isOpen ? 'translate-x-[280px]' : 'translate-x-0'
-    ]"
-  >
     <!-- HEADER STICKY -->
     <header class="shrink-0 h-[56px] md:h-16 w-full bg-white border-b border-zinc-100 px-4 md:px-6 flex justify-between items-center z-40 sticky top-0">
       <div class="flex items-center gap-3">
