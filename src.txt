@@ -3686,14 +3686,15 @@ async function recalculateMemberDebt(memberId) {
   try {
     const unpaid = await db.transactions
       .where('memberId').equals(memberId)
-      .filter(t => (t.remaining || 0) > 0 && t.status !== 'void' && t.status !== 'CANCELLED')
+      .filter(t => (t.remaining || 0) > 0 && t.status !== 'void' && t.status !== 'CANCELLED' && !t.deleted)
       .toArray()
     const totalTrxDebt = unpaid.reduce((acc, t) => Big(acc).plus(t.remaining || 0).toString(), '0')
 
     const payments = await db.debt_payments
       .where('memberId').equals(memberId)
       .toArray()
-    const totalPaid = payments.reduce((acc, p) => Big(acc).plus(p.amount || 0).toString(), '0')
+    const validPayments = payments.filter(p => !p.deleted)
+    const totalPaid = validPayments.reduce((acc, p) => Big(acc).plus(p.amount || 0).toString(), '0')
 
     const finalDebt = Math.max(0, Number(Big(totalTrxDebt).minus(totalPaid)))
     await db.members.update(memberId, { debt: finalDebt })
@@ -3793,11 +3794,14 @@ export const syncRealtime = {
               try {
                 const cloudData = change.doc.data()
                 const local = await db[tableName]?.get(change.doc.id)
-                if (change.type === 'removed') {
+                
+                // Jika dari cloud bertanda hapus (hard remove atau soft delete)
+                if (change.type === 'removed' || cloudData.deleted) {
                   if (local) await db[tableName].delete(change.doc.id)
                   if (tableName === 'products') hasProductChanges = true
                   continue
                 }
+
                 if (tableName === 'members') {
                   if (!local || cloudData.updatedAt > local.updatedAt) {
                     const localDebt = local?.debt
@@ -3843,6 +3847,15 @@ export const syncRealtime = {
               try {
                 const cloudData = change.doc.data()
                 const local = await db[tableName]?.get(change.doc.id)
+                
+                if (cloudData.deleted) {
+                  if (local) await db[tableName].delete(change.doc.id)
+                  if (tableName === 'transactions' || tableName === 'debt_payments') {
+                    await recalculateMemberDebt(cloudData.memberId)
+                  }
+                  continue
+                }
+
                 if (!local || cloudData.updatedAt > local.updatedAt) {
                   await db[tableName].put({ ...cloudData, id: change.doc.id, synced: 1 })
                   if (tableName === 'transactions' || tableName === 'debt_payments') {
@@ -3860,9 +3873,14 @@ export const syncRealtime = {
       } catch (e) {}
     }
 
-    // Listener khusus transaksi piutang/unpaid
+    // 3. Listener khusus transaksi piutang/unpaid (Filter Delta updatedAt diterapkan)
     try {
-      const qUnpaid = query(collection(firestore, 'transactions'), where('remaining', '>', 0))
+      const lastSyncTime = await getLastSyncTime('transactions')
+      const qUnpaid = query(
+        collection(firestore, 'transactions'),
+        where('remaining', '>', 0),
+        where('updatedAt', '>', lastSyncTime)
+      )
       const unsubUnpaid = onSnapshot(qUnpaid, async (snapshot) => {
         if (isSyncing) return
         isPullingFromCloud = true
@@ -3872,6 +3890,13 @@ export const syncRealtime = {
             try {
               const cloudData = change.doc.data()
               const local = await db.transactions.get(change.doc.id)
+              
+              if (cloudData.deleted) {
+                if (local) await db.transactions.delete(change.doc.id)
+                await recalculateMemberDebt(cloudData.memberId)
+                continue
+              }
+
               if (!local || cloudData.updatedAt > local.updatedAt) {
                 await db.transactions.put({ ...cloudData, id: change.doc.id, synced: 1 })
                 await recalculateMemberDebt(cloudData.memberId)
@@ -3912,7 +3937,7 @@ export const syncRealtime = {
 
       if (intervalId) clearInterval(intervalId)
       
-      // Polling diubah dari 30 detik menjadi 5 menit (5 * 60 * 1000 ms)
+      // Polling 5 menit
       intervalId = setInterval(() => {
         if (syncStatus.isAutoSyncEnabled) this.pushLocalToCloud()
       }, 5 * 60 * 1000)
@@ -4347,34 +4372,20 @@ router.beforeEach((to) => {
 // src/db/repositories/operatorRepository.js
 import { db } from '../index.js'
 import dayjs from 'dayjs'
-import { firestore } from '../../services/firebase.js'
-import { doc, deleteDoc, collection, getDocs } from 'firebase/firestore'
 
 export const operatorRepo = {
   getAll: async () => {
     const table = db.operators || db.table('operators')
-    let list = await table.toArray()
-    
-    // Jika data lokal kosong (seperti di mode Incognito) dan online, ambil langsung dari Cloud Firestore
-    if (list.length === 0 && navigator.onLine && firestore) {
-      try {
-        const snapshot = await getDocs(collection(firestore, 'operators'))
-        const cloudList = []
-        snapshot.forEach(d => {
-          cloudList.push({ id: d.id, ...d.data() })
-        })
-        if (cloudList.length > 0) {
-          await table.bulkPut(cloudList.map(o => ({ ...o, synced: 1 })))
-          list = cloudList
-        }
-      } catch (e) {
-        console.warn('Gagal mengambil operator dari cloud:', e)
-      }
-    }
-    return list
+    const list = await table.toArray()
+    // Hanya tampilkan data yang belum di-soft-delete
+    return list.filter(item => !item.deleted)
   },
 
-  getById: (id) => (db.operators ? db.operators.get(id) : db.table('operators').get(id)),
+  getById: async (id) => {
+    const table = db.operators || db.table('operators')
+    const item = await table.get(id)
+    return item && !item.deleted ? item : null
+  },
 
   create: async (data) => {
     const id = crypto.randomUUID()
@@ -4384,6 +4395,7 @@ export const operatorRepo = {
       name: data.name,
       role: data.role || 'Kasir',
       pin: data.pin || '',
+      deleted: false,
       updatedAt: now, 
       synced: 0 
     }
@@ -4399,16 +4411,10 @@ export const operatorRepo = {
   },
 
   delete: async (id) => {
+    const now = dayjs().toISOString()
     const table = db.operators || db.table('operators')
-    await table.delete(id)
-    
-    if (navigator.onLine && firestore) {
-      try {
-        await deleteDoc(doc(firestore, 'operators', id))
-      } catch (e) {
-        console.warn('Gagal menghapus operator dari cloud:', e)
-      }
-    }
+    // Gunakan Soft Delete agar sinkronisasi offline-first berjalan konsisten
+    await table.update(id, { deleted: true, updatedAt: now, synced: 0 })
   }
 }
 
@@ -4990,12 +4996,12 @@ export const financeRepo = {
 ===== src/db/repositories/packageRepository.js =====
 // src/db/repositories/packageRepository.js
 import { db } from '../index.js'
-import { doc, deleteDoc } from 'firebase/firestore'
-import { firestore } from '../../services/firebase.js'
 
 export const packageRepository = {
   async getAll() {
-    return await db.product_packages.toArray()
+    const list = await db.product_packages.toArray()
+    // Hanya tampilkan paket yang belum di-soft-delete
+    return list.filter(item => !item.deleted)
   },
 
   async savePackage(packageData) {
@@ -5003,6 +5009,7 @@ export const packageRepository = {
     const newItem = { 
       ...packageData, 
       id, 
+      deleted: false,
       updatedAt: new Date().toISOString(),
       synced: 0 
     }
@@ -5012,19 +5019,14 @@ export const packageRepository = {
 
   async deletePackage(id) {
     const stringId = String(id)
+    const now = new Date().toISOString()
 
-    // 1. Hapus dari Dexie IndexedDB lokal
-    await db.product_packages.delete(stringId)
-
-    // 2. Hapus langsung dari Cloud Firestore agar tidak ditarik lagi oleh listener/onSnapshot
-    if (navigator.onLine && firestore) {
-      try {
-        const docRef = doc(firestore, 'product_packages', stringId)
-        await deleteDoc(docRef)
-      } catch (err) {
-        console.error('Gagal menghapus paket di Firestore:', err)
-      }
-    }
+    // Soft Delete di lokal agar syncService aman mendorong status hapus ke Firestore
+    await db.product_packages.update(stringId, { 
+      deleted: true, 
+      updatedAt: now, 
+      synced: 0 
+    })
   }
 }
 

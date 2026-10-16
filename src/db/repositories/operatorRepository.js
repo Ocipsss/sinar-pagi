@@ -1,34 +1,20 @@
 // src/db/repositories/operatorRepository.js
 import { db } from '../index.js'
 import dayjs from 'dayjs'
-import { firestore } from '../../services/firebase.js'
-import { doc, deleteDoc, collection, getDocs } from 'firebase/firestore'
 
 export const operatorRepo = {
   getAll: async () => {
     const table = db.operators || db.table('operators')
-    let list = await table.toArray()
-    
-    // Jika data lokal kosong (seperti di mode Incognito) dan online, ambil langsung dari Cloud Firestore
-    if (list.length === 0 && navigator.onLine && firestore) {
-      try {
-        const snapshot = await getDocs(collection(firestore, 'operators'))
-        const cloudList = []
-        snapshot.forEach(d => {
-          cloudList.push({ id: d.id, ...d.data() })
-        })
-        if (cloudList.length > 0) {
-          await table.bulkPut(cloudList.map(o => ({ ...o, synced: 1 })))
-          list = cloudList
-        }
-      } catch (e) {
-        console.warn('Gagal mengambil operator dari cloud:', e)
-      }
-    }
-    return list
+    const list = await table.toArray()
+    // Hanya tampilkan data yang belum di-soft-delete
+    return list.filter(item => !item.deleted)
   },
 
-  getById: (id) => (db.operators ? db.operators.get(id) : db.table('operators').get(id)),
+  getById: async (id) => {
+    const table = db.operators || db.table('operators')
+    const item = await table.get(id)
+    return item && !item.deleted ? item : null
+  },
 
   create: async (data) => {
     const id = crypto.randomUUID()
@@ -38,6 +24,7 @@ export const operatorRepo = {
       name: data.name,
       role: data.role || 'Kasir',
       pin: data.pin || '',
+      deleted: false,
       updatedAt: now, 
       synced: 0 
     }
@@ -53,15 +40,9 @@ export const operatorRepo = {
   },
 
   delete: async (id) => {
+    const now = dayjs().toISOString()
     const table = db.operators || db.table('operators')
-    await table.delete(id)
-    
-    if (navigator.onLine && firestore) {
-      try {
-        await deleteDoc(doc(firestore, 'operators', id))
-      } catch (e) {
-        console.warn('Gagal menghapus operator dari cloud:', e)
-      }
-    }
+    // Gunakan Soft Delete agar sinkronisasi offline-first berjalan konsisten
+    await table.update(id, { deleted: true, updatedAt: now, synced: 0 })
   }
 }

@@ -66,14 +66,15 @@ async function recalculateMemberDebt(memberId) {
   try {
     const unpaid = await db.transactions
       .where('memberId').equals(memberId)
-      .filter(t => (t.remaining || 0) > 0 && t.status !== 'void' && t.status !== 'CANCELLED')
+      .filter(t => (t.remaining || 0) > 0 && t.status !== 'void' && t.status !== 'CANCELLED' && !t.deleted)
       .toArray()
     const totalTrxDebt = unpaid.reduce((acc, t) => Big(acc).plus(t.remaining || 0).toString(), '0')
 
     const payments = await db.debt_payments
       .where('memberId').equals(memberId)
       .toArray()
-    const totalPaid = payments.reduce((acc, p) => Big(acc).plus(p.amount || 0).toString(), '0')
+    const validPayments = payments.filter(p => !p.deleted)
+    const totalPaid = validPayments.reduce((acc, p) => Big(acc).plus(p.amount || 0).toString(), '0')
 
     const finalDebt = Math.max(0, Number(Big(totalTrxDebt).minus(totalPaid)))
     await db.members.update(memberId, { debt: finalDebt })
@@ -173,11 +174,14 @@ export const syncRealtime = {
               try {
                 const cloudData = change.doc.data()
                 const local = await db[tableName]?.get(change.doc.id)
-                if (change.type === 'removed') {
+                
+                // Jika dari cloud bertanda hapus (hard remove atau soft delete)
+                if (change.type === 'removed' || cloudData.deleted) {
                   if (local) await db[tableName].delete(change.doc.id)
                   if (tableName === 'products') hasProductChanges = true
                   continue
                 }
+
                 if (tableName === 'members') {
                   if (!local || cloudData.updatedAt > local.updatedAt) {
                     const localDebt = local?.debt
@@ -223,6 +227,15 @@ export const syncRealtime = {
               try {
                 const cloudData = change.doc.data()
                 const local = await db[tableName]?.get(change.doc.id)
+                
+                if (cloudData.deleted) {
+                  if (local) await db[tableName].delete(change.doc.id)
+                  if (tableName === 'transactions' || tableName === 'debt_payments') {
+                    await recalculateMemberDebt(cloudData.memberId)
+                  }
+                  continue
+                }
+
                 if (!local || cloudData.updatedAt > local.updatedAt) {
                   await db[tableName].put({ ...cloudData, id: change.doc.id, synced: 1 })
                   if (tableName === 'transactions' || tableName === 'debt_payments') {
@@ -240,9 +253,14 @@ export const syncRealtime = {
       } catch (e) {}
     }
 
-    // Listener khusus transaksi piutang/unpaid
+    // 3. Listener khusus transaksi piutang/unpaid (Filter Delta updatedAt diterapkan)
     try {
-      const qUnpaid = query(collection(firestore, 'transactions'), where('remaining', '>', 0))
+      const lastSyncTime = await getLastSyncTime('transactions')
+      const qUnpaid = query(
+        collection(firestore, 'transactions'),
+        where('remaining', '>', 0),
+        where('updatedAt', '>', lastSyncTime)
+      )
       const unsubUnpaid = onSnapshot(qUnpaid, async (snapshot) => {
         if (isSyncing) return
         isPullingFromCloud = true
@@ -252,6 +270,13 @@ export const syncRealtime = {
             try {
               const cloudData = change.doc.data()
               const local = await db.transactions.get(change.doc.id)
+              
+              if (cloudData.deleted) {
+                if (local) await db.transactions.delete(change.doc.id)
+                await recalculateMemberDebt(cloudData.memberId)
+                continue
+              }
+
               if (!local || cloudData.updatedAt > local.updatedAt) {
                 await db.transactions.put({ ...cloudData, id: change.doc.id, synced: 1 })
                 await recalculateMemberDebt(cloudData.memberId)
@@ -292,7 +317,7 @@ export const syncRealtime = {
 
       if (intervalId) clearInterval(intervalId)
       
-      // Polling diubah dari 30 detik menjadi 5 menit (5 * 60 * 1000 ms)
+      // Polling 5 menit
       intervalId = setInterval(() => {
         if (syncStatus.isAutoSyncEnabled) this.pushLocalToCloud()
       }, 5 * 60 * 1000)

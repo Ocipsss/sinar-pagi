@@ -1,11 +1,11 @@
 // src/db/repositories/packageRepository.js
 import { db } from '../index.js'
-import { doc, deleteDoc } from 'firebase/firestore'
-import { firestore } from '../../services/firebase.js'
 
 export const packageRepository = {
   async getAll() {
-    return await db.product_packages.toArray()
+    const list = await db.product_packages.toArray()
+    // Hanya tampilkan paket yang belum di-soft-delete
+    return list.filter(item => !item.deleted)
   },
 
   async savePackage(packageData) {
@@ -13,6 +13,7 @@ export const packageRepository = {
     const newItem = { 
       ...packageData, 
       id, 
+      deleted: false,
       updatedAt: new Date().toISOString(),
       synced: 0 
     }
@@ -22,18 +23,13 @@ export const packageRepository = {
 
   async deletePackage(id) {
     const stringId = String(id)
+    const now = new Date().toISOString()
 
-    // 1. Hapus dari Dexie IndexedDB lokal
-    await db.product_packages.delete(stringId)
-
-    // 2. Hapus langsung dari Cloud Firestore agar tidak ditarik lagi oleh listener/onSnapshot
-    if (navigator.onLine && firestore) {
-      try {
-        const docRef = doc(firestore, 'product_packages', stringId)
-        await deleteDoc(docRef)
-      } catch (err) {
-        console.error('Gagal menghapus paket di Firestore:', err)
-      }
-    }
+    // Soft Delete di lokal agar syncService aman mendorong status hapus ke Firestore
+    await db.product_packages.update(stringId, { 
+      deleted: true, 
+      updatedAt: now, 
+      synced: 0 
+    })
   }
 }
