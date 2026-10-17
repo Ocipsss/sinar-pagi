@@ -156,11 +156,15 @@
         <form @submit.prevent="handleSaveService" class="space-y-3">
           <div>
             <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Untuk Kategori Produk *</label>
-            <select v-model="serviceForm.category" required class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold">
-              <option v-for="cat in categoryOptions" :key="cat.id" :value="cat.name">
-                {{ cat.name }}
-              </option>
-            </select>
+            <!-- Tombol Pemilih Modal -->
+            <button 
+              type="button" 
+              @click="showCategoryPickerModal = true"
+              class="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-bold uppercase text-left flex justify-between items-center focus:outline-none focus:ring-2 focus:ring-zinc-900"
+            >
+              <span class="truncate">{{ serviceForm.category || 'PILIH KATEGORI' }}</span>
+              <ChevronDown class="w-4 h-4 text-zinc-400 shrink-0" />
+            </button>
           </div>
           <div>
             <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Nama Layanan *</label>
@@ -232,12 +236,37 @@
         </form>
       </div>
     </div>
+
+    <!-- Modal Picker Pilih Kategori (Urut A-Z) -->
+    <div v-if="showCategoryPickerModal" class="fixed inset-0 z-[100] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="w-full max-w-sm bg-white rounded-[2rem] p-5 shadow-xl animate-in zoom-in-95 duration-200 max-h-[80vh] flex flex-col">
+        <div class="flex justify-between items-center mb-3">
+          <h3 class="font-black text-base text-zinc-900">Pilih Kategori Produk</h3>
+          <button type="button" @click="showCategoryPickerModal = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
+        </div>
+
+        <div class="space-y-1.5 overflow-auto flex-1 pr-1">
+          <div v-if="categoryOptions.length === 0" class="py-6 text-center text-xs text-zinc-400">
+            Belum ada kategori
+          </div>
+          <button 
+            v-for="cat in categoryOptions" 
+            :key="cat.id" 
+            type="button"
+            @click="serviceForm.category = cat.name; showCategoryPickerModal = false"
+            :class="['w-full p-3 rounded-xl font-bold text-xs text-left uppercase transition', serviceForm.category === cat.name ? 'bg-zinc-900 text-white shadow-md' : 'bg-zinc-50 hover:bg-zinc-100 text-zinc-800']"
+          >
+            {{ cat.name }}
+          </button>
+        </div>
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
-import { Plus, Pencil, Trash2, X } from 'lucide-vue-next'
+import { ref, computed, onMounted, onActivated } from 'vue'
+import { Plus, Pencil, Trash2, X, ChevronDown } from 'lucide-vue-next'
 import { useSettingsMenu } from '../composables/useSettingsMenu.js'
 import { formatRibuan, formatRp, toNumber } from '../utils/formatters/currency.js'
 
@@ -269,8 +298,9 @@ const filteredRokokProducts = computed(() => {
   )
 })
 
-// Modal State Jasa
+// Modal State Jasa & Picker Kategori
 const showServiceModal = ref(false)
+const showCategoryPickerModal = ref(false)
 const editingServiceId = ref(null)
 const serviceForm = ref({ name: '', price: 0, category: 'Mie' })
 
@@ -280,7 +310,8 @@ const editingPackageId = ref(null)
 const selectedRokokProduct = ref(null)
 const packageForm = ref({ name: '', qty_pcs: 1, price_sell: 0 })
 
-const openServiceModal = (s = null) => {
+const openServiceModal = async (s = null) => {
+  await loadData() // Ambil data kategori terbaru
   if (s) {
     editingServiceId.value = s.id
     serviceForm.value = { name: s.name, price: s.price, category: s.category || 'Mie' }
@@ -342,6 +373,11 @@ const handleDeletePackage = async (pkg) => {
 }
 
 onMounted(() => {
+  loadData()
+})
+
+// Sinkronkan data saat berpindah tab kembali ke halaman ini (KeepAlive)
+onActivated(() => {
   loadData()
 })
 </script>

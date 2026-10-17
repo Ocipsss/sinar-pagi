@@ -24,7 +24,6 @@ export function useSettingsMenu() {
       
       const packageCategories = ['rokok', 'permen']
       
-      // Filter & Urutkan: Kategori dulu A-Z, lalu Nama Barang A-Z
       rokokProducts.value = allProducts
         .filter(p => packageCategories.includes((p.category || '').toLowerCase()))
         .sort((a, b) => {
@@ -35,7 +34,11 @@ export function useSettingsMenu() {
 
       packages.value = allPackages
       services.value = allServices
-      categoryOptions.value = allCategories
+
+      // URUTKAN KATEGORI DARI A SEAMPAI Z
+      categoryOptions.value = allCategories.sort((a, b) => 
+        (a.name || '').localeCompare(b.name || '')
+      )
     } finally {
       loading.value = false
     }
