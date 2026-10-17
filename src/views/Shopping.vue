@@ -56,7 +56,7 @@
       </div>
       <div>
         <div class="font-black text-xs text-white">Rekomendasi Restock Otomatis</div>
-        <div class="text-[10px] text-zinc-400">Tambah produk dengan stok tipis (<= min stock)</div>
+        <div class="text-[10px] text-zinc-400">Tambah produk dengan stok tipis (&lt;= min stock)</div>
       </div>
     </div>
     <button 
@@ -209,7 +209,7 @@
 
         <div class="flex gap-2 pt-2">
           <button type="button" @click="showPayModal = false" class="flex-1 py-3 bg-zinc-100 font-bold text-xs rounded-xl">Batal</button>
-          <button type="submit" class="flex-1 py-3 bg-zinc-900 text-white font-bold text-xs rounded-xl shadow-md">Simpan & Potong Kas</button>
+          <button type="submit" class="flex-1 py-3 bg-zinc-900 text-white font-bold text-xs rounded-xl shadow-md">Simpan &amp; Potong Kas</button>
         </div>
       </form>
     </div>
@@ -330,7 +330,7 @@
             <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Catatan Tambahan</label>
             <input 
               v-model="form.notes" 
-              placeholder="Misal: Beli rasa cokelat & keju" 
+              placeholder="Misal: Beli rasa cokelat &amp; keju" 
               class="w-full px-4 py-2.5 bg-zinc-50 border rounded-xl text-xs font-bold" 
             />
           </div>
@@ -347,14 +347,13 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { onMounted } from 'vue'
 import { Plus, Search, Trash2, X, Check, ShoppingBag, Sparkles, Share2 } from 'lucide-vue-next'
 import { useShopping } from '../composables/useShopping.js'
 import { formatRibuan, formatRp, toNumber } from '../utils/formatters/currency.js'
 import { toast } from 'vue-sonner'
 
 const {
-  products,
   categories,
   searchQuery,
   activeFilter,
@@ -365,6 +364,8 @@ const {
   payForm,
   isCustomItem,
   form,
+  productSearch,
+  filteredMasterProducts,
   totalItems,
   boughtItemsCount,
   estimatedTotalCost,
@@ -381,21 +382,11 @@ const {
   exportShoppingListText
 } = useShopping()
 
-const productSearch = ref('')
-
 const filterOptions = [
   { label: 'Semua', value: 'ALL' },
   { label: 'Belum', value: 'PENDING' },
   { label: 'Selesai', value: 'BOUGHT' }
 ]
-
-const filteredMasterProducts = computed(() => {
-  const q = productSearch.value.toLowerCase().trim()
-  if (!q) return products.value.slice(0, 8)
-  return products.value
-    .filter(p => p.name.toLowerCase().includes(q) || (p.code || '').toLowerCase().includes(q))
-    .slice(0, 10)
-})
 
 const triggerAutoRestock = async () => {
   const count = await handleAutoRestock()
@@ -438,4 +429,3 @@ onMounted(() => {
   loadData()
 })
 </script>
-

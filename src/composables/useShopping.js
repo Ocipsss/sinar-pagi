@@ -1,5 +1,5 @@
 // src/composables/useShopping.js
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { shoppingService } from '../services/shoppingService.js'
 import { productRepo } from '../db/repositories/productRepository.js'
 import { categoryRepo } from '../db/repositories/categoryRepository.js'
@@ -12,18 +12,41 @@ export function useShopping() {
   const activeFilter = ref('ALL') // ALL, PENDING, BOUGHT
   const loading = ref(false)
 
-  // State Modal Tambah Belanjaan
+  // State Modal Tambah Belanjaan & Searchbar Master Produk
   const showAddModal = ref(false)
   const isCustomItem = ref(false)
   const selectedProduct = ref(null)
+  const productSearch = ref('')
+
   const form = ref({
     productId: null,
     name: '',
     category: 'Umum',
-    qty: 1,
+    qty: 0,
     unit: 'pcs',
     estimatedPrice: 0,
     notes: ''
+  })
+
+  // Watcher: Hitung otomatis estimasi modal berdasarkan input qty & modal per pcs
+  watch(
+    () => form.value.qty,
+    (newQty) => {
+      if (selectedProduct.value) {
+        const qtyNum = Number(newQty) || 0
+        const unitModal = selectedProduct.value.price_modal || 0
+        form.value.estimatedPrice = Math.round(unitModal * qtyNum)
+      }
+    }
+  )
+
+  // Filter Master Produk berdasarkan query di modal
+  const filteredMasterProducts = computed(() => {
+    const q = productSearch.value.toLowerCase().trim()
+    if (!q) return []
+    return products.value
+      .filter(p => p.name.toLowerCase().includes(q) || (p.code || '').toLowerCase().includes(q))
+      .slice(0, 10)
   })
 
   // State Modal Konfirmasi Bayar Kulakan
@@ -75,7 +98,7 @@ export function useShopping() {
       items.value = shoppingData
       products.value = productData
       categories.value = categoryData
-    } finally { // Sudah diperbaiki dari "fontally" ke "finally"
+    } finally {
       loading.value = false
     }
   }
@@ -116,11 +139,12 @@ export function useShopping() {
   const openModal = () => {
     isCustomItem.value = false
     selectedProduct.value = null
+    productSearch.value = '' // Reset searchbar saat modal dibuka
     form.value = {
       productId: null,
       name: '',
       category: categories.value[0]?.name || 'Umum',
-      qty: 1,
+      qty: 0,
       unit: 'pcs',
       estimatedPrice: 0,
       notes: ''
@@ -132,16 +156,18 @@ export function useShopping() {
     selectedProduct.value = product
     form.value.productId = product.id
     form.value.name = product.name
-    form.value.category = product.category || 'Umum'
-    form.value.unit = product.unit || 'pcs'
-    form.value.qty = product.packQty || 10
-    form.value.estimatedPrice = product.packPrice || (product.price_modal * (product.packQty || 10)) || 0
+    form.value.category = product.category
+    form.value.unit = product.unit
+    form.value.qty = 0 // Default awal jumlah belanjaan ke 0
+    form.value.estimatedPrice = 0 // Default awal estimasi modal ke 0
+    productSearch.value = ''
   }
 
   const saveItem = async () => {
     if (!form.value.name.trim()) return
 
     await shoppingService.addShoppingItem(form.value)
+    productSearch.value = '' // Reset searchbar setelah berhasil simpan
     showAddModal.value = false
     await loadData()
   }
@@ -195,6 +221,8 @@ export function useShopping() {
     payForm,
     isCustomItem,
     selectedProduct,
+    productSearch,
+    filteredMasterProducts,
     form,
     totalItems,
     boughtItemsCount,
