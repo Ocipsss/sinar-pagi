@@ -1,3 +1,4 @@
+<!-- src/views/Categories.vue -->
 <template>
   <div class="flex-1 overflow-auto p-4 pb-24">
     <!-- Header ringkas -->
@@ -132,9 +133,9 @@
             <input 
               v-model="formName" 
               ref="inputRef" 
-              :placeholder="activeTab === 'category' ? 'Contoh: Minuman, Sembako...' : 'Contoh: pcs, bungkus, renteng...'" 
+              :placeholder="activeTab === 'category' ? 'CONTOH: MINUMAN, SEMBAKO...' : 'CONTOH: PCS, BUNGKUS, RENTENG...'" 
               required 
-              class="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900"
+              class="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 uppercase"
             />
           </div>
 
@@ -196,6 +197,8 @@ const openModal = (item = null) => {
 
 const handleSubmit = async () => {
   if (!formName.value.trim()) return
+
+  formName.value = formName.value.toUpperCase().trim()
 
   if (activeTab.value === 'category') {
     await saveCategory()

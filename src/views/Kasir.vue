@@ -212,18 +212,17 @@
         <X class="w-4 h-4"/>
       </button>
     </div>
-
-    <div v-if="(selectedProductForOption.category || '').toLowerCase() === 'rokok'" class="space-y-2 overflow-auto flex-1 pr-1">
-      <button 
-        v-for="pkg in getProductPackages(selectedProductForOption.id)" 
-        :key="pkg.id"
-        @click="confirmAddToCart(selectedProductForOption, { packageInfo: pkg, price_sell: pkg.price_sell, customName: `${pkg.name} ${selectedProductForOption.name}` })"
-        class="w-full p-3.5 bg-zinc-50 border border-zinc-200 rounded-xl font-bold text-sm text-left flex justify-between items-center hover:bg-zinc-100 transition"
-      >
-        <span>{{ pkg.name }}</span>
-        <span class="font-black">Rp {{ formatRibuan(pkg.price_sell) }}</span>
-      </button>
-    </div>
+<div v-if="['rokok', 'permen'].includes((selectedProductForOption.category || '').toLowerCase())" class="space-y-2 overflow-auto flex-1 pr-1">
+  <button 
+    v-for="pkg in getProductPackages(selectedProductForOption.id)" 
+    :key="pkg.id"
+    @click="confirmAddToCart(selectedProductForOption, { packageInfo: pkg, price_sell: pkg.price_sell, customName: `${pkg.name} ${selectedProductForOption.name}` })"
+    class="w-full p-3.5 bg-zinc-50 border border-zinc-200 rounded-xl font-bold text-sm text-left flex justify-between items-center hover:bg-zinc-100 transition"
+  >
+    <span>{{ pkg.name }}</span>
+    <span class="font-black">Rp {{ formatRibuan(pkg.price_sell) }}</span>
+  </button>
+</div>
 
     <div v-else class="space-y-2 overflow-auto flex-1 pr-1">
       <button 

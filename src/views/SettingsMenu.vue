@@ -173,7 +173,12 @@
         <form @submit.prevent="handleSavePackage" class="space-y-3">
           <div>
             <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Nama Varian *</label>
-            <input v-model="packageForm.name" required placeholder="Contoh: 1 Batang, 3 Biji, 1 Renteng" class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold"/>
+            <input 
+              v-model="packageForm.name" 
+              required 
+              placeholder="CONTOH: 1 BATANG, 3 BIJI, 1 RENTENG" 
+              class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold uppercase"
+            />
           </div>
           <div>
             <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Jumlah Pcs/Batang Dipotong *</label>
@@ -267,7 +272,7 @@ const handleSavePackage = async () => {
   if (!selectedRokokProduct.value) return
   await savePackage({
     productId: selectedRokokProduct.value.id,
-    name: packageForm.value.name,
+    name: (packageForm.value.name || '').toUpperCase().trim(),
     qty_pcs: packageForm.value.qty_pcs,
     price_sell: packageForm.value.price_sell
   })

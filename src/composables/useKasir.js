@@ -95,18 +95,19 @@ export function useKasir() {
   }
 
   const handleSelectProduct = (product) => {
-    const pCat = (product.category || '').toLowerCase()
-    const isRokok = pCat === 'rokok'
-    const hasPackages = getProductPackages(product.id).length > 0
-    const hasConfiguredServices = servicesList.value.some(s => (s.category || '').toLowerCase() === pCat)
-    if ((isRokok && hasPackages) || (!isRokok && hasConfiguredServices)) {
-      selectedProductForOption.value = product
-    } else {
-      store.addToCart(product)
-      q.value = ''
-      showSearch.value = false
-    }
+  const pCat = (product.category || '').toLowerCase()
+  const isPackageCategory = ['rokok', 'permen'].includes(pCat)
+  const hasPackages = getProductPackages(product.id).length > 0
+  const hasConfiguredServices = servicesList.value.some(s => (s.category || '').toLowerCase() === pCat)
+
+  if ((isPackageCategory && hasPackages) || (!isPackageCategory && hasConfiguredServices)) {
+    selectedProductForOption.value = product
+  } else {
+    store.addToCart(product)
+    q.value = ''
+    showSearch.value = false
   }
+}
 
   const confirmAddToCart = (product, options) => {
     const targetPrice = (options.price_sell !== undefined) ? options.price_sell : product.price_sell
