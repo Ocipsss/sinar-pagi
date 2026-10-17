@@ -464,6 +464,7 @@ onMounted(() => {
 })
 
 onActivated(() => {
+  load()
   focusSearchInput()
 })
 
