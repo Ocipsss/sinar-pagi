@@ -6207,13 +6207,37 @@ onActivated(() => {
 
     <!-- TAB 2: HARGA PAKET (ROKOK & PERMEN) -->
     <div v-if="activeTab === 'rokok'" class="space-y-4">
-      <div v-if="rokokProducts.length === 0" class="py-12 text-center text-zinc-400 text-xs bg-white rounded-2xl border border-zinc-100">
-        Belum ada produk dengan kategori "Rokok" atau "Permen"
+      <!-- Sub-Filter Kategori Paket -->
+      <div class="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+        <button 
+          @click="selectedPackageCat = 'ALL'"
+          :class="[
+            'px-3.5 py-1.5 rounded-xl text-xs font-bold shrink-0 transition',
+            selectedPackageCat === 'ALL' ? 'bg-zinc-900 text-white shadow-sm' : 'bg-white text-zinc-600 border border-zinc-200'
+          ]"
+        >
+          Semua ({{ rokokProducts.length }})
+        </button>
+        <button 
+          v-for="cat in availablePackageCategories" 
+          :key="cat"
+          @click="selectedPackageCat = cat"
+          :class="[
+            'px-3.5 py-1.5 rounded-xl text-xs font-bold shrink-0 transition uppercase',
+            selectedPackageCat === cat ? 'bg-zinc-900 text-white shadow-sm' : 'bg-white text-zinc-600 border border-zinc-200'
+          ]"
+        >
+          {{ cat }}
+        </button>
+      </div>
+
+      <div v-if="filteredRokokProducts.length === 0" class="py-12 text-center text-zinc-400 text-xs bg-white rounded-2xl border border-zinc-100">
+        Belum ada produk dengan kategori ini
       </div>
 
       <div v-else class="space-y-3">
         <div 
-          v-for="p in rokokProducts" 
+          v-for="p in filteredRokokProducts" 
           :key="p.id" 
           class="p-4 bg-white rounded-2xl border border-zinc-100 shadow-sm space-y-3"
         >
@@ -6245,9 +6269,12 @@ onActivated(() => {
                 <span class="font-bold text-zinc-800">{{ pkg.name }}</span>
                 <span class="text-zinc-400 ml-2">({{ pkg.qty_pcs }} pcs/batang)</span>
               </div>
-              <div class="flex items-center gap-2">
-                <span class="font-black text-zinc-900">Rp {{ formatRibuan(pkg.price_sell) }}</span>
-                <button @click="handleDeletePackage(pkg)" class="p-1 text-red-500 hover:bg-red-100 rounded-lg">
+              <div class="flex items-center gap-1.5">
+                <span class="font-black text-zinc-900 mr-1">Rp {{ formatRibuan(pkg.price_sell) }}</span>
+                <button @click="openPackageModal(p, pkg)" title="Edit Paket" class="p-1 text-zinc-600 hover:bg-zinc-200 rounded-lg transition">
+                  <Pencil class="w-3.5 h-3.5"/>
+                </button>
+                <button @click="handleDeletePackage(pkg)" title="Hapus Paket" class="p-1 text-red-500 hover:bg-red-100 rounded-lg transition">
                   <Trash2 class="w-3.5 h-3.5"/>
                 </button>
               </div>
@@ -6303,7 +6330,7 @@ onActivated(() => {
       <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl space-y-4">
         <div class="flex justify-between items-center">
           <div>
-            <h2 class="font-black text-base">Tambah Paket Eceran</h2>
+            <h2 class="font-black text-base">{{ editingPackageId ? 'Edit Paket Eceran' : 'Tambah Paket Eceran' }}</h2>
             <p class="text-xs text-zinc-400">{{ selectedRokokProduct?.name }}</p>
           </div>
           <button @click="showPackageModal = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
@@ -6337,7 +6364,9 @@ onActivated(() => {
           </div>
           <div class="flex gap-2 pt-2">
             <button type="button" @click="showPackageModal = false" class="flex-1 py-3 bg-zinc-100 font-bold text-xs rounded-xl">Batal</button>
-            <button type="submit" class="flex-1 py-3 bg-zinc-900 text-white font-bold text-xs rounded-xl shadow-md">Simpan Paket</button>
+            <button type="submit" class="flex-1 py-3 bg-zinc-900 text-white font-bold text-xs rounded-xl shadow-md">
+              {{ editingPackageId ? 'Simpan Perubahan' : 'Simpan Paket' }}
+            </button>
           </div>
         </form>
       </div>
@@ -6346,12 +6375,14 @@ onActivated(() => {
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { Plus, Pencil, Trash2, X } from 'lucide-vue-next'
 import { useSettingsMenu } from '../composables/useSettingsMenu.js'
 import { formatRibuan, formatRp, toNumber } from '../utils/formatters/currency.js'
 
 const activeTab = ref('seduh')
+const selectedPackageCat = ref('ALL')
+
 const {
   rokokProducts,
   services,
@@ -6364,6 +6395,19 @@ const {
   deleteService
 } = useSettingsMenu()
 
+// Filter Kategori Paket
+const availablePackageCategories = computed(() => {
+  const cats = new Set(rokokProducts.value.map(p => (p.category || 'UMUM').toUpperCase()))
+  return Array.from(cats)
+})
+
+const filteredRokokProducts = computed(() => {
+  if (selectedPackageCat.value === 'ALL') return rokokProducts.value
+  return rokokProducts.value.filter(
+    p => (p.category || 'UMUM').toUpperCase() === selectedPackageCat.value
+  )
+})
+
 // Modal State Jasa
 const showServiceModal = ref(false)
 const editingServiceId = ref(null)
@@ -6371,6 +6415,7 @@ const serviceForm = ref({ name: '', price: 0, category: 'Mie' })
 
 // Modal State Paket Eceran
 const showPackageModal = ref(false)
+const editingPackageId = ref(null)
 const selectedRokokProduct = ref(null)
 const packageForm = ref({ name: '', qty_pcs: 1, price_sell: 0 })
 
@@ -6390,7 +6435,7 @@ const handleSaveService = async () => {
     id: editingServiceId.value,
     name: serviceForm.value.name,
     price: serviceForm.value.price,
-    category: serviceForm.category
+    category: serviceForm.value.category
   })
   showServiceModal.value = false
 }
@@ -6401,15 +6446,26 @@ const handleDeleteService = async (s) => {
   }
 }
 
-const openPackageModal = (p) => {
+const openPackageModal = (p, pkg = null) => {
   selectedRokokProduct.value = p
-  packageForm.value = { name: '', qty_pcs: 1, price_sell: 0 }
+  if (pkg) {
+    editingPackageId.value = pkg.id
+    packageForm.value = {
+      name: pkg.name,
+      qty_pcs: pkg.qty_pcs,
+      price_sell: pkg.price_sell
+    }
+  } else {
+    editingPackageId.value = null
+    packageForm.value = { name: '', qty_pcs: 1, price_sell: 0 }
+  }
   showPackageModal.value = true
 }
 
 const handleSavePackage = async () => {
   if (!selectedRokokProduct.value) return
   await savePackage({
+    id: editingPackageId.value || undefined,
     productId: selectedRokokProduct.value.id,
     name: (packageForm.value.name || '').toUpperCase().trim(),
     qty_pcs: packageForm.value.qty_pcs,
@@ -6827,11 +6883,13 @@ export function useProductForm() {
   const { value: minStock } = useField('minStock')
 
   const loadCategories = async () => {
-    categories.value = await categoryRepo.getAll()
+    const data = await categoryRepo.getAll()
+    categories.value = data.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
   }
 
   const loadUnits = async () => {
-    units.value = await unitRepo.getAll()
+    const data = await unitRepo.getAll()
+    units.value = data.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
   }
 
   return {
@@ -7704,7 +7762,7 @@ import { serviceRepository } from '../db/repositories/serviceRepository.js'
 import { categoryRepo } from '../db/repositories/categoryRepository.js'
 
 export function useSettingsMenu() {
-  const rokokProducts = ref([]) // Menampung produk Rokok & Permen
+  const rokokProducts = ref([])
   const packages = ref([])
   const services = ref([])
   const categoryOptions = ref([])
@@ -7720,11 +7778,16 @@ export function useSettingsMenu() {
         categoryRepo.getAll()
       ])
       
-      // Filter produk dengan kategori Rokok atau Permen
       const packageCategories = ['rokok', 'permen']
-      rokokProducts.value = allProducts.filter(p => 
-        packageCategories.includes((p.category || '').toLowerCase())
-      )
+      
+      // Filter & Urutkan: Kategori dulu A-Z, lalu Nama Barang A-Z
+      rokokProducts.value = allProducts
+        .filter(p => packageCategories.includes((p.category || '').toLowerCase()))
+        .sort((a, b) => {
+          const catCompare = (a.category || '').localeCompare(b.category || '')
+          if (catCompare !== 0) return catCompare
+          return (a.name || '').localeCompare(b.name || '')
+        })
 
       packages.value = allPackages
       services.value = allServices
@@ -8562,6 +8625,7 @@ export const productSchema = z.object({
 })
 
 ===== src/components/product/ProductForm.vue =====
+<!-- src/components/product/ProductForm.vue -->
 <template>
 <form @submit.prevent="onSubmit" @keydown="handleFormKeydown" class="bg-white p-5 rounded-3xl border flex flex-col gap-4 shadow-sm">
   <!-- Nama Produk -->
@@ -8586,26 +8650,32 @@ export const productSchema = z.object({
   </div>
   <div id="reader" class="w-full rounded-xl overflow-hidden"></div>
 
-  <!-- Kategori & Nama Satuan Utama -->
+  <!-- Pilihan Kategori & Satuan Custom Modal -->
   <div class="grid grid-cols-2 gap-2">
+    <!-- Tombol Pilih Kategori -->
     <div class="flex flex-col gap-1">
       <label class="text-[10px] text-zinc-500 font-bold uppercase">Kategori</label>
-      <select v-model="category" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold uppercase">
-        <option value="UMUM">UMUM</option>
-        <option v-for="cat in categories" :key="cat.id" :value="cat.name.toUpperCase()">
-          {{ cat.name.toUpperCase() }}
-        </option>
-      </select>
+      <button 
+        type="button" 
+        @click="showCategoryModal = true"
+        class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold uppercase text-left flex justify-between items-center"
+      >
+        <span class="truncate">{{ category || 'UMUM' }}</span>
+        <ChevronDown class="w-4 h-4 text-zinc-400 shrink-0" />
+      </button>
     </div>
 
+    <!-- Tombol Pilih Satuan -->
     <div class="flex flex-col gap-1">
       <label class="text-[10px] text-zinc-500 font-bold uppercase">Nama Satuan *</label>
-      <select v-model="unit" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold uppercase">
-        <option value="" disabled>-- PILIH SATUAN --</option>
-        <option v-for="u in units" :key="u.id" :value="u.name.toUpperCase()">
-          {{ u.name.toUpperCase() }}
-        </option>
-      </select>
+      <button 
+        type="button" 
+        @click="showUnitModal = true"
+        :class="['w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold uppercase text-left flex justify-between items-center', !unit && 'text-zinc-400']"
+      >
+        <span class="truncate">{{ unit || '-- PILIH SATUAN --' }}</span>
+        <ChevronDown class="w-4 h-4 text-zinc-400 shrink-0" />
+      </button>
       <span v-if="errors.unit" class="text-[10px] text-red-500">{{ errors.unit }}</span>
     </div>
   </div>
@@ -8628,12 +8698,14 @@ export const productSchema = z.object({
     <div v-if="toNumber(packPrice) > 0" class="flex flex-col gap-2">
       <div class="flex flex-col gap-1">
         <label class="text-[10px] text-zinc-500 font-bold uppercase">Nama Satuan Grosir</label>
-        <select v-model="purchasePackName" class="px-3 py-2.5 bg-white border rounded-xl text-sm font-bold uppercase">
-          <option value="">-- PILIH SATUAN GROSIR --</option>
-          <option v-for="u in units" :key="u.id" :value="u.name.toUpperCase()">
-            {{ u.name.toUpperCase() }}
-          </option>
-        </select>
+        <button 
+          type="button" 
+          @click="showPackUnitModal = true"
+          class="px-3 py-2.5 bg-white border rounded-xl text-sm font-bold uppercase text-left flex justify-between items-center"
+        >
+          <span class="truncate">{{ purchasePackName || '-- PILIH SATUAN GROSIR --' }}</span>
+          <ChevronDown class="w-4 h-4 text-zinc-400 shrink-0" />
+        </button>
       </div>
 
       <div class="text-[11px] text-blue-600 bg-white p-2.5 rounded-xl border font-semibold uppercase">
@@ -8672,11 +8744,93 @@ export const productSchema = z.object({
     {{ isSubmitting ? 'Menyimpan...' : (initialData ? 'Update Barang' : 'Simpan Barang') }}
   </button>
 </form>
+
+<!-- MODAL PILIH KATEGORI -->
+<div v-if="showCategoryModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+  <div class="w-full max-w-sm bg-white rounded-[2rem] p-5 shadow-xl animate-in zoom-in-95 fade-in duration-200 max-h-[80vh] flex flex-col">
+    <div class="flex justify-between items-center mb-3">
+      <h3 class="font-black text-base text-zinc-900">Pilih Kategori</h3>
+      <button type="button" @click="showCategoryModal = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
+    </div>
+
+    <div class="space-y-1.5 overflow-auto flex-1 pr-1">
+      <button 
+        type="button" 
+        @click="category = 'UMUM'; showCategoryModal = false"
+        :class="['w-full p-3 rounded-xl font-bold text-xs text-left uppercase transition', category === 'UMUM' ? 'bg-zinc-900 text-white' : 'bg-zinc-50 hover:bg-zinc-100 text-zinc-800']"
+      >
+        UMUM
+      </button>
+
+      <button 
+        v-for="cat in categories" 
+        :key="cat.id" 
+        type="button"
+        @click="category = cat.name.toUpperCase(); showCategoryModal = false"
+        :class="['w-full p-3 rounded-xl font-bold text-xs text-left uppercase transition', category === cat.name.toUpperCase() ? 'bg-zinc-900 text-white' : 'bg-zinc-50 hover:bg-zinc-100 text-zinc-800']"
+      >
+        {{ cat.name }}
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL PILIH SATUAN UTAMA -->
+<div v-if="showUnitModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+  <div class="w-full max-w-sm bg-white rounded-[2rem] p-5 shadow-xl animate-in zoom-in-95 fade-in duration-200 max-h-[80vh] flex flex-col">
+    <div class="flex justify-between items-center mb-3">
+      <h3 class="font-black text-base text-zinc-900">Pilih Satuan Utama</h3>
+      <button type="button" @click="showUnitModal = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
+    </div>
+
+    <div class="space-y-1.5 overflow-auto flex-1 pr-1">
+      <button 
+        v-for="u in units" 
+        :key="u.id" 
+        type="button"
+        @click="unit = u.name.toUpperCase(); showUnitModal = false"
+        :class="['w-full p-3 rounded-xl font-bold text-xs text-left uppercase transition', unit === u.name.toUpperCase() ? 'bg-zinc-900 text-white' : 'bg-zinc-50 hover:bg-zinc-100 text-zinc-800']"
+      >
+        {{ u.name }}
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL PILIH SATUAN GROSIR -->
+<div v-if="showPackUnitModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+  <div class="w-full max-w-sm bg-white rounded-[2rem] p-5 shadow-xl animate-in zoom-in-95 fade-in duration-200 max-h-[80vh] flex flex-col">
+    <div class="flex justify-between items-center mb-3">
+      <h3 class="font-black text-base text-zinc-900">Pilih Satuan Grosir</h3>
+      <button type="button" @click="showPackUnitModal = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
+    </div>
+
+    <div class="space-y-1.5 overflow-auto flex-1 pr-1">
+      <button 
+        type="button" 
+        @click="purchasePackName = ''; showPackUnitModal = false"
+        class="w-full p-3 bg-zinc-50 hover:bg-zinc-100 rounded-xl font-bold text-xs text-left text-red-500 uppercase transition"
+      >
+        -- KOSONGKAN --
+      </button>
+
+      <button 
+        v-for="u in units" 
+        :key="u.id" 
+        type="button"
+        @click="purchasePackName = u.name.toUpperCase(); showPackUnitModal = false"
+        :class="['w-full p-3 rounded-xl font-bold text-xs text-left uppercase transition', purchasePackName === u.name.toUpperCase() ? 'bg-zinc-900 text-white' : 'bg-zinc-50 hover:bg-zinc-100 text-zinc-800']"
+      >
+        {{ u.name }}
+      </button>
+    </div>
+  </div>
+</div>
 </template>
 
 <script setup>
-import { computed, watch, onMounted, onActivated } from 'vue'
-import { ScanLine } from 'lucide-vue-next'
+import { ref, computed, watch, onMounted, onActivated } from 'vue'
+import { ScanLine, ChevronDown, X } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 import { useProductForm } from '../../composables/useProductForm.js'
 import { useProductScanner } from '../../composables/useProductScanner.js'
@@ -8694,6 +8848,10 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['success'])
+
+const showCategoryModal = ref(false)
+const showUnitModal = ref(false)
+const showPackUnitModal = ref(false)
 
 const { 
   name, code, category, unit, purchasePackName, packPrice, packQty, 
@@ -8713,7 +8871,6 @@ let lastKeyTime = 0
 let fastKeyBurstCount = 0
 
 const handleFormKeydown = (e) => {
-  // Jika fokus di input barcode, biarkan scanner berfungsi normal
   const isBarcodeInput = e.target && e.target.id === 'product-barcode-input'
   if (isBarcodeInput) return
 
@@ -8727,12 +8884,10 @@ const handleFormKeydown = (e) => {
     fastKeyBurstCount = 0
   }
 
-  // Jika terdeteksi input cepat khas scanner pada input selain barcode
   if (fastKeyBurstCount >= 1) {
     e.preventDefault()
     e.stopPropagation()
 
-    // Hapus karakter pertama yang terlanjur ketik sebelum terdeteksi
     if (fastKeyBurstCount === 1 && e.target && 'value' in e.target) {
       const val = e.target.value
       if (val.length > 0) {
@@ -8770,7 +8925,7 @@ const checkExistingBarcode = async (barcodeVal) => {
   if (existingProduct && existingProduct.id !== props.initialData?.id) {
     const productName = existingProduct.name || 'Tanpa Nama'
     toast.error(`Barcode "${cleanCode}" sudah digunakan oleh: ${productName}`)
-    code.value = '' // Reset input barcode jika duplikat
+    code.value = ''
     return true
   }
   return false
