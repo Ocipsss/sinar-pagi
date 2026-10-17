@@ -1,3 +1,4 @@
+<!-- src/views/Settings.vue -->
 <template>
 <div class="flex-1 overflow-auto p-4 pb-28 space-y-4">
   <!-- Header Title -->
@@ -119,14 +120,30 @@
     </div>
   </div>
 
-  <!-- Section 4: Backup & Restore Data Lokal -->
+  <!-- Section 4: Backup & Restore Data Lokal & Cloud -->
   <div class="bg-white p-5 rounded-3xl border border-zinc-100 shadow-sm space-y-4">
     <div class="flex items-center gap-2 border-b border-zinc-50 pb-3">
       <Database class="w-5 h-5 text-zinc-900" />
       <span class="font-black text-sm text-zinc-900">Cadangan & Pemulihan Data</span>
     </div>
 
-    <p class="text-xs text-zinc-400">Unduh cadangan data lokal atau impor file JSON untuk mengembalikan data.</p>
+    <p class="text-xs text-zinc-400">Unduh cadangan data lokal, restor dari Firebase Cloud, atau impor file JSON.</p>
+
+    <!-- Tombol Restor Cloud -->
+    <button 
+      type="button"
+      @click="restoreFromCloud" 
+      :disabled="loading || !isOnline"
+      :class="[
+        'w-full py-3 font-bold text-xs rounded-xl shadow-md transition active:scale-95 flex items-center justify-center gap-2',
+        isOnline 
+          ? 'bg-blue-600 hover:bg-blue-700 text-white' 
+          : 'bg-zinc-100 text-zinc-400 border border-zinc-200 cursor-not-allowed'
+      ]"
+    >
+      <Cloud class="w-4 h-4" />
+      <span>Restor Cadangan Terbaru dari Firebase Cloud</span>
+    </button>
 
     <div class="grid grid-cols-2 gap-2">
       <button 
@@ -148,7 +165,7 @@
         :title="!isOnline ? 'Fitur impor backup membutuhkan koneksi internet' : ''"
       >
         <Upload class="w-4 h-4" />
-        <span>Impor Backup</span>
+        <span>Impor File JSON</span>
         <input type="file" accept=".json" :disabled="!isOnline" @change="importBackup" class="hidden" />
       </label>
     </div>
@@ -207,6 +224,7 @@ const {
   saveSettings, 
   exportBackup, 
   importBackup, 
+  restoreFromCloud, 
   resetTransactionsData, 
   convertDataToUppercase 
 } = useSettings()

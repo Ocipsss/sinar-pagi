@@ -1,8 +1,11 @@
 // src/services/backupService.js
 import { db } from '../db/index.js'
 import dayjs from 'dayjs'
+import { storage } from './firebase.js'
+import { ref as storageRef, uploadString, getBytes } from 'firebase/storage'
 
 export const backupService = {
+  // 1. Export Manual ke File JSON Lokal
   async exportBackup() {
     try {
       const backupData = {}
@@ -32,6 +35,114 @@ export const backupService = {
     }
   },
 
+  // 2. Auto Backup Silent ke Firebase Storage (Tanpa Download File)
+  async uploadBackupToCloud() {
+    if (!navigator.onLine) return
+
+    try {
+      const backupData = {}
+      for (const table of db.tables) {
+        backupData[table.name] = await table.toArray()
+      }
+
+      const jsonString = JSON.stringify(backupData)
+      const fileName = `backup_${dayjs().format('YYYYMMDD_HHmmss')}.json`
+      
+      const fileRef = storageRef(storage, `backups/${fileName}`)
+      const latestRef = storageRef(storage, `backups/latest_backup.json`)
+
+      await uploadString(fileRef, jsonString, 'raw', { contentType: 'application/json' })
+      await uploadString(latestRef, jsonString, 'raw', { contentType: 'application/json' })
+
+      return true
+    } catch (error) {
+      console.error('[AutoBackup] Cloud upload failed:', error)
+      throw error
+    }
+  },
+
+  // 3. Restor Data dari Firebase Cloud Storage
+  async restoreFromCloud() {
+    if (!navigator.onLine) {
+      throw new Error('Membutuhkan koneksi internet untuk restor dari cloud.')
+    }
+
+    try {
+      const latestRef = storageRef(storage, `backups/latest_backup.json`)
+      const bytes = await getBytes(latestRef)
+      const jsonText = new TextDecoder().decode(bytes)
+      const rawParsed = JSON.parse(jsonText)
+      const importedData = rawParsed.database || rawParsed
+
+      await this.processImportData(importedData)
+      return true
+    } catch (error) {
+      console.error('Gagal restor dari Cloud:', error)
+      throw new Error('Gagal mengambil cadangan terbaru dari Firebase Storage')
+    }
+  },
+
+  // Helper Transaksi Impor Data ke Dexie DB
+  async processImportData(importedData) {
+    const tableNames = db.tables.map(t => t.name)
+    await db.transaction('rw', tableNames, async () => {
+      for (const table of db.tables) {
+        await table.clear()
+      }
+
+      for (const tableName of Object.keys(importedData)) {
+        if (tableName !== 'transactions' && db[tableName]) {
+          const rows = importedData[tableName]
+          if (Array.isArray(rows) && rows.length > 0) {
+            const preparedRows = rows.map(item => ({
+              ...item,
+              synced: item.synced ?? 0
+            }))
+            await db[tableName].bulkPut(preparedRows)
+          }
+        }
+      }
+
+      if (importedData.transactions && Array.isArray(importedData.transactions)) {
+        const transactionsToPut = []
+        const itemsToPut = []
+
+        importedData.transactions.forEach(trx => {
+          const { items, ...trxData } = trx
+
+          transactionsToPut.push({
+            ...trxData,
+            synced: trxData.synced ?? 0
+          })
+
+          if (items && Array.isArray(items)) {
+            items.forEach((item, index) => {
+              itemsToPut.push({
+                id: item.id || `${trx.id}_item_${index}`,
+                transactionId: trx.id,
+                productId: item.productId || item.cartId || item.id || null,
+                serviceId: item.serviceId || (item.extraCharge ? item.id : null),
+                name: item.name || item.productName || 'Barang',
+                qty: Number(item.qty || item.cartQty || 1),
+                price: Number(item.price || item.price_sell || 0),
+                subtotal: Number(item.subtotal || (item.price_sell * (item.cartQty || item.qty))) || 0,
+                updatedAt: item.updatedAt || trx.date || new Date().toISOString(),
+                synced: 0
+              })
+            })
+          }
+        })
+
+        if (transactionsToPut.length > 0) {
+          await db.transactions.bulkPut(transactionsToPut)
+        }
+        if (itemsToPut.length > 0) {
+          await db.transaction_items.bulkPut(itemsToPut)
+        }
+      }
+    })
+  },
+
   async importBackup(file) {
     if (!file) return false
 
@@ -41,65 +152,7 @@ export const backupService = {
         try {
           const rawParsed = JSON.parse(e.target.result)
           const importedData = rawParsed.database || rawParsed
-
-          const tableNames = db.tables.map(t => t.name)
-          await db.transaction('rw', tableNames, async () => {
-            for (const table of db.tables) {
-              await table.clear()
-            }
-
-            for (const tableName of Object.keys(importedData)) {
-              if (tableName !== 'transactions' && db[tableName]) {
-                const rows = importedData[tableName]
-                if (Array.isArray(rows) && rows.length > 0) {
-                  const preparedRows = rows.map(item => ({
-                    ...item,
-                    synced: item.synced ?? 0
-                  }))
-                  await db[tableName].bulkPut(preparedRows)
-                }
-              }
-            }
-
-            if (importedData.transactions && Array.isArray(importedData.transactions)) {
-              const transactionsToPut = []
-              const itemsToPut = []
-
-              importedData.transactions.forEach(trx => {
-                const { items, ...trxData } = trx
-
-                transactionsToPut.push({
-                  ...trxData,
-                  synced: trxData.synced ?? 0
-                })
-
-                if (items && Array.isArray(items)) {
-                  items.forEach((item, index) => {
-                    itemsToPut.push({
-                      id: item.id || `${trx.id}_item_${index}`,
-                      transactionId: trx.id,
-                      productId: item.productId || item.cartId || item.id || null,
-                      serviceId: item.serviceId || (item.extraCharge ? item.id : null),
-                      name: item.name || item.productName || 'Barang',
-                      qty: Number(item.qty || item.cartQty || 1),
-                      price: Number(item.price || item.price_sell || 0),
-                      subtotal: Number(item.subtotal || (item.price_sell * (item.cartQty || item.qty))) || 0,
-                      updatedAt: item.updatedAt || trx.date || new Date().toISOString(),
-                      synced: 0
-                    })
-                  })
-                }
-              })
-
-              if (transactionsToPut.length > 0) {
-                await db.transactions.bulkPut(transactionsToPut)
-              }
-              if (itemsToPut.length > 0) {
-                await db.transaction_items.bulkPut(itemsToPut)
-              }
-            }
-          })
-
+          await this.processImportData(importedData)
           resolve(true)
         } catch (err) {
           console.error('Error saat impor backup:', err)

@@ -64,6 +64,23 @@ export function useSettings() {
     }
   }
 
+  const restoreFromCloud = async () => {
+    if (!confirm('PERINGATAN: Restor dari Cloud akan menimpa data lokal saat ini dengan cadangan terbaru dari Firebase Storage. Lanjutkan?')) {
+      return
+    }
+
+    loading.value = true
+    try {
+      await backupService.restoreFromCloud()
+      toast.success('Data berhasil dipulihkan dari Firebase Cloud!')
+      setTimeout(() => window.location.reload(), 800)
+    } catch (err) {
+      toast.error(`Gagal restor dari Cloud: ${err.message}`)
+    } finally {
+      loading.value = false
+    }
+  }
+
   const resetTransactionsData = async () => {
     const confirmation = confirm(
       'PERINGATAN DANGER!\n\nApakah Anda yakin ingin MENGHAPUS SEMUA RIWAYAT TRANSAKSI?\n\n' +
@@ -115,6 +132,7 @@ export function useSettings() {
     saveSettings,
     exportBackup,
     importBackup,
+    restoreFromCloud,
     resetTransactionsData,
     convertDataToUppercase
   }

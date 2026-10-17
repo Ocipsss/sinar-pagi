@@ -11,19 +11,20 @@ import { backupService } from './services/backupService.js'
 let lastBackPressTime = 0
 let autoBackupInterval = null
 
-// Fungsi Auto Backup File JSON Tiap 1 Jam
+// Fungsi Auto Backup ke Firebase Storage Tiap 30 Menit
 const initAutoBackup = () => {
-  const ONE_HOUR = 60 * 60 * 1000 // 3.600.000 ms (1 jam)
+  const THIRTY_MINUTES = 30 * 60 * 1000 // 30 menit (1.800.000 ms)
 
   autoBackupInterval = setInterval(async () => {
     try {
-      await backupService.exportBackup()
-      toast.success('Auto-backup (1 jam) berhasil diunduh!')
+      await backupService.uploadBackupToCloud()
+      toast.success('Auto-backup cloud (30 mnt) berhasil!')
     } catch (err) {
-      console.error('[AutoBackup] Gagal mengunduh file backup:', err)
+      console.error('[AutoBackup] Gagal upload cadangan:', err)
     }
-  }, ONE_HOUR)
+  }, THIRTY_MINUTES)
 }
+
 
 function handleBackButton() {
   const currentTime = new Date().getTime()
