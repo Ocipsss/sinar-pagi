@@ -1,8 +1,8 @@
 // src/services/backupService.js
 import { db } from '../db/index.js'
 import dayjs from 'dayjs'
-import { storage } from './firebase.js'
-import { ref as storageRef, uploadString, getBytes } from 'firebase/storage'
+import { firestore } from './firebase.js'
+import { doc, setDoc, getDoc } from 'firebase/firestore'
 
 export const backupService = {
   // 1. Export Manual ke File JSON Lokal
@@ -35,7 +35,7 @@ export const backupService = {
     }
   },
 
-  // 2. Auto Backup Silent ke Firebase Storage (Tanpa Download File)
+  // 2. Auto Backup Silent ke Firestore (Paket Gratisan)
   async uploadBackupToCloud() {
     if (!navigator.onLine) return
 
@@ -46,31 +46,36 @@ export const backupService = {
       }
 
       const jsonString = JSON.stringify(backupData)
-      const fileName = `backup_${dayjs().format('YYYYMMDD_HHmmss')}.json`
-      
-      const fileRef = storageRef(storage, `backups/${fileName}`)
-      const latestRef = storageRef(storage, `backups/latest_backup.json`)
+      const payload = {
+        updatedAt: dayjs().toISOString(),
+        data: jsonString
+      }
 
-      await uploadString(fileRef, jsonString, 'raw', { contentType: 'application/json' })
-      await uploadString(latestRef, jsonString, 'raw', { contentType: 'application/json' })
-
+      // Simpan ke dokumen 'latest' di koleksi 'app_backups'
+      await setDoc(doc(firestore, 'app_backups', 'latest'), payload)
+      console.log('[AutoBackup] Success upload to Firestore')
       return true
     } catch (error) {
-      console.error('[AutoBackup] Cloud upload failed:', error)
+      console.error('[AutoBackup] Firestore upload failed:', error)
       throw error
     }
   },
 
-  // 3. Restor Data dari Firebase Cloud Storage
+  // 3. Restor Data dari Firestore
   async restoreFromCloud() {
     if (!navigator.onLine) {
       throw new Error('Membutuhkan koneksi internet untuk restor dari cloud.')
     }
 
     try {
-      const latestRef = storageRef(storage, `backups/latest_backup.json`)
-      const bytes = await getBytes(latestRef)
-      const jsonText = new TextDecoder().decode(bytes)
+      const docRef = doc(firestore, 'app_backups', 'latest')
+      const docSnap = await getDoc(docRef)
+
+      if (!docSnap.exists()) {
+        throw new Error('Belum ada data cadangan di Firestore.')
+      }
+
+      const jsonText = docSnap.data().data
       const rawParsed = JSON.parse(jsonText)
       const importedData = rawParsed.database || rawParsed
 
@@ -78,7 +83,7 @@ export const backupService = {
       return true
     } catch (error) {
       console.error('Gagal restor dari Cloud:', error)
-      throw new Error('Gagal mengambil cadangan terbaru dari Firebase Storage')
+      throw new Error(error.message || 'Gagal mengambil cadangan dari Firestore')
     }
   },
 

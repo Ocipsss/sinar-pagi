@@ -64,8 +64,25 @@ export function useSettings() {
     }
   }
 
+  const backupToCloud = async () => {
+    if (!navigator.onLine) {
+      toast.error('Membutuhkan koneksi internet untuk cadangkan ke cloud.')
+      return
+    }
+
+    loading.value = true
+    try {
+      await backupService.uploadBackupToCloud()
+      toast.success('Berhasil mencadangkan data terbaru ke Cloud Firestore!')
+    } catch (e) {
+      toast.error(`Gagal cadangkan ke cloud: ${e.message}`)
+    } finally {
+      loading.value = false
+    }
+  }
+
   const restoreFromCloud = async () => {
-    if (!confirm('PERINGATAN: Restor dari Cloud akan menimpa data lokal saat ini dengan cadangan terbaru dari Firebase Storage. Lanjutkan?')) {
+    if (!confirm('PERINGATAN: Restor dari Cloud akan menimpa data lokal saat ini dengan cadangan terbaru dari Firebase Firestore. Lanjutkan?')) {
       return
     }
 
@@ -132,6 +149,7 @@ export function useSettings() {
     saveSettings,
     exportBackup,
     importBackup,
+    backupToCloud,
     restoreFromCloud,
     resetTransactionsData,
     convertDataToUppercase

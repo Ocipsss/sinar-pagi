@@ -65,7 +65,7 @@
     </form>
   </div>
 
-  <!-- Section 2: Sinkronisasi Cloud (Firebase) -->
+  <!-- Section 2: Sinkronisasi Realtime -->
   <div class="bg-white p-5 rounded-3xl border border-zinc-100 shadow-sm space-y-4">
     <div class="flex items-center gap-2 border-b border-zinc-50 pb-3">
       <Cloud class="w-5 h-5 text-zinc-900" />
@@ -120,54 +120,89 @@
     </div>
   </div>
 
-  <!-- Section 4: Backup & Restore Data Lokal & Cloud -->
+  <!-- Section 4: Backup & Restore (Cloud & File Lokal) -->
   <div class="bg-white p-5 rounded-3xl border border-zinc-100 shadow-sm space-y-4">
     <div class="flex items-center gap-2 border-b border-zinc-50 pb-3">
       <Database class="w-5 h-5 text-zinc-900" />
       <span class="font-black text-sm text-zinc-900">Cadangan & Pemulihan Data</span>
     </div>
 
-    <p class="text-xs text-zinc-400">Unduh cadangan data lokal, restor dari Firebase Cloud, atau impor file JSON.</p>
+    <!-- Group 1: Cadangan Cloud Firebase -->
+    <div class="space-y-2 bg-blue-50/50 p-3.5 rounded-2xl border border-blue-100">
+      <div class="flex justify-between items-center mb-1">
+        <div class="font-bold text-xs text-blue-900 flex items-center gap-1.5">
+          <Cloud class="w-4 h-4 text-blue-600" />
+          <span>Cadangan Cloud (Firebase)</span>
+        </div>
+        <span class="text-[10px] bg-blue-100 text-blue-700 font-bold px-2 py-0.5 rounded-md">
+          Otomatis / 30 mnt
+        </span>
+      </div>
 
-    <!-- Tombol Restor Cloud -->
-    <button 
-      type="button"
-      @click="restoreFromCloud" 
-      :disabled="loading || !isOnline"
-      :class="[
-        'w-full py-3 font-bold text-xs rounded-xl shadow-md transition active:scale-95 flex items-center justify-center gap-2',
-        isOnline 
-          ? 'bg-blue-600 hover:bg-blue-700 text-white' 
-          : 'bg-zinc-100 text-zinc-400 border border-zinc-200 cursor-not-allowed'
-      ]"
-    >
-      <Cloud class="w-4 h-4" />
-      <span>Restor Cadangan Terbaru dari Firebase Cloud</span>
-    </button>
+      <div class="grid grid-cols-2 gap-2">
+        <button 
+          type="button"
+          @click="backupToCloud" 
+          :disabled="loading || !isOnline"
+          :class="[
+            'py-3 font-bold text-xs rounded-xl shadow-sm transition active:scale-95 flex items-center justify-center gap-1.5',
+            isOnline 
+              ? 'bg-blue-600 hover:bg-blue-700 text-white' 
+              : 'bg-zinc-200 text-zinc-400 cursor-not-allowed'
+          ]"
+        >
+          <UploadCloud class="w-4 h-4" />
+          <span>Cadangkan Sekarang</span>
+        </button>
 
-    <div class="grid grid-cols-2 gap-2">
-      <button 
-        type="button"
-        @click="exportBackup" 
-        class="py-3 bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition active:scale-95"
-      >
-        <Download class="w-4 h-4" />
-        <span>Ekspor Backup</span>
-      </button>
+        <button 
+          type="button"
+          @click="restoreFromCloud" 
+          :disabled="loading || !isOnline"
+          :class="[
+            'py-3 font-bold text-xs rounded-xl border transition active:scale-95 flex items-center justify-center gap-1.5',
+            isOnline 
+              ? 'bg-white text-blue-700 border-blue-200 hover:bg-blue-50' 
+              : 'bg-zinc-100 text-zinc-400 border-zinc-200 cursor-not-allowed'
+          ]"
+        >
+          <DownloadCloud class="w-4 h-4" />
+          <span>Restor dari Cloud</span>
+        </button>
+      </div>
+    </div>
 
-      <label 
-        :class="[
-          'py-3 border rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition active:scale-95',
-          isOnline 
-            ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100 cursor-pointer' 
-            : 'bg-zinc-100 text-zinc-400 border-zinc-200 cursor-not-allowed opacity-60'
-        ]"
-        :title="!isOnline ? 'Fitur impor backup membutuhkan koneksi internet' : ''"
-      >
-        <Upload class="w-4 h-4" />
-        <span>Impor File JSON</span>
-        <input type="file" accept=".json" :disabled="!isOnline" @change="importBackup" class="hidden" />
-      </label>
+    <!-- Group 2: Cadangan File JSON Lokal -->
+    <div class="space-y-2 bg-zinc-50 p-3.5 rounded-2xl border border-zinc-200/80">
+      <div class="font-bold text-xs text-zinc-800 flex items-center gap-1.5 mb-1">
+        <HardDrive class="w-4 h-4 text-zinc-600" />
+        <span>Cadangan File JSON (Lokal)</span>
+      </div>
+
+      <div class="grid grid-cols-2 gap-2">
+        <button 
+          type="button"
+          @click="exportBackup" 
+          class="py-3 bg-white text-emerald-700 border border-emerald-200 hover:bg-emerald-50 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition active:scale-95 shadow-sm"
+        >
+          <Download class="w-4 h-4" />
+          <span>Unduh File JSON</span>
+        </button>
+
+        <label 
+          :class="[
+            'py-3 border rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition active:scale-95 shadow-sm',
+            isOnline 
+              ? 'bg-white text-blue-700 border-blue-200 hover:bg-blue-50 cursor-pointer' 
+              : 'bg-zinc-100 text-zinc-400 border-zinc-200 cursor-not-allowed opacity-60'
+          ]"
+          :title="!isOnline ? 'Fitur impor backup membutuhkan koneksi internet' : ''"
+        >
+          <Upload class="w-4 h-4" />
+          <span>Impor File JSON</span>
+          <input type="file" accept=".json" :disabled="!isOnline" @change="importBackup" class="hidden" />
+        </label>
+      </div>
     </div>
 
     <!-- Tombol Migrasi Kapital -->
@@ -213,7 +248,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
-import { Store, Cloud, Printer, Database, Download, Upload, Trash2, Type } from 'lucide-vue-next'
+import { Store, Cloud, Printer, Database, Download, Upload, UploadCloud, DownloadCloud, HardDrive, Trash2, Type } from 'lucide-vue-next'
 import { useSettings } from '../composables/useSettings.js'
 import { syncStatus, syncRealtime } from '../services/syncService.js'
 
@@ -224,6 +259,7 @@ const {
   saveSettings, 
   exportBackup, 
   importBackup, 
+  backupToCloud,
   restoreFromCloud, 
   resetTransactionsData, 
   convertDataToUppercase 
