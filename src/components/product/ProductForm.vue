@@ -1,3 +1,4 @@
+<!-- src/components/product/ProductForm.vue -->
 <template>
 <form @submit.prevent="onSubmit" @keydown="handleFormKeydown" class="bg-white p-5 rounded-3xl border flex flex-col gap-4 shadow-sm">
   <!-- Nama Produk -->
@@ -22,26 +23,32 @@
   </div>
   <div id="reader" class="w-full rounded-xl overflow-hidden"></div>
 
-  <!-- Kategori & Nama Satuan Utama -->
+  <!-- Pilihan Kategori & Satuan Custom Modal -->
   <div class="grid grid-cols-2 gap-2">
+    <!-- Tombol Pilih Kategori -->
     <div class="flex flex-col gap-1">
       <label class="text-[10px] text-zinc-500 font-bold uppercase">Kategori</label>
-      <select v-model="category" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold uppercase">
-        <option value="UMUM">UMUM</option>
-        <option v-for="cat in categories" :key="cat.id" :value="cat.name.toUpperCase()">
-          {{ cat.name.toUpperCase() }}
-        </option>
-      </select>
+      <button 
+        type="button" 
+        @click="showCategoryModal = true"
+        class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold uppercase text-left flex justify-between items-center"
+      >
+        <span class="truncate">{{ category || 'UMUM' }}</span>
+        <ChevronDown class="w-4 h-4 text-zinc-400 shrink-0" />
+      </button>
     </div>
 
+    <!-- Tombol Pilih Satuan -->
     <div class="flex flex-col gap-1">
       <label class="text-[10px] text-zinc-500 font-bold uppercase">Nama Satuan *</label>
-      <select v-model="unit" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold uppercase">
-        <option value="" disabled>-- PILIH SATUAN --</option>
-        <option v-for="u in units" :key="u.id" :value="u.name.toUpperCase()">
-          {{ u.name.toUpperCase() }}
-        </option>
-      </select>
+      <button 
+        type="button" 
+        @click="showUnitModal = true"
+        :class="['w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold uppercase text-left flex justify-between items-center', !unit && 'text-zinc-400']"
+      >
+        <span class="truncate">{{ unit || '-- PILIH SATUAN --' }}</span>
+        <ChevronDown class="w-4 h-4 text-zinc-400 shrink-0" />
+      </button>
       <span v-if="errors.unit" class="text-[10px] text-red-500">{{ errors.unit }}</span>
     </div>
   </div>
@@ -64,12 +71,14 @@
     <div v-if="toNumber(packPrice) > 0" class="flex flex-col gap-2">
       <div class="flex flex-col gap-1">
         <label class="text-[10px] text-zinc-500 font-bold uppercase">Nama Satuan Grosir</label>
-        <select v-model="purchasePackName" class="px-3 py-2.5 bg-white border rounded-xl text-sm font-bold uppercase">
-          <option value="">-- PILIH SATUAN GROSIR --</option>
-          <option v-for="u in units" :key="u.id" :value="u.name.toUpperCase()">
-            {{ u.name.toUpperCase() }}
-          </option>
-        </select>
+        <button 
+          type="button" 
+          @click="showPackUnitModal = true"
+          class="px-3 py-2.5 bg-white border rounded-xl text-sm font-bold uppercase text-left flex justify-between items-center"
+        >
+          <span class="truncate">{{ purchasePackName || '-- PILIH SATUAN GROSIR --' }}</span>
+          <ChevronDown class="w-4 h-4 text-zinc-400 shrink-0" />
+        </button>
       </div>
 
       <div class="text-[11px] text-blue-600 bg-white p-2.5 rounded-xl border font-semibold uppercase">
@@ -108,11 +117,93 @@
     {{ isSubmitting ? 'Menyimpan...' : (initialData ? 'Update Barang' : 'Simpan Barang') }}
   </button>
 </form>
+
+<!-- MODAL PILIH KATEGORI -->
+<div v-if="showCategoryModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+  <div class="w-full max-w-sm bg-white rounded-[2rem] p-5 shadow-xl animate-in zoom-in-95 fade-in duration-200 max-h-[80vh] flex flex-col">
+    <div class="flex justify-between items-center mb-3">
+      <h3 class="font-black text-base text-zinc-900">Pilih Kategori</h3>
+      <button type="button" @click="showCategoryModal = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
+    </div>
+
+    <div class="space-y-1.5 overflow-auto flex-1 pr-1">
+      <button 
+        type="button" 
+        @click="category = 'UMUM'; showCategoryModal = false"
+        :class="['w-full p-3 rounded-xl font-bold text-xs text-left uppercase transition', category === 'UMUM' ? 'bg-zinc-900 text-white' : 'bg-zinc-50 hover:bg-zinc-100 text-zinc-800']"
+      >
+        UMUM
+      </button>
+
+      <button 
+        v-for="cat in categories" 
+        :key="cat.id" 
+        type="button"
+        @click="category = cat.name.toUpperCase(); showCategoryModal = false"
+        :class="['w-full p-3 rounded-xl font-bold text-xs text-left uppercase transition', category === cat.name.toUpperCase() ? 'bg-zinc-900 text-white' : 'bg-zinc-50 hover:bg-zinc-100 text-zinc-800']"
+      >
+        {{ cat.name }}
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL PILIH SATUAN UTAMA -->
+<div v-if="showUnitModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+  <div class="w-full max-w-sm bg-white rounded-[2rem] p-5 shadow-xl animate-in zoom-in-95 fade-in duration-200 max-h-[80vh] flex flex-col">
+    <div class="flex justify-between items-center mb-3">
+      <h3 class="font-black text-base text-zinc-900">Pilih Satuan Utama</h3>
+      <button type="button" @click="showUnitModal = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
+    </div>
+
+    <div class="space-y-1.5 overflow-auto flex-1 pr-1">
+      <button 
+        v-for="u in units" 
+        :key="u.id" 
+        type="button"
+        @click="unit = u.name.toUpperCase(); showUnitModal = false"
+        :class="['w-full p-3 rounded-xl font-bold text-xs text-left uppercase transition', unit === u.name.toUpperCase() ? 'bg-zinc-900 text-white' : 'bg-zinc-50 hover:bg-zinc-100 text-zinc-800']"
+      >
+        {{ u.name }}
+      </button>
+    </div>
+  </div>
+</div>
+
+<!-- MODAL PILIH SATUAN GROSIR -->
+<div v-if="showPackUnitModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+  <div class="w-full max-w-sm bg-white rounded-[2rem] p-5 shadow-xl animate-in zoom-in-95 fade-in duration-200 max-h-[80vh] flex flex-col">
+    <div class="flex justify-between items-center mb-3">
+      <h3 class="font-black text-base text-zinc-900">Pilih Satuan Grosir</h3>
+      <button type="button" @click="showPackUnitModal = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
+    </div>
+
+    <div class="space-y-1.5 overflow-auto flex-1 pr-1">
+      <button 
+        type="button" 
+        @click="purchasePackName = ''; showPackUnitModal = false"
+        class="w-full p-3 bg-zinc-50 hover:bg-zinc-100 rounded-xl font-bold text-xs text-left text-red-500 uppercase transition"
+      >
+        -- KOSONGKAN --
+      </button>
+
+      <button 
+        v-for="u in units" 
+        :key="u.id" 
+        type="button"
+        @click="purchasePackName = u.name.toUpperCase(); showPackUnitModal = false"
+        :class="['w-full p-3 rounded-xl font-bold text-xs text-left uppercase transition', purchasePackName === u.name.toUpperCase() ? 'bg-zinc-900 text-white' : 'bg-zinc-50 hover:bg-zinc-100 text-zinc-800']"
+      >
+        {{ u.name }}
+      </button>
+    </div>
+  </div>
+</div>
 </template>
 
 <script setup>
-import { computed, watch, onMounted, onActivated } from 'vue'
-import { ScanLine } from 'lucide-vue-next'
+import { ref, computed, watch, onMounted, onActivated } from 'vue'
+import { ScanLine, ChevronDown, X } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 import { useProductForm } from '../../composables/useProductForm.js'
 import { useProductScanner } from '../../composables/useProductScanner.js'
@@ -130,6 +221,10 @@ const props = defineProps({
 })
 
 const emit = defineEmits(['success'])
+
+const showCategoryModal = ref(false)
+const showUnitModal = ref(false)
+const showPackUnitModal = ref(false)
 
 const { 
   name, code, category, unit, purchasePackName, packPrice, packQty, 
@@ -149,7 +244,6 @@ let lastKeyTime = 0
 let fastKeyBurstCount = 0
 
 const handleFormKeydown = (e) => {
-  // Jika fokus di input barcode, biarkan scanner berfungsi normal
   const isBarcodeInput = e.target && e.target.id === 'product-barcode-input'
   if (isBarcodeInput) return
 
@@ -163,12 +257,10 @@ const handleFormKeydown = (e) => {
     fastKeyBurstCount = 0
   }
 
-  // Jika terdeteksi input cepat khas scanner pada input selain barcode
   if (fastKeyBurstCount >= 1) {
     e.preventDefault()
     e.stopPropagation()
 
-    // Hapus karakter pertama yang terlanjur ketik sebelum terdeteksi
     if (fastKeyBurstCount === 1 && e.target && 'value' in e.target) {
       const val = e.target.value
       if (val.length > 0) {
@@ -206,7 +298,7 @@ const checkExistingBarcode = async (barcodeVal) => {
   if (existingProduct && existingProduct.id !== props.initialData?.id) {
     const productName = existingProduct.name || 'Tanpa Nama'
     toast.error(`Barcode "${cleanCode}" sudah digunakan oleh: ${productName}`)
-    code.value = '' // Reset input barcode jika duplikat
+    code.value = ''
     return true
   }
   return false

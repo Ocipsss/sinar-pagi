@@ -12,19 +12,20 @@ import { backupService } from './services/backupService.js'
 let lastBackPressTime = 0
 let autoBackupInterval = null
 
-// Fungsi Auto Backup File JSON Tiap 1 Jam
+// Fungsi Auto Backup ke Firebase Storage Tiap 30 Menit
 const initAutoBackup = () => {
-  const ONE_HOUR = 60 * 60 * 1000 // 3.600.000 ms (1 jam)
+  const THIRTY_MINUTES = 30 * 60 * 1000 // 30 menit (1.800.000 ms)
 
   autoBackupInterval = setInterval(async () => {
     try {
-      await backupService.exportBackup()
-      toast.success('Auto-backup (1 jam) berhasil diunduh!')
+      await backupService.uploadBackupToCloud()
+      toast.success('Auto-backup cloud (30 mnt) berhasil!')
     } catch (err) {
-      console.error('[AutoBackup] Gagal mengunduh file backup:', err)
+      console.error('[AutoBackup] Gagal upload cadangan:', err)
     }
-  }, ONE_HOUR)
+  }, THIRTY_MINUTES)
 }
+
 
 function handleBackButton() {
   const currentTime = new Date().getTime()
@@ -921,30 +922,29 @@ export const expenseRepository = {
 <template>
 <div class="min-h-screen bg-zinc-900 overflow-hidden">
   <!-- SIDEBAR -->
-  <aside 
-    :class="[
-      'fixed top-0 left-0 h-full w-[280px] z-[60] transition-transform duration-300 ease-in-out will-change-transform', 
-      isOpen ? 'translate-x-0' : '-translate-x-full'
-    ]"
-  >
-    <SidebarComponent 
-      :groups="groups" 
-      :activePage="activePage" 
-      @select-page="handleSelect" 
-      @close="isOpen = false" 
-    />
-  </aside>
+  <!-- SIDEBAR -->
+<aside 
+  :class="[
+    'fixed top-0 left-0 h-full w-[280px] md:w-[320px] z-[60] transition-transform duration-300 ease-in-out will-change-transform', 
+    isOpen ? 'translate-x-0' : '-translate-x-full'
+  ]"
+>
+  <SidebarComponent 
+    :groups="groups" 
+    :activePage="activePage" 
+    @select-page="handleSelect" 
+    @close="isOpen = false" 
+  />
+</aside>
 
-  <!-- BACKDROP OVERLAY -->
-  <div v-if="isOpen" @click="isOpen = false" class="fixed inset-0 bg-black/40 backdrop-blur-sm z-50"></div>
+<!-- MAIN CONTAINER -->
+<div 
+  :class="[
+    'min-h-screen bg-zinc-50 flex flex-col overflow-hidden transition-transform duration-300 ease-in-out h-screen will-change-transform', 
+    isOpen ? 'translate-x-[280px] md:translate-x-[320px]' : 'translate-x-0'
+  ]"
+>
 
-  <!-- MAIN CONTAINER -->
-  <div 
-    :class="[
-      'min-h-screen bg-zinc-50 flex flex-col overflow-hidden transition-transform duration-300 ease-in-out h-screen will-change-transform', 
-      isOpen ? 'translate-x-[280px]' : 'translate-x-0'
-    ]"
-  >
     <!-- HEADER STICKY -->
     <header class="shrink-0 h-[56px] md:h-16 w-full bg-white border-b border-zinc-100 px-4 md:px-6 flex justify-between items-center z-40 sticky top-0">
       <div class="flex items-center gap-3">
@@ -1266,6 +1266,7 @@ router.beforeEach((to) => {
 ===== src/services/firebase.js =====
 import { initializeApp } from 'firebase/app'
 import { getFirestore } from 'firebase/firestore'
+import {getStorage} from 'firebase/storage'
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -1278,6 +1279,7 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig)
 export const firestore = getFirestore(app)
+export const storage = getStorage (app)
 
 ===== src/services/syncService.js =====
 import { reactive } from 'vue'
@@ -2028,8 +2030,11 @@ export const productsDigitalService = {
 // src/services/backupService.js
 import { db } from '../db/index.js'
 import dayjs from 'dayjs'
+import { firestore } from './firebase.js'
+import { doc, setDoc, getDoc } from 'firebase/firestore'
 
 export const backupService = {
+  // 1. Export Manual ke File JSON Lokal
   async exportBackup() {
     try {
       const backupData = {}
@@ -2059,6 +2064,119 @@ export const backupService = {
     }
   },
 
+  // 2. Auto Backup Silent ke Firestore (Paket Gratisan)
+  async uploadBackupToCloud() {
+    if (!navigator.onLine) return
+
+    try {
+      const backupData = {}
+      for (const table of db.tables) {
+        backupData[table.name] = await table.toArray()
+      }
+
+      const jsonString = JSON.stringify(backupData)
+      const payload = {
+        updatedAt: dayjs().toISOString(),
+        data: jsonString
+      }
+
+      // Simpan ke dokumen 'latest' di koleksi 'app_backups'
+      await setDoc(doc(firestore, 'app_backups', 'latest'), payload)
+      console.log('[AutoBackup] Success upload to Firestore')
+      return true
+    } catch (error) {
+      console.error('[AutoBackup] Firestore upload failed:', error)
+      throw error
+    }
+  },
+
+  // 3. Restor Data dari Firestore
+  async restoreFromCloud() {
+    if (!navigator.onLine) {
+      throw new Error('Membutuhkan koneksi internet untuk restor dari cloud.')
+    }
+
+    try {
+      const docRef = doc(firestore, 'app_backups', 'latest')
+      const docSnap = await getDoc(docRef)
+
+      if (!docSnap.exists()) {
+        throw new Error('Belum ada data cadangan di Firestore.')
+      }
+
+      const jsonText = docSnap.data().data
+      const rawParsed = JSON.parse(jsonText)
+      const importedData = rawParsed.database || rawParsed
+
+      await this.processImportData(importedData)
+      return true
+    } catch (error) {
+      console.error('Gagal restor dari Cloud:', error)
+      throw new Error(error.message || 'Gagal mengambil cadangan dari Firestore')
+    }
+  },
+
+  // Helper Transaksi Impor Data ke Dexie DB
+  async processImportData(importedData) {
+    const tableNames = db.tables.map(t => t.name)
+    await db.transaction('rw', tableNames, async () => {
+      for (const table of db.tables) {
+        await table.clear()
+      }
+
+      for (const tableName of Object.keys(importedData)) {
+        if (tableName !== 'transactions' && db[tableName]) {
+          const rows = importedData[tableName]
+          if (Array.isArray(rows) && rows.length > 0) {
+            const preparedRows = rows.map(item => ({
+              ...item,
+              synced: item.synced ?? 0
+            }))
+            await db[tableName].bulkPut(preparedRows)
+          }
+        }
+      }
+
+      if (importedData.transactions && Array.isArray(importedData.transactions)) {
+        const transactionsToPut = []
+        const itemsToPut = []
+
+        importedData.transactions.forEach(trx => {
+          const { items, ...trxData } = trx
+
+          transactionsToPut.push({
+            ...trxData,
+            synced: trxData.synced ?? 0
+          })
+
+          if (items && Array.isArray(items)) {
+            items.forEach((item, index) => {
+              itemsToPut.push({
+                id: item.id || `${trx.id}_item_${index}`,
+                transactionId: trx.id,
+                productId: item.productId || item.cartId || item.id || null,
+                serviceId: item.serviceId || (item.extraCharge ? item.id : null),
+                name: item.name || item.productName || 'Barang',
+                qty: Number(item.qty || item.cartQty || 1),
+                price: Number(item.price || item.price_sell || 0),
+                subtotal: Number(item.subtotal || (item.price_sell * (item.cartQty || item.qty))) || 0,
+                updatedAt: item.updatedAt || trx.date || new Date().toISOString(),
+                synced: 0
+              })
+            })
+          }
+        })
+
+        if (transactionsToPut.length > 0) {
+          await db.transactions.bulkPut(transactionsToPut)
+        }
+        if (itemsToPut.length > 0) {
+          await db.transaction_items.bulkPut(itemsToPut)
+        }
+      }
+    })
+  },
+
   async importBackup(file) {
     if (!file) return false
 
@@ -2068,65 +2186,7 @@ export const backupService = {
         try {
           const rawParsed = JSON.parse(e.target.result)
           const importedData = rawParsed.database || rawParsed
-
-          const tableNames = db.tables.map(t => t.name)
-          await db.transaction('rw', tableNames, async () => {
-            for (const table of db.tables) {
-              await table.clear()
-            }
-
-            for (const tableName of Object.keys(importedData)) {
-              if (tableName !== 'transactions' && db[tableName]) {
-                const rows = importedData[tableName]
-                if (Array.isArray(rows) && rows.length > 0) {
-                  const preparedRows = rows.map(item => ({
-                    ...item,
-                    synced: item.synced ?? 0
-                  }))
-                  await db[tableName].bulkPut(preparedRows)
-                }
-              }
-            }
-
-            if (importedData.transactions && Array.isArray(importedData.transactions)) {
-              const transactionsToPut = []
-              const itemsToPut = []
-
-              importedData.transactions.forEach(trx => {
-                const { items, ...trxData } = trx
-
-                transactionsToPut.push({
-                  ...trxData,
-                  synced: trxData.synced ?? 0
-                })
-
-                if (items && Array.isArray(items)) {
-                  items.forEach((item, index) => {
-                    itemsToPut.push({
-                      id: item.id || `${trx.id}_item_${index}`,
-                      transactionId: trx.id,
-                      productId: item.productId || item.cartId || item.id || null,
-                      serviceId: item.serviceId || (item.extraCharge ? item.id : null),
-                      name: item.name || item.productName || 'Barang',
-                      qty: Number(item.qty || item.cartQty || 1),
-                      price: Number(item.price || item.price_sell || 0),
-                      subtotal: Number(item.subtotal || (item.price_sell * (item.cartQty || item.qty))) || 0,
-                      updatedAt: item.updatedAt || trx.date || new Date().toISOString(),
-                      synced: 0
-                    })
-                  })
-                }
-              })
-
-              if (transactionsToPut.length > 0) {
-                await db.transactions.bulkPut(transactionsToPut)
-              }
-              if (itemsToPut.length > 0) {
-                await db.transaction_items.bulkPut(itemsToPut)
-              }
-            }
-          })
-
+          await this.processImportData(importedData)
           resolve(true)
         } catch (err) {
           console.error('Error saat impor backup:', err)
@@ -3467,18 +3527,17 @@ onActivated(() => {
         <X class="w-4 h-4"/>
       </button>
     </div>
-
-    <div v-if="(selectedProductForOption.category || '').toLowerCase() === 'rokok'" class="space-y-2 overflow-auto flex-1 pr-1">
-      <button 
-        v-for="pkg in getProductPackages(selectedProductForOption.id)" 
-        :key="pkg.id"
-        @click="confirmAddToCart(selectedProductForOption, { packageInfo: pkg, price_sell: pkg.price_sell, customName: `${pkg.name} ${selectedProductForOption.name}` })"
-        class="w-full p-3.5 bg-zinc-50 border border-zinc-200 rounded-xl font-bold text-sm text-left flex justify-between items-center hover:bg-zinc-100 transition"
-      >
-        <span>{{ pkg.name }}</span>
-        <span class="font-black">Rp {{ formatRibuan(pkg.price_sell) }}</span>
-      </button>
-    </div>
+<div v-if="['rokok', 'permen'].includes((selectedProductForOption.category || '').toLowerCase())" class="space-y-2 overflow-auto flex-1 pr-1">
+  <button 
+    v-for="pkg in getProductPackages(selectedProductForOption.id)" 
+    :key="pkg.id"
+    @click="confirmAddToCart(selectedProductForOption, { packageInfo: pkg, price_sell: pkg.price_sell, customName: `${pkg.name} ${selectedProductForOption.name}` })"
+    class="w-full p-3.5 bg-zinc-50 border border-zinc-200 rounded-xl font-bold text-sm text-left flex justify-between items-center hover:bg-zinc-100 transition"
+  >
+    <span>{{ pkg.name }}</span>
+    <span class="font-black">Rp {{ formatRibuan(pkg.price_sell) }}</span>
+  </button>
+</div>
 
     <div v-else class="space-y-2 overflow-auto flex-1 pr-1">
       <button 
@@ -3719,6 +3778,7 @@ onMounted(() => {
 })
 
 onActivated(() => {
+  load()
   focusSearchInput()
 })
 
@@ -4861,6 +4921,7 @@ onActivated(() => {
 </script>
 
 ===== src/views/Settings.vue =====
+<!-- src/views/Settings.vue -->
 <template>
 <div class="flex-1 overflow-auto p-4 pb-28 space-y-4">
   <!-- Header Title -->
@@ -4927,7 +4988,7 @@ onActivated(() => {
     </form>
   </div>
 
-  <!-- Section 2: Sinkronisasi Cloud (Firebase) -->
+  <!-- Section 2: Sinkronisasi Realtime -->
   <div class="bg-white p-5 rounded-3xl border border-zinc-100 shadow-sm space-y-4">
     <div class="flex items-center gap-2 border-b border-zinc-50 pb-3">
       <Cloud class="w-5 h-5 text-zinc-900" />
@@ -4982,38 +5043,89 @@ onActivated(() => {
     </div>
   </div>
 
-  <!-- Section 4: Backup & Restore Data Lokal -->
+  <!-- Section 4: Backup & Restore (Cloud & File Lokal) -->
   <div class="bg-white p-5 rounded-3xl border border-zinc-100 shadow-sm space-y-4">
     <div class="flex items-center gap-2 border-b border-zinc-50 pb-3">
       <Database class="w-5 h-5 text-zinc-900" />
       <span class="font-black text-sm text-zinc-900">Cadangan & Pemulihan Data</span>
     </div>
 
-    <p class="text-xs text-zinc-400">Unduh cadangan data lokal atau impor file JSON untuk mengembalikan data.</p>
+    <!-- Group 1: Cadangan Cloud Firebase -->
+    <div class="space-y-2 bg-blue-50/50 p-3.5 rounded-2xl border border-blue-100">
+      <div class="flex justify-between items-center mb-1">
+        <div class="font-bold text-xs text-blue-900 flex items-center gap-1.5">
+          <Cloud class="w-4 h-4 text-blue-600" />
+          <span>Cadangan Cloud (Firebase)</span>
+        </div>
+        <span class="text-[10px] bg-blue-100 text-blue-700 font-bold px-2 py-0.5 rounded-md">
+          Otomatis / 30 mnt
+        </span>
+      </div>
 
-    <div class="grid grid-cols-2 gap-2">
-      <button 
-        type="button"
-        @click="exportBackup" 
-        class="py-3 bg-emerald-50 text-emerald-700 border border-emerald-200 hover:bg-emerald-100 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition active:scale-95"
-      >
-        <Download class="w-4 h-4" />
-        <span>Ekspor Backup</span>
-      </button>
+      <div class="grid grid-cols-2 gap-2">
+        <button 
+          type="button"
+          @click="backupToCloud" 
+          :disabled="loading || !isOnline"
+          :class="[
+            'py-3 font-bold text-xs rounded-xl shadow-sm transition active:scale-95 flex items-center justify-center gap-1.5',
+            isOnline 
+              ? 'bg-blue-600 hover:bg-blue-700 text-white' 
+              : 'bg-zinc-200 text-zinc-400 cursor-not-allowed'
+          ]"
+        >
+          <UploadCloud class="w-4 h-4" />
+          <span>Cadangkan Sekarang</span>
+        </button>
 
-      <label 
-        :class="[
-          'py-3 border rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition active:scale-95',
-          isOnline 
-            ? 'bg-blue-50 text-blue-700 border-blue-200 hover:bg-blue-100 cursor-pointer' 
-            : 'bg-zinc-100 text-zinc-400 border-zinc-200 cursor-not-allowed opacity-60'
-        ]"
-        :title="!isOnline ? 'Fitur impor backup membutuhkan koneksi internet' : ''"
-      >
-        <Upload class="w-4 h-4" />
-        <span>Impor Backup</span>
-        <input type="file" accept=".json" :disabled="!isOnline" @change="importBackup" class="hidden" />
-      </label>
+        <button 
+          type="button"
+          @click="restoreFromCloud" 
+          :disabled="loading || !isOnline"
+          :class="[
+            'py-3 font-bold text-xs rounded-xl border transition active:scale-95 flex items-center justify-center gap-1.5',
+            isOnline 
+              ? 'bg-white text-blue-700 border-blue-200 hover:bg-blue-50' 
+              : 'bg-zinc-100 text-zinc-400 border-zinc-200 cursor-not-allowed'
+          ]"
+        >
+          <DownloadCloud class="w-4 h-4" />
+          <span>Restor dari Cloud</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- Group 2: Cadangan File JSON Lokal -->
+    <div class="space-y-2 bg-zinc-50 p-3.5 rounded-2xl border border-zinc-200/80">
+      <div class="font-bold text-xs text-zinc-800 flex items-center gap-1.5 mb-1">
+        <HardDrive class="w-4 h-4 text-zinc-600" />
+        <span>Cadangan File JSON (Lokal)</span>
+      </div>
+
+      <div class="grid grid-cols-2 gap-2">
+        <button 
+          type="button"
+          @click="exportBackup" 
+          class="py-3 bg-white text-emerald-700 border border-emerald-200 hover:bg-emerald-50 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition active:scale-95 shadow-sm"
+        >
+          <Download class="w-4 h-4" />
+          <span>Unduh File JSON</span>
+        </button>
+
+        <label 
+          :class="[
+            'py-3 border rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition active:scale-95 shadow-sm',
+            isOnline 
+              ? 'bg-white text-blue-700 border-blue-200 hover:bg-blue-50 cursor-pointer' 
+              : 'bg-zinc-100 text-zinc-400 border-zinc-200 cursor-not-allowed opacity-60'
+          ]"
+          :title="!isOnline ? 'Fitur impor backup membutuhkan koneksi internet' : ''"
+        >
+          <Upload class="w-4 h-4" />
+          <span>Impor File JSON</span>
+          <input type="file" accept=".json" :disabled="!isOnline" @change="importBackup" class="hidden" />
+        </label>
+      </div>
     </div>
 
     <!-- Tombol Migrasi Kapital -->
@@ -5059,7 +5171,7 @@ onActivated(() => {
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
-import { Store, Cloud, Printer, Database, Download, Upload, Trash2, Type } from 'lucide-vue-next'
+import { Store, Cloud, Printer, Database, Download, Upload, UploadCloud, DownloadCloud, HardDrive, Trash2, Type } from 'lucide-vue-next'
 import { useSettings } from '../composables/useSettings.js'
 import { syncStatus, syncRealtime } from '../services/syncService.js'
 
@@ -5070,6 +5182,8 @@ const {
   saveSettings, 
   exportBackup, 
   importBackup, 
+  backupToCloud,
+  restoreFromCloud, 
   resetTransactionsData, 
   convertDataToUppercase 
 } = useSettings()
@@ -5540,6 +5654,7 @@ onMounted(() => {
 
 
 ===== src/views/Categories.vue =====
+<!-- src/views/Categories.vue -->
 <template>
   <div class="flex-1 overflow-auto p-4 pb-24">
     <!-- Header ringkas -->
@@ -5674,9 +5789,9 @@ onMounted(() => {
             <input 
               v-model="formName" 
               ref="inputRef" 
-              :placeholder="activeTab === 'category' ? 'Contoh: Minuman, Sembako...' : 'Contoh: pcs, bungkus, renteng...'" 
+              :placeholder="activeTab === 'category' ? 'CONTOH: MINUMAN, SEMBAKO...' : 'CONTOH: PCS, BUNGKUS, RENTENG...'" 
               required 
-              class="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900"
+              class="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 uppercase"
             />
           </div>
 
@@ -5738,6 +5853,8 @@ const openModal = (item = null) => {
 
 const handleSubmit = async () => {
   if (!formName.value.trim()) return
+
+  formName.value = formName.value.toUpperCase().trim()
 
   if (activeTab.value === 'category') {
     await saveCategory()
@@ -6195,7 +6312,12 @@ onActivated(() => {
         <form @submit.prevent="handleSavePackage" class="space-y-3">
           <div>
             <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Nama Varian *</label>
-            <input v-model="packageForm.name" required placeholder="Contoh: 1 Batang, 3 Biji, 1 Renteng" class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold"/>
+            <input 
+              v-model="packageForm.name" 
+              required 
+              placeholder="CONTOH: 1 BATANG, 3 BIJI, 1 RENTENG" 
+              class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold uppercase"
+            />
           </div>
           <div>
             <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Jumlah Pcs/Batang Dipotong *</label>
@@ -6289,7 +6411,7 @@ const handleSavePackage = async () => {
   if (!selectedRokokProduct.value) return
   await savePackage({
     productId: selectedRokokProduct.value.id,
-    name: packageForm.value.name,
+    name: (packageForm.value.name || '').toUpperCase().trim(),
     qty_pcs: packageForm.value.qty_pcs,
     price_sell: packageForm.value.price_sell
   })
@@ -6797,11 +6919,13 @@ export function useCategories() {
   })
 
   const loadCategories = async () => {
-    categories.value = await categoryRepo.getAll()
+    const data = await categoryRepo.getAll()
+    categories.value = data.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
   }
 
   const loadUnits = async () => {
-    units.value = await unitRepo.getAll()
+    const data = await unitRepo.getAll()
+    units.value = data.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
   }
 
   const openModal = (cat = null) => {
@@ -7021,18 +7145,19 @@ export function useKasir() {
   }
 
   const handleSelectProduct = (product) => {
-    const pCat = (product.category || '').toLowerCase()
-    const isRokok = pCat === 'rokok'
-    const hasPackages = getProductPackages(product.id).length > 0
-    const hasConfiguredServices = servicesList.value.some(s => (s.category || '').toLowerCase() === pCat)
-    if ((isRokok && hasPackages) || (!isRokok && hasConfiguredServices)) {
-      selectedProductForOption.value = product
-    } else {
-      store.addToCart(product)
-      q.value = ''
-      showSearch.value = false
-    }
+  const pCat = (product.category || '').toLowerCase()
+  const isPackageCategory = ['rokok', 'permen'].includes(pCat)
+  const hasPackages = getProductPackages(product.id).length > 0
+  const hasConfiguredServices = servicesList.value.some(s => (s.category || '').toLowerCase() === pCat)
+
+  if ((isPackageCategory && hasPackages) || (!isPackageCategory && hasConfiguredServices)) {
+    selectedProductForOption.value = product
+  } else {
+    store.addToCart(product)
+    q.value = ''
+    showSearch.value = false
   }
+}
 
   const confirmAddToCart = (product, options) => {
     const targetPrice = (options.price_sell !== undefined) ? options.price_sell : product.price_sell
@@ -8023,6 +8148,40 @@ export function useSettings() {
     }
   }
 
+  const backupToCloud = async () => {
+    if (!navigator.onLine) {
+      toast.error('Membutuhkan koneksi internet untuk cadangkan ke cloud.')
+      return
+    }
+
+    loading.value = true
+    try {
+      await backupService.uploadBackupToCloud()
+      toast.success('Berhasil mencadangkan data terbaru ke Cloud Firestore!')
+    } catch (e) {
+      toast.error(`Gagal cadangkan ke cloud: ${e.message}`)
+    } finally {
+      loading.value = false
+    }
+  }
+
+  const restoreFromCloud = async () => {
+    if (!confirm('PERINGATAN: Restor dari Cloud akan menimpa data lokal saat ini dengan cadangan terbaru dari Firebase Firestore. Lanjutkan?')) {
+      return
+    }
+
+    loading.value = true
+    try {
+      await backupService.restoreFromCloud()
+      toast.success('Data berhasil dipulihkan dari Firebase Cloud!')
+      setTimeout(() => window.location.reload(), 800)
+    } catch (err) {
+      toast.error(`Gagal restor dari Cloud: ${err.message}`)
+    } finally {
+      loading.value = false
+    }
+  }
+
   const resetTransactionsData = async () => {
     const confirmation = confirm(
       'PERINGATAN DANGER!\n\nApakah Anda yakin ingin MENGHAPUS SEMUA RIWAYAT TRANSAKSI?\n\n' +
@@ -8074,6 +8233,8 @@ export function useSettings() {
     saveSettings,
     exportBackup,
     importBackup,
+    backupToCloud,
+    restoreFromCloud,
     resetTransactionsData,
     convertDataToUppercase
   }
@@ -8738,54 +8899,54 @@ const handleLogout = () => {
 <template>
 <div class="h-full bg-zinc-900 text-white flex flex-col overflow-hidden">
   <!-- Header App & Operator Active -->
-  <div class="p-6 pb-4 shrink-0 space-y-3">
+  <div class="p-6 md:p-7 pb-4 shrink-0 space-y-3 md:space-y-4">
     <div class="flex justify-between items-center">
-      <span class="font-black text-lg tracking-tight">SINAR PAGI</span>
-      <button @click="$emit('close')" class="p-2 bg-zinc-800 rounded-xl active:scale-95 transition">
-        <X class="w-4 h-4"/>
+      <span class="font-black text-lg md:text-xl tracking-tight">SINAR PAGI</span>
+      <button @click="$emit('close')" class="p-2 md:p-2.5 bg-zinc-800 rounded-xl active:scale-95 transition">
+        <X class="w-4 h-4 md:w-5 md:h-5"/>
       </button>
     </div>
 
     <!-- Info Operator Aktif & Tombol Switch Shift -->
-    <div class="bg-zinc-800/80 p-3 rounded-2xl border border-zinc-700/50 flex items-center justify-between">
+    <div class="bg-zinc-800/80 p-3 md:p-4 rounded-2xl border border-zinc-700/50 flex items-center justify-between">
       <div class="min-w-0 flex-1 pr-2">
-        <div class="text-[9px] font-black text-zinc-400 uppercase tracking-wider">Shift Aktif</div>
-        <div class="font-bold text-xs text-white truncate">{{ operatorStore.operatorName }}</div>
+        <div class="text-[9px] md:text-[10px] font-black text-zinc-400 uppercase tracking-wider">Shift Aktif</div>
+        <div class="font-bold text-xs md:text-sm text-white truncate">{{ operatorStore.operatorName }}</div>
       </div>
       <button 
         @click="handleLogout" 
         title="Ganti Operator / Keluar Shift"
-        class="px-2.5 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-xl font-bold text-[10px] flex items-center gap-1 active:scale-95 transition shrink-0"
+        class="px-2.5 py-1.5 md:px-3 md:py-2 bg-red-500/20 hover:bg-red-500/30 text-red-400 rounded-xl font-bold text-[10px] md:text-xs flex items-center gap-1 md:gap-1.5 active:scale-95 transition shrink-0"
       >
-        <LogOut class="w-3 h-3" /> Shift
+        <LogOut class="w-3 h-3 md:w-4 md:h-4" /> Shift
       </button>
     </div>
   </div>
 
   <!-- Area Menu Scroll -->
-  <div class="flex-1 overflow-y-auto px-6 py-2 space-y-6">
+  <div class="flex-1 overflow-y-auto px-6 md:px-7 py-2 space-y-6 md:space-y-7">
     <div v-for="group in groups" :key="group.title">
-      <div class="text-[10px] font-black tracking-widest text-zinc-500 uppercase mb-3">
+      <div class="text-[10px] md:text-xs font-black tracking-widest text-zinc-500 uppercase mb-3">
         {{ group.title }}
       </div>
-      <ul class="flex flex-col gap-1">
+      <ul class="flex flex-col gap-1 md:gap-1.5">
         <li 
           v-for="m in group.items" 
           :key="m.name" 
           @click="handleItemClick(m)"
           :class="[
-            'px-4 py-3 rounded-2xl text-sm font-bold flex items-center gap-3 cursor-pointer transition active:scale-95', 
+            'px-4 py-3 md:px-5 md:py-3.5 rounded-2xl text-sm md:text-base font-bold flex items-center gap-3 md:gap-3.5 cursor-pointer transition active:scale-95', 
             activePage === m.name ? 'bg-white text-zinc-900 shadow-md' : 'text-zinc-400 hover:bg-zinc-800 hover:text-white'
           ]"
         >
-          <component :is="m.icon" class="w-4 h-4 shrink-0"/> 
+          <component :is="m.icon" class="w-4 h-4 md:w-5 md:h-5 shrink-0"/> 
           <span>{{ m.name }}</span>
         </li>
       </ul>
     </div>
   </div>
 
-  <div class="shrink-0 p-6 pt-4 border-t border-zinc-800 text-[10px] text-zinc-500 font-bold">
+  <div class="shrink-0 p-6 md:p-7 pt-4 border-t border-zinc-800 text-[10px] md:text-xs text-zinc-500 font-bold">
     Sinar Pagi v1.2 FIXED
   </div>
 </div>

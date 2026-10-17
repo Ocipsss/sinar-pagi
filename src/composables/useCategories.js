@@ -25,11 +25,13 @@ export function useCategories() {
   })
 
   const loadCategories = async () => {
-    categories.value = await categoryRepo.getAll()
+    const data = await categoryRepo.getAll()
+    categories.value = data.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
   }
 
   const loadUnits = async () => {
-    units.value = await unitRepo.getAll()
+    const data = await unitRepo.getAll()
+    units.value = data.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
   }
 
   const openModal = (cat = null) => {

@@ -6,7 +6,7 @@ import { serviceRepository } from '../db/repositories/serviceRepository.js'
 import { categoryRepo } from '../db/repositories/categoryRepository.js'
 
 export function useSettingsMenu() {
-  const rokokProducts = ref([]) // Menampung produk Rokok & Permen
+  const rokokProducts = ref([])
   const packages = ref([])
   const services = ref([])
   const categoryOptions = ref([])
@@ -22,11 +22,16 @@ export function useSettingsMenu() {
         categoryRepo.getAll()
       ])
       
-      // Filter produk dengan kategori Rokok atau Permen
       const packageCategories = ['rokok', 'permen']
-      rokokProducts.value = allProducts.filter(p => 
-        packageCategories.includes((p.category || '').toLowerCase())
-      )
+      
+      // Filter & Urutkan: Kategori dulu A-Z, lalu Nama Barang A-Z
+      rokokProducts.value = allProducts
+        .filter(p => packageCategories.includes((p.category || '').toLowerCase()))
+        .sort((a, b) => {
+          const catCompare = (a.category || '').localeCompare(b.category || '')
+          if (catCompare !== 0) return catCompare
+          return (a.name || '').localeCompare(b.name || '')
+        })
 
       packages.value = allPackages
       services.value = allServices

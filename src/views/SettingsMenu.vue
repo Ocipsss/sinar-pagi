@@ -68,13 +68,37 @@
 
     <!-- TAB 2: HARGA PAKET (ROKOK & PERMEN) -->
     <div v-if="activeTab === 'rokok'" class="space-y-4">
-      <div v-if="rokokProducts.length === 0" class="py-12 text-center text-zinc-400 text-xs bg-white rounded-2xl border border-zinc-100">
-        Belum ada produk dengan kategori "Rokok" atau "Permen"
+      <!-- Sub-Filter Kategori Paket -->
+      <div class="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
+        <button 
+          @click="selectedPackageCat = 'ALL'"
+          :class="[
+            'px-3.5 py-1.5 rounded-xl text-xs font-bold shrink-0 transition',
+            selectedPackageCat === 'ALL' ? 'bg-zinc-900 text-white shadow-sm' : 'bg-white text-zinc-600 border border-zinc-200'
+          ]"
+        >
+          Semua ({{ rokokProducts.length }})
+        </button>
+        <button 
+          v-for="cat in availablePackageCategories" 
+          :key="cat"
+          @click="selectedPackageCat = cat"
+          :class="[
+            'px-3.5 py-1.5 rounded-xl text-xs font-bold shrink-0 transition uppercase',
+            selectedPackageCat === cat ? 'bg-zinc-900 text-white shadow-sm' : 'bg-white text-zinc-600 border border-zinc-200'
+          ]"
+        >
+          {{ cat }}
+        </button>
+      </div>
+
+      <div v-if="filteredRokokProducts.length === 0" class="py-12 text-center text-zinc-400 text-xs bg-white rounded-2xl border border-zinc-100">
+        Belum ada produk dengan kategori ini
       </div>
 
       <div v-else class="space-y-3">
         <div 
-          v-for="p in rokokProducts" 
+          v-for="p in filteredRokokProducts" 
           :key="p.id" 
           class="p-4 bg-white rounded-2xl border border-zinc-100 shadow-sm space-y-3"
         >
@@ -106,9 +130,12 @@
                 <span class="font-bold text-zinc-800">{{ pkg.name }}</span>
                 <span class="text-zinc-400 ml-2">({{ pkg.qty_pcs }} pcs/batang)</span>
               </div>
-              <div class="flex items-center gap-2">
-                <span class="font-black text-zinc-900">Rp {{ formatRibuan(pkg.price_sell) }}</span>
-                <button @click="handleDeletePackage(pkg)" class="p-1 text-red-500 hover:bg-red-100 rounded-lg">
+              <div class="flex items-center gap-1.5">
+                <span class="font-black text-zinc-900 mr-1">Rp {{ formatRibuan(pkg.price_sell) }}</span>
+                <button @click="openPackageModal(p, pkg)" title="Edit Paket" class="p-1 text-zinc-600 hover:bg-zinc-200 rounded-lg transition">
+                  <Pencil class="w-3.5 h-3.5"/>
+                </button>
+                <button @click="handleDeletePackage(pkg)" title="Hapus Paket" class="p-1 text-red-500 hover:bg-red-100 rounded-lg transition">
                   <Trash2 class="w-3.5 h-3.5"/>
                 </button>
               </div>
@@ -164,7 +191,7 @@
       <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl space-y-4">
         <div class="flex justify-between items-center">
           <div>
-            <h2 class="font-black text-base">Tambah Paket Eceran</h2>
+            <h2 class="font-black text-base">{{ editingPackageId ? 'Edit Paket Eceran' : 'Tambah Paket Eceran' }}</h2>
             <p class="text-xs text-zinc-400">{{ selectedRokokProduct?.name }}</p>
           </div>
           <button @click="showPackageModal = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
@@ -198,7 +225,9 @@
           </div>
           <div class="flex gap-2 pt-2">
             <button type="button" @click="showPackageModal = false" class="flex-1 py-3 bg-zinc-100 font-bold text-xs rounded-xl">Batal</button>
-            <button type="submit" class="flex-1 py-3 bg-zinc-900 text-white font-bold text-xs rounded-xl shadow-md">Simpan Paket</button>
+            <button type="submit" class="flex-1 py-3 bg-zinc-900 text-white font-bold text-xs rounded-xl shadow-md">
+              {{ editingPackageId ? 'Simpan Perubahan' : 'Simpan Paket' }}
+            </button>
           </div>
         </form>
       </div>
@@ -207,12 +236,14 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { Plus, Pencil, Trash2, X } from 'lucide-vue-next'
 import { useSettingsMenu } from '../composables/useSettingsMenu.js'
 import { formatRibuan, formatRp, toNumber } from '../utils/formatters/currency.js'
 
 const activeTab = ref('seduh')
+const selectedPackageCat = ref('ALL')
+
 const {
   rokokProducts,
   services,
@@ -225,6 +256,19 @@ const {
   deleteService
 } = useSettingsMenu()
 
+// Filter Kategori Paket
+const availablePackageCategories = computed(() => {
+  const cats = new Set(rokokProducts.value.map(p => (p.category || 'UMUM').toUpperCase()))
+  return Array.from(cats)
+})
+
+const filteredRokokProducts = computed(() => {
+  if (selectedPackageCat.value === 'ALL') return rokokProducts.value
+  return rokokProducts.value.filter(
+    p => (p.category || 'UMUM').toUpperCase() === selectedPackageCat.value
+  )
+})
+
 // Modal State Jasa
 const showServiceModal = ref(false)
 const editingServiceId = ref(null)
@@ -232,6 +276,7 @@ const serviceForm = ref({ name: '', price: 0, category: 'Mie' })
 
 // Modal State Paket Eceran
 const showPackageModal = ref(false)
+const editingPackageId = ref(null)
 const selectedRokokProduct = ref(null)
 const packageForm = ref({ name: '', qty_pcs: 1, price_sell: 0 })
 
@@ -251,7 +296,7 @@ const handleSaveService = async () => {
     id: editingServiceId.value,
     name: serviceForm.value.name,
     price: serviceForm.value.price,
-    category: serviceForm.category
+    category: serviceForm.value.category
   })
   showServiceModal.value = false
 }
@@ -262,15 +307,26 @@ const handleDeleteService = async (s) => {
   }
 }
 
-const openPackageModal = (p) => {
+const openPackageModal = (p, pkg = null) => {
   selectedRokokProduct.value = p
-  packageForm.value = { name: '', qty_pcs: 1, price_sell: 0 }
+  if (pkg) {
+    editingPackageId.value = pkg.id
+    packageForm.value = {
+      name: pkg.name,
+      qty_pcs: pkg.qty_pcs,
+      price_sell: pkg.price_sell
+    }
+  } else {
+    editingPackageId.value = null
+    packageForm.value = { name: '', qty_pcs: 1, price_sell: 0 }
+  }
   showPackageModal.value = true
 }
 
 const handleSavePackage = async () => {
   if (!selectedRokokProduct.value) return
   await savePackage({
+    id: editingPackageId.value || undefined,
     productId: selectedRokokProduct.value.id,
     name: (packageForm.value.name || '').toUpperCase().trim(),
     qty_pcs: packageForm.value.qty_pcs,
