@@ -34,7 +34,7 @@ export function useProductForm() {
       price_modal: '',
       price_sell: '',
       qty: '',
-      minStock: 5
+      minStock: 2
     }
   })
 

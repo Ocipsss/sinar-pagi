@@ -109,7 +109,7 @@
     </div>
     <div class="flex flex-col gap-1">
       <label class="text-[10px] text-zinc-500 font-bold uppercase">Min. Stok</label>
-      <input v-model.number="minStock" type="number" placeholder="5" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold"/>
+      <input v-model.number="minStock" type="number" placeholder="2" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold"/>
     </div>
   </div>
 
@@ -282,7 +282,7 @@ const resetFormFields = () => {
   price_modal.value = 0
   price_sell.value = 0
   qty.value = 0
-  minStock.value = 5
+  minStock.value = 2
 }
 
 const checkExistingBarcode = async (barcodeVal) => {
@@ -334,7 +334,7 @@ const initFormData = async () => {
     price_modal.value = props.initialData.price_modal || 0
     price_sell.value = props.initialData.price_sell || 0
     qty.value = props.initialData.qty || 0
-    minStock.value = props.initialData.minStock || 5
+    minStock.value = props.initialData.minStock || 2
   } else {
     resetFormFields()
   }
@@ -378,7 +378,7 @@ const onSubmit = handleSubmit(async (vals) => {
     price_modal: toNumber(price_modal.value),
     price_sell: toNumber(price_sell.value),
     qty: toNumber(qty.value),
-    minStock: toNumber(minStock.value) || 5
+    minStock: toNumber(minStock.value) || 2
   }
 
   const isDuplicate = await checkExistingBarcode(payload.code)
