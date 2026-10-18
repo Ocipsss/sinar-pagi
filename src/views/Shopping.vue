@@ -256,7 +256,7 @@
             />
           </div>
 
-          <div class="max-h-[160px] overflow-auto border border-zinc-100 rounded-xl divide-y">
+          <div v-if="filteredMasterProducts.length > 0" class="max-h-[160px] overflow-auto border border-zinc-100 rounded-xl divide-y">
             <div 
               v-for="p in filteredMasterProducts" 
               :key="p.id"
@@ -265,7 +265,10 @@
             >
               <div>
                 <div class="font-bold text-zinc-900">{{ p.name }}</div>
-                <div class="text-[10px] text-zinc-400">Stok sisa: {{ p.qty }} • Rp {{ formatRibuan(p.price_modal) }}</div>
+                <div class="text-[10px] text-zinc-400">
+                  Stok sisa: {{ p.qty }} • Rp {{ formatRibuan(p.price_modal) }}
+                  <span v-if="p.packUnit || p.pack_unit"> • Grosir: {{ p.packUnit || p.pack_unit }}</span>
+                </div>
               </div>
               <span class="text-[10px] bg-zinc-100 px-2 py-0.5 rounded font-black text-zinc-600">Pilih</span>
             </div>
@@ -290,14 +293,26 @@
               <input 
                 v-model.number="form.qty" 
                 type="number" 
-                min="1" 
+                min="0" 
                 required 
                 class="w-full px-4 py-2.5 bg-zinc-50 border rounded-xl text-sm font-bold" 
               />
             </div>
             <div>
-              <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Satuan</label>
+              <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Satuan *</label>
+              <!-- Pilihan Satuan (Ecer & Grosir) jika dari Master Produk -->
+              <select 
+                v-if="!isCustomItem && availableUnits.length > 0" 
+                v-model="form.unit" 
+                class="w-full px-3 py-2.5 bg-amber-50 border border-amber-200 rounded-xl text-xs font-bold text-zinc-900"
+              >
+                <option v-for="u in availableUnits" :key="u.value" :value="u.value">
+                  {{ u.label }} - Rp {{ formatRibuan(u.priceModal) }}
+                </option>
+              </select>
+              <!-- Input manual jika Custom Item -->
               <input 
+                v-else 
                 v-model="form.unit" 
                 placeholder="pcs / dus / slop" 
                 class="w-full px-4 py-2.5 bg-zinc-50 border rounded-xl text-sm font-bold" 
@@ -366,6 +381,7 @@ const {
   form,
   productSearch,
   filteredMasterProducts,
+  availableUnits,
   totalItems,
   boughtItemsCount,
   estimatedTotalCost,

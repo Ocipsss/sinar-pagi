@@ -9,7 +9,7 @@ export function useShopping() {
   const products = ref([])
   const categories = ref([])
   const searchQuery = ref('')
-  const activeFilter = ref('ALL') // ALL, PENDING, BOUGHT
+  const activeFilter = ref('ALL')
   const loading = ref(false)
 
   // State Modal Tambah Belanjaan & Searchbar Master Produk
@@ -28,18 +28,6 @@ export function useShopping() {
     notes: ''
   })
 
-  // Watcher: Hitung otomatis estimasi modal berdasarkan input qty & modal per pcs
-  watch(
-    () => form.value.qty,
-    (newQty) => {
-      if (selectedProduct.value) {
-        const qtyNum = Number(newQty) || 0
-        const unitModal = selectedProduct.value.price_modal || 0
-        form.value.estimatedPrice = Math.round(unitModal * qtyNum)
-      }
-    }
-  )
-
   // Filter Master Produk berdasarkan query di modal
   const filteredMasterProducts = computed(() => {
     const q = productSearch.value.toLowerCase().trim()
@@ -48,6 +36,60 @@ export function useShopping() {
       .filter(p => p.name.toLowerCase().includes(q) || (p.code || '').toLowerCase().includes(q))
       .slice(0, 10)
   })
+
+  // Opsi pilihan satuan (Eceran & Grosir/Pack) berdasarkan skema DB Dexie
+  const availableUnits = computed(() => {
+    if (!selectedProduct.value) return []
+    const p = selectedProduct.value
+    const units = []
+
+    // 1. Satuan Eceran (pcs / unit utama)
+    const ecerUnit = p.unit || 'pcs'
+    const ecerModal = Number(p.price_modal) || 0
+    units.push({
+      label: `${ecerUnit} (Ecer)`,
+      value: ecerUnit,
+      priceModal: ecerModal,
+      type: 'unit'
+    })
+
+    // 2. Satuan Grosir / Pack / Dus (Membaca purchasePackName, packQty, packPrice)
+    const packUnit = p.purchasePackName || p.packUnit || p.pack_unit
+    const packQty = Number(p.packQty || p.pack_qty) || 1
+
+    // Ambil harga modal grosir (packPrice) atau hitung otomatis
+    let packModalPrice = Number(p.packPrice || p.packPriceModal)
+
+    if (!packModalPrice || isNaN(packModalPrice) || packModalPrice === 0) {
+      packModalPrice = ecerModal * packQty
+    }
+
+    // Masukkan opsi grosir jika purchasePackName terisi
+    if (packUnit) {
+      units.push({
+        label: `${packUnit} (${packQty} ${ecerUnit})`,
+        value: packUnit,
+        priceModal: packModalPrice,
+        type: 'pack'
+      })
+    }
+
+    return units
+  })
+
+  // Watcher: Hitung otomatis estimasi modal berdasarkan input qty & satuan yang dipilih
+  watch(
+    [() => form.value.qty, () => form.value.unit],
+    ([newQty, newUnit]) => {
+      if (!selectedProduct.value) return
+
+      const qtyNum = Number(newQty) || 0
+      const matchedUnit = availableUnits.value.find(u => u.value === newUnit)
+      const unitPriceModal = matchedUnit ? matchedUnit.priceModal : (selectedProduct.value.price_modal || 0)
+
+      form.value.estimatedPrice = Math.round(unitPriceModal * qtyNum)
+    }
+  )
 
   // State Modal Konfirmasi Bayar Kulakan
   const showPayModal = ref(false)
@@ -139,7 +181,7 @@ export function useShopping() {
   const openModal = () => {
     isCustomItem.value = false
     selectedProduct.value = null
-    productSearch.value = '' // Reset searchbar saat modal dibuka
+    productSearch.value = ''
     form.value = {
       productId: null,
       name: '',
@@ -156,10 +198,18 @@ export function useShopping() {
     selectedProduct.value = product
     form.value.productId = product.id
     form.value.name = product.name
-    form.value.category = product.category
-    form.value.unit = product.unit
-    form.value.qty = 0 // Default awal jumlah belanjaan ke 0
-    form.value.estimatedPrice = 0 // Default awal estimasi modal ke 0
+    form.value.category = product.category || 'Umum'
+    form.value.qty = 0
+    form.value.estimatedPrice = 0
+
+    // Pilih otomatis opsi grosir jika produk memiliki purchasePackName
+    const packUnit = product.purchasePackName || product.packUnit || product.pack_unit
+    if (packUnit) {
+      form.value.unit = packUnit
+    } else {
+      form.value.unit = product.unit || 'pcs'
+    }
+
     productSearch.value = ''
   }
 
@@ -167,7 +217,7 @@ export function useShopping() {
     if (!form.value.name.trim()) return
 
     await shoppingService.addShoppingItem(form.value)
-    productSearch.value = '' // Reset searchbar setelah berhasil simpan
+    productSearch.value = ''
     showAddModal.value = false
     await loadData()
   }
@@ -223,6 +273,7 @@ export function useShopping() {
     selectedProduct,
     productSearch,
     filteredMasterProducts,
+    availableUnits,
     form,
     totalItems,
     boughtItemsCount,
