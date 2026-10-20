@@ -1,5 +1,5 @@
 <script setup>
-import { X, LogOut } from 'lucide-vue-next'
+import { LogOut } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 import { useOperatorStore } from '../stores/operatorStore.js'
 
@@ -30,9 +30,6 @@ const handleLogout = () => {
   <div class="p-6 md:p-7 pb-4 shrink-0 space-y-3 md:space-y-4">
     <div class="flex justify-between items-center">
       <span class="font-black text-lg md:text-xl tracking-tight">SINAR PAGI</span>
-      <button @click="$emit('close')" class="p-2 md:p-2.5 bg-zinc-800 rounded-xl active:scale-95 transition">
-        <X class="w-4 h-4 md:w-5 md:h-5"/>
-      </button>
     </div>
 
     <!-- Info Operator Aktif & Tombol Switch Shift -->

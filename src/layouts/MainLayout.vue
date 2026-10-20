@@ -1,36 +1,41 @@
 <template>
-<div class="min-h-screen bg-zinc-900 overflow-hidden">
+<div class="min-h-screen bg-zinc-900 overflow-hidden relative">
   <!-- SIDEBAR -->
-  <!-- SIDEBAR -->
-<aside 
-  :class="[
-    'fixed top-0 left-0 h-full w-[280px] md:w-[320px] z-[60] transition-transform duration-300 ease-in-out will-change-transform', 
-    isOpen ? 'translate-x-0' : '-translate-x-full'
-  ]"
->
-  <SidebarComponent 
-    :groups="groups" 
-    :activePage="activePage" 
-    @select-page="handleSelect" 
-    @close="isOpen = false" 
-  />
-</aside>
+  <aside 
+    :class="[
+      'fixed top-0 left-0 h-full w-[280px] md:w-[320px] z-[60] transition-transform duration-300 ease-in-out will-change-transform', 
+      isOpen ? 'translate-x-0' : '-translate-x-full'
+    ]"
+  >
+    <SidebarComponent 
+      :groups="groups" 
+      :activePage="activePage" 
+      @select-page="handleSelect" 
+      @close="isOpen = false" 
+    />
+  </aside>
 
-<!-- MAIN CONTAINER -->
-<div 
-  :class="[
-    'min-h-screen bg-zinc-50 flex flex-col overflow-hidden transition-transform duration-300 ease-in-out h-screen will-change-transform', 
-    isOpen ? 'translate-x-[280px] md:translate-x-[320px]' : 'translate-x-0'
-  ]"
->
+  <!-- OVERLAY ASAL SENTUH (Untuk menutup sidebar saat disentuh/diklik) -->
+  <div 
+    v-if="isOpen" 
+    @click="isOpen = false" 
+    class="fixed inset-0 z-[55] bg-black/20 cursor-pointer"
+  ></div>
+
+  <!-- MAIN CONTAINER Halaman Kanan (Efek Blur saat Sidebar Terbuka) -->
+  <div 
+    :class="[
+      'min-h-screen bg-zinc-50 flex flex-col overflow-hidden transition-all duration-300 ease-in-out h-screen will-change-transform', 
+      isOpen ? 'translate-x-[280px] md:translate-x-[320px] blur-[2px] pointer-events-none select-none' : 'translate-x-0 blur-none'
+    ]"
+  >
 
     <!-- HEADER STICKY -->
     <header class="shrink-0 h-[56px] md:h-16 w-full bg-white border-b border-zinc-100 px-4 md:px-6 flex justify-between items-center z-40 sticky top-0">
       <div class="flex items-center gap-3">
         <!-- TOMBOL BURGER MENU -->
         <button @click="isOpen = !isOpen" class="p-2.5 md:p-3 bg-zinc-900 text-white rounded-xl md:rounded-2xl active:scale-95 transition">
-          <Menu v-if="!isOpen" class="w-5 h-5 md:w-6 md:h-6"/>
-          <X v-else class="w-5 h-5 md:w-6 md:h-6"/>
+          <Menu class="w-5 h-5 md:w-6 md:h-6"/>
         </button>
 
         <div class="font-black text-sm md:text-base text-zinc-900">{{ activePage }}</div>
@@ -120,7 +125,7 @@
 import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { 
-  Menu, X, Package, Store, LayoutDashboard, Plus, 
+  Menu, Package, Store, LayoutDashboard, Plus, 
   Users, ShoppingCart, Tags, History, Coffee, Smartphone, Wallet, RefreshCw, BarChart3, Settings, Receipt, Printer
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
