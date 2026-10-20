@@ -86,12 +86,24 @@
     <!-- Area Keranjang Belanja -->
     <div class="flex-1 overflow-auto px-4 pb-4 md:p-0">
       <div class="bg-white border border-zinc-100 rounded-[1.5rem] p-4 h-full flex flex-col">
+        
+        <!-- BANNER PERINGATAN MODE EDIT NOTA -->
+        <div v-if="store.editingTransactionId" class="mb-3 bg-amber-500 text-zinc-950 p-3 rounded-2xl flex items-center justify-between font-bold text-xs shadow-md shrink-0">
+          <div class="flex items-center gap-2 min-w-0">
+            <Pencil class="w-4 h-4 shrink-0" />
+            <span class="truncate">Mode Edit Nota #{{ store.editingTransactionId.slice(0, 8) }}</span>
+          </div>
+          <button @click="store.clearCart()" class="px-2.5 py-1 bg-zinc-950 text-white rounded-xl text-[10px] uppercase font-black shrink-0 active:scale-95 transition">
+            Batal Edit
+          </button>
+        </div>
+
         <div class="flex justify-between items-center mb-3 shrink-0">
           <div class="font-black text-[10px] text-zinc-400 tracking-widest uppercase">
             Keranjang • {{ store.cart.length }} item
           </div>
           <button 
-            v-if="store.cart.length > 0" 
+            v-if="store.cart.length > 0 && !store.editingTransactionId" 
             @click="store.holdCurrentCart()" 
             class="text-[10px] bg-amber-50 text-amber-700 font-bold px-3 py-1.5 rounded-xl border border-amber-200 flex items-center gap-1 active:scale-95 transition"
           >
@@ -107,18 +119,18 @@
 
         <div v-else class="space-y-1 overflow-auto flex-1 pr-1">
           <div v-for="(c, i) in store.cart" :key="c.cartItemId || c.id" class="flex gap-3 py-3 border-b border-zinc-50 last:border-0">
-            <div class="flex-1">
-              <div class="font-bold text-[13px] leading-tight">{{ c.name }}</div>
+            <div class="flex-1 min-w-0">
+              <div class="font-bold text-[13px] leading-tight truncate">{{ c.name }}</div>
               <div class="text-[11px] text-zinc-500">
                 Rp {{ formatRibuan(c.price_sell) }} x {{ c.cartQty }}
               </div>
             </div>
-            <div class="flex items-center gap-2">
-              <button @click="store.dec(i)" class="w-8 h-8 bg-zinc-100 rounded-full font-black">-</button>
+            <div class="flex items-center gap-2 shrink-0">
+              <button @click="store.dec(i)" class="w-8 h-8 bg-zinc-100 rounded-full font-black active:scale-95">-</button>
               <span class="w-6 text-center text-sm font-black">{{ c.cartQty }}</span>
-              <button @click="store.inc(i)" class="w-8 h-8 bg-zinc-900 text-white rounded-full font-black">+</button>
+              <button @click="store.inc(i)" class="w-8 h-8 bg-zinc-900 text-white rounded-full font-black active:scale-95">+</button>
             </div>
-            <div class="w-[80px] text-right font-black text-[13px]">
+            <div class="w-[80px] text-right font-black text-[13px] shrink-0">
               Rp {{ formatRibuan(c.price_sell * c.cartQty) }}
             </div>
           </div>
@@ -166,7 +178,7 @@
             class="w-full pl-12 pr-4 py-3.5 bg-white text-zinc-900 rounded-2xl font-black text-lg focus:outline-none"
           />
         </div>
-        <button @click="store.bayarNominal=total" class="w-full py-2.5 bg-white/10 border border-white/10 text-white rounded-xl text-[11px] font-black">
+        <button @click="store.bayarNominal=total" class="w-full py-2.5 bg-white/10 border border-white/10 text-white rounded-xl text-[11px] font-black active:scale-95 transition">
           UANG PAS Rp {{ formatRibuan(total) }}
         </button>
         <div v-if="store.bayarNominal > 0" class="flex justify-between text-xs pt-2 border-t border-zinc-800">
@@ -189,13 +201,22 @@
       </div>
     </div>
 
+    <!-- Tombol Simpan/Bayar -->
     <button 
       v-if="store.paymentMethod==='QRIS' || store.paymentMethod==='TEMPO' || (store.paymentMethod==='CASH' && store.bayarNominal>0)" 
       :disabled="(store.paymentMethod==='CASH' && store.bayarNominal < total) || (store.paymentMethod==='TEMPO' && !store.selectedMember)" 
       @click="onCheckout" 
-      class="w-full bg-white disabled:bg-zinc-700 disabled:text-zinc-500 text-zinc-900 py-4 rounded-2xl font-black text-sm mt-4 active:scale-95 transition"
+      :class="[
+        'w-full py-4 rounded-2xl font-black text-sm mt-4 active:scale-95 transition',
+        store.editingTransactionId ? 'bg-amber-500 text-zinc-950 hover:bg-amber-400' : 'bg-white text-zinc-900 disabled:bg-zinc-700 disabled:text-zinc-500'
+      ]"
     >
-      {{ store.paymentMethod==='QRIS'? 'Bayar dengan QRIS' : `Bayar Rp ${formatRibuan(total)}` }}
+      <template v-if="store.editingTransactionId">
+        Simpan Perubahan Nota
+      </template>
+      <template v-else>
+        {{ store.paymentMethod==='QRIS'? 'Bayar dengan QRIS' : `Bayar Rp ${formatRibuan(total)}` }}
+      </template>
     </button>
   </div>
 </div>
@@ -208,21 +229,20 @@
         <h2 class="font-black text-base">{{ selectedProductForOption.name }}</h2>
         <p class="text-xs text-zinc-400">Pilih varian / opsi penyajian</p>
       </div>
-      <button @click="selectedProductForOption = null" class="p-2 bg-zinc-100 rounded-xl">
-        <X class="w-4 h-4"/>
+      <button @click="selectedProductForOption = null" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
+    </div>
+
+    <div v-if="['rokok', 'permen'].includes((selectedProductForOption.category || '').toLowerCase())" class="space-y-2 overflow-auto flex-1 pr-1">
+      <button 
+        v-for="pkg in getProductPackages(selectedProductForOption.id)" 
+        :key="pkg.id"
+        @click="confirmAddToCart(selectedProductForOption, { packageInfo: pkg, price_sell: pkg.price_sell, customName: `${pkg.name} ${selectedProductForOption.name}` })"
+        class="w-full p-3.5 bg-zinc-50 border border-zinc-200 rounded-xl font-bold text-sm text-left flex justify-between items-center hover:bg-zinc-100 transition"
+      >
+        <span>{{ pkg.name }}</span>
+        <span class="font-black">Rp {{ formatRibuan(pkg.price_sell) }}</span>
       </button>
     </div>
-<div v-if="['rokok', 'permen'].includes((selectedProductForOption.category || '').toLowerCase())" class="space-y-2 overflow-auto flex-1 pr-1">
-  <button 
-    v-for="pkg in getProductPackages(selectedProductForOption.id)" 
-    :key="pkg.id"
-    @click="confirmAddToCart(selectedProductForOption, { packageInfo: pkg, price_sell: pkg.price_sell, customName: `${pkg.name} ${selectedProductForOption.name}` })"
-    class="w-full p-3.5 bg-zinc-50 border border-zinc-200 rounded-xl font-bold text-sm text-left flex justify-between items-center hover:bg-zinc-100 transition"
-  >
-    <span>{{ pkg.name }}</span>
-    <span class="font-black">Rp {{ formatRibuan(pkg.price_sell) }}</span>
-  </button>
-</div>
 
     <div v-else class="space-y-2 overflow-auto flex-1 pr-1">
       <button 
@@ -322,7 +342,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, onActivated, nextTick, watch } from 'vue'
-import { Search, X, ShoppingBag, Clock, PauseCircle, Trash2, ScanLine } from 'lucide-vue-next'
+import { Search, X, ShoppingBag, Clock, PauseCircle, Trash2, ScanLine, Pencil } from 'lucide-vue-next'
 import { useKasir } from '../composables/useKasir.js'
 import { useProductScanner } from '../composables/useProductScanner.js'
 import { formatRibuan } from '../utils/formatters/currency.js'
@@ -412,6 +432,7 @@ const restorePending = (pendingId) => {
 
 const onCheckout = async () => { 
   try { 
+    const isEditing = !!store.editingTransactionId
     const currentCart = [...store.cart]
     const currentMember = store.selectedMember
     const currentMethod = store.paymentMethod
@@ -429,9 +450,12 @@ const onCheckout = async () => {
       items: currentCart
     }
 
-    toast.success('Transaksi berhasil diproses!') 
+    if (isEditing) {
+      toast.success('Nota berhasil diperbarui!')
+    } else {
+      toast.success('Transaksi berhasil diproses!')
+    }
 
-    // GUARD OPSI B: Tampilkan warning toast jika ada stok yang menjadi minus
     if (res.stockWarnings && res.stockWarnings.length > 0) {
       setTimeout(() => {
         toast.warning(`Perhatian! Stok produk berikut menjadi minus:\n${res.stockWarnings.join(', ')}`)
@@ -445,7 +469,6 @@ const onCheckout = async () => {
 
 watch(total, t => { if (store.paymentMethod === 'QRIS') store.bayarNominal = t })
 
-// Otomatis sorot kursor ke searchbar member saat modal member terbuka
 watch(showMemberPicker, (isOpen) => {
   if (isOpen) {
     nextTick(() => {

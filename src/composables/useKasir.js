@@ -1,6 +1,7 @@
 // src/composables/useKasir.js
 import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated } from 'vue'
 import { kasirService } from '../services/kasirService.js'
+import { salesHistoryService } from '../services/salesHistoryService.js'
 import { packageRepository } from '../db/repositories/packageRepository.js'
 import { serviceRepository } from '../db/repositories/serviceRepository.js'
 import { formatRibuan } from '../utils/formatters/currency.js'
@@ -87,7 +88,10 @@ export function useKasir() {
     packagesList.value = packages
     servicesList.value = services
 
-    store.bayarNominal = 0
+    // Jangan reset bayarNominal jika sedang dalam mode edit transaksi
+    if (!store.editingTransactionId) {
+      store.bayarNominal = 0
+    }
   }
 
   const getProductPackages = (productId) => {
@@ -95,19 +99,19 @@ export function useKasir() {
   }
 
   const handleSelectProduct = (product) => {
-  const pCat = (product.category || '').toLowerCase()
-  const isPackageCategory = ['rokok', 'permen'].includes(pCat)
-  const hasPackages = getProductPackages(product.id).length > 0
-  const hasConfiguredServices = servicesList.value.some(s => (s.category || '').toLowerCase() === pCat)
+    const pCat = (product.category || '').toLowerCase()
+    const isPackageCategory = ['rokok', 'permen'].includes(pCat)
+    const hasPackages = getProductPackages(product.id).length > 0
+    const hasConfiguredServices = servicesList.value.some(s => (s.category || '').toLowerCase() === pCat)
 
-  if ((isPackageCategory && hasPackages) || (!isPackageCategory && hasConfiguredServices)) {
-    selectedProductForOption.value = product
-  } else {
-    store.addToCart(product)
-    q.value = ''
-    showSearch.value = false
+    if ((isPackageCategory && hasPackages) || (!isPackageCategory && hasConfiguredServices)) {
+      selectedProductForOption.value = product
+    } else {
+      store.addToCart(product)
+      q.value = ''
+      showSearch.value = false
+    }
   }
-}
 
   const confirmAddToCart = (product, options) => {
     const targetPrice = (options.price_sell !== undefined) ? options.price_sell : product.price_sell
@@ -121,6 +125,36 @@ export function useKasir() {
     if (store.paymentMethod === 'TEMPO' && !store.selectedMember) throw new Error('Pilih member untuk TEMPO')
     if (store.paymentMethod === 'CASH' && store.bayarNominal < total.value) throw new Error('Nominal kurang')
 
+    // 1. JIKA MODE EDIT TRANSAKSI
+    if (store.editingTransactionId) {
+      const originalTrx = {
+        id: store.editingTransactionId,
+        paymentMethod: store.paymentMethod,
+        memberId: store.selectedMember?.id || null,
+        total: total.value
+      }
+
+      const updatedItems = store.cart.map(item => ({
+        productId: item.id,
+        productName: item.name,
+        price: item.price_sell,
+        qty: item.cartQty,
+        serviceId: item.isServed ? 'SERVICE_SEDUH' : null
+      }))
+
+      // Sertakan metode bayar, member, dan nominal bayar terbaru yang dipilih kasir
+      const newPaymentData = {
+        paymentMethod: store.paymentMethod,
+        memberId: store.selectedMember?.id || null,
+        amountPaid: store.paymentMethod === 'TEMPO' ? 0 : store.paymentMethod === 'QRIS' ? total.value : store.bayarNominal
+      }
+
+      const res = await salesHistoryService.updateTransaction(originalTrx, updatedItems, newPaymentData)
+      store.clearCart()
+      return res
+    }
+
+    // 2. JIKA TRANSAKSI BARU
     const res = await kasirService.checkout({
       cart: store.cart,
       member: store.selectedMember,
@@ -148,7 +182,6 @@ export function useKasir() {
 
     if (matchedProduct) {
       handleSelectProduct(matchedProduct)
-      //toast.success(`Barang ditambahkan: ${matchedProduct.name}`)
       q.value = ''
       showSearch.value = false
       return true
@@ -178,7 +211,6 @@ export function useKasir() {
     }
 
     if (e.key === 'Enter') {
-      // Prioritaskan nilai dari q.value jika searchbar sedang fokus
       if (isKasirSearchInput && q.value.trim().length > 0) {
         e.preventDefault()
         const codeToScan = q.value.trim()

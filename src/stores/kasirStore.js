@@ -7,10 +7,27 @@ export const useKasirStore = defineStore('kasir', {
     selectedMember: null,
     paymentMethod: 'CASH',
     bayarNominal: 0,
-    pendingCarts: []
+    pendingCarts: [],
+    editingTransactionId: null // ID transaksi yang sedang diedit
   }),
   actions: {
-    // Parameter itemOption bisa berisi: { packageInfo, isServed, serviceFee, customName }
+    // Muat transaksi lama ke keranjang kasir
+    loadTransactionForEdit(transaction) {
+      this.clearCart()
+      this.editingTransactionId = transaction.id
+      this.paymentMethod = transaction.paymentMethod || 'CASH'
+      
+      // Isi keranjang dengan item dari nota lama
+      this.cart = transaction.items.map(item => ({
+        id: item.productId || item.id,
+        cartItemId: item.id || crypto.randomUUID(),
+        name: item.productName || item.name,
+        price_sell: item.price,
+        cartQty: item.qty,
+        isServed: !!item.serviceId
+      }))
+    },
+
     addToCart(product, options = {}) {
       const { packageInfo = null, isServed = false, serviceFee = 0, customName = '' } = options
 
@@ -60,6 +77,7 @@ export const useKasirStore = defineStore('kasir', {
       this.selectedMember = null
       this.bayarNominal = 0
       this.paymentMethod = 'CASH'
+      this.editingTransactionId = null
     },
     holdCurrentCart(label = '') {
       if (this.cart.length === 0) return

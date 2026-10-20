@@ -188,14 +188,24 @@
             </span>
           </div>
 
-          <!-- Tombol Cetak Struk (Reprint) -->
-          <button 
-            @click="showReceiptModal = true"
-            class="w-full py-3 bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 shadow-md transition active:scale-95"
-          >
-            <Printer class="w-4 h-4" />
-            <span>Cetak Struk / Reprint Nota</span>
-          </button>
+          <div class="flex gap-2">
+            <!-- Tombol Edit Transaksi Barang ke Kasir -->
+            <button 
+              v-if="selectedTransaction.trxType === 'BARANG' && selectedTransaction.status !== 'void'"
+              @click="handleEditInKasir(selectedTransaction)"
+              class="flex-1 py-3 bg-amber-500 hover:bg-amber-600 text-zinc-950 rounded-xl font-bold text-xs transition active:scale-95 flex items-center justify-center gap-1.5"
+            >
+              <Pencil class="w-4 h-4" /> Edit di Kasir
+            </button>
+
+            <!-- Tombol Cetak Struk (Reprint) -->
+            <button 
+              @click="showReceiptModal = true"
+              class="flex-1 py-3 bg-zinc-900 hover:bg-zinc-800 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 shadow-md transition active:scale-95"
+            >
+              <Printer class="w-4 h-4" /> Cetak
+            </button>
+          </div>
 
           <div class="flex gap-2">
             <button 
@@ -228,10 +238,16 @@
 
 <script setup>
 import { ref, onMounted, onActivated } from 'vue'
-import { Search, Receipt, Calendar, X, Printer } from 'lucide-vue-next'
+import { useRouter } from 'vue-router'
+import { Search, Receipt, Calendar, X, Printer, Pencil } from 'lucide-vue-next'
 import { formatRibuan } from '../utils/formatters/currency.js'
 import { useSalesHistory } from '../composables/useSalesHistory.js'
+import { useKasirStore } from '../stores/kasirStore.js'
+import { toast } from 'vue-sonner'
 import ReceiptModal from '../components/ReceiptModal.vue'
+
+const router = useRouter()
+const kasirStore = useKasirStore()
 
 const {
   searchQuery,
@@ -249,7 +265,13 @@ const {
 
 const showReceiptModal = ref(false)
 
-// Menutup modal cetak struk sekaligus modal detail transaksi
+// Fungsi melempar transaksi ke Halaman Kasir
+const handleEditInKasir = (transaction) => {
+  kasirStore.loadTransactionForEdit(transaction)
+  toast.info(`Memuat nota #${transaction.id.slice(0, 8)} ke kasir...`)
+  router.push('/kasir')
+}
+
 const handleCloseReceipt = () => {
   showReceiptModal.value = false
   selectedTransaction.value = null
