@@ -350,7 +350,7 @@ import { toast } from 'vue-sonner'
 import ReceiptModal from '../components/ReceiptModal.vue'
 
 const { 
-  store, q, memberQ, filteredProducts, filteredMembers, 
+  store, operatorStore, q, memberQ, filteredProducts, filteredMembers, 
   total, kembalian, kurangBayar, bayarDisplay, showSearch, 
   selectedProductForOption, filteredServicesByCategory,
   load, handleSelectProduct, confirmAddToCart, getProductPackages, checkout, processBarcodeScan
@@ -433,21 +433,39 @@ const restorePending = (pendingId) => {
 const onCheckout = async () => { 
   try { 
     const isEditing = !!store.editingTransactionId
-    const currentCart = [...store.cart]
-    const currentMember = store.selectedMember
-    const currentMethod = store.paymentMethod
-    const currentPaid = store.bayarNominal
+    
+    // Ambil Snapshot Keranjang dan Metadata Pembayaran
+    const currentCartSnapshot = JSON.parse(JSON.stringify(store.cart))
+    const currentMemberSnapshot = store.selectedMember
+    const currentMethodSnapshot = store.paymentMethod
+    const currentPaidSnapshot = store.bayarNominal
 
+    // Dapatkan Nama Kasir resmi dari Getter operatorStore (atau fallback 'Admin')
+    const currentOperatorName = operatorStore.operatorName || (
+      typeof operatorStore.activeOperator === 'object' && operatorStore.activeOperator !== null 
+        ? (operatorStore.activeOperator.name || 'Admin')
+        : (operatorStore.activeOperator || 'Admin')
+    )
+
+    // Jalankan checkout (kembalikan ID & Total resmi DB)
     const res = await checkout()
     
+    // Format objek transaksi struk yang bersih dan valid
     completedTransaction.value = {
       id: res.id,
       date: new Date().toISOString(),
       total: res.total,
-      paymentMethod: currentMethod,
-      amountPaid: currentPaid,
-      memberName: currentMember?.name || 'Umum',
-      items: currentCart
+      paymentMethod: currentMethodSnapshot,
+      amountPaid: currentMethodSnapshot === 'TEMPO' ? 0 : (currentMethodSnapshot === 'QRIS' ? res.total : currentPaidSnapshot),
+      memberName: currentMemberSnapshot?.name || 'Umum',
+      operatorName: currentOperatorName,
+      items: currentCartSnapshot.map(item => ({
+        id: item.cartItemId || item.id,
+        productName: item.name,
+        price: item.price_sell,
+        qty: item.cartQty,
+        subtotal: item.price_sell * item.cartQty
+      }))
     }
 
     if (isEditing) {

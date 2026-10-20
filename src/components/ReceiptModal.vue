@@ -1,3 +1,4 @@
+<!-- src/components/ReceiptModal.vue -->
 <template>
   <div class="fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
     <div class="w-full max-w-sm bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-2xl flex flex-col gap-4 animate-in slide-in-from-bottom duration-200">
@@ -13,24 +14,42 @@
         </button>
       </div>
 
-      <!-- Ringkasan Struk Nota -->
+      <!-- Ringkasan Struk Nota (Thermal Look) -->
       <div class="bg-zinc-50 border border-zinc-200/60 p-4 rounded-2xl space-y-2 text-xs font-mono">
         <div class="text-center font-bold text-sm text-zinc-800">SINAR PAGI</div>
+        
+        <!-- Info Kasir & Member -->
+        <div class="flex justify-between text-[10px] text-zinc-500 border-b border-zinc-200/60 pb-1.5">
+          <span>Kasir: {{ transaction?.operatorName || 'Admin' }}</span>
+          <span>Member: {{ transaction?.memberName || 'Umum' }}</span>
+        </div>
+
         <div class="border-b border-dashed border-zinc-300 pb-2 text-[10px] text-zinc-500 text-center">
           {{ formatDate(transaction?.date) }}
         </div>
 
-        <div class="max-h-36 overflow-y-auto space-y-1 my-2 pr-1">
-          <div v-for="item in transaction?.items" :key="item.id" class="flex justify-between text-[11px]">
-            <span class="truncate max-w-[160px]">{{ item.name || item.productName }}</span>
-            <span>{{ item.qty }}x {{ formatRibuan(item.price) }}</span>
+        <!-- Daftar Item Struk Thermal -->
+        <div class="max-h-48 overflow-y-auto space-y-2 my-2 pr-1 border-b border-dashed border-zinc-300 pb-2">
+          <div v-for="item in transaction?.items" :key="item.id || item.productId" class="text-[11px] space-y-0.5">
+            <div class="font-bold text-zinc-800 break-words leading-tight">
+              {{ item.productName || item.name }}
+            </div>
+            <div class="flex justify-between text-zinc-500 text-[10px]">
+              <span>{{ item.qty }}x {{ formatRibuan(item.price) }}</span>
+              <span class="font-bold text-zinc-800">Rp {{ formatRibuan(item.subtotal || (item.price * item.qty)) }}</span>
+            </div>
           </div>
         </div>
 
-        <div class="border-t border-dashed border-zinc-300 pt-2 space-y-1">
-          <div class="flex justify-between font-bold text-zinc-900">
+        <!-- Ringkasan Rincian Pembayaran -->
+        <div class="pt-1 space-y-1">
+          <div class="flex justify-between font-black text-sm text-zinc-900">
             <span>TOTAL</span>
             <span>Rp {{ formatRibuan(transaction?.total) }}</span>
+          </div>
+          <div class="flex justify-between text-[11px] text-zinc-600">
+            <span>METODE BAYAR</span>
+            <span class="font-bold uppercase">{{ transaction?.paymentMethod }}</span>
           </div>
           <div v-if="transaction?.paymentMethod === 'CASH'" class="flex justify-between text-[11px] text-zinc-600">
             <span>BAYAR</span>
@@ -99,7 +118,7 @@ const handlePrintBluetooth = async () => {
   try {
     await receiptService.printThermal(props.transaction)
     toast.success('Struk berhasil dicetak!')
-    emit('close') // Tutup modal otomatis setelah berhasil cetak
+    emit('close')
   } catch (err) {
     toast.error(`Gagal mencetak: ${err.message}`)
   } finally {
@@ -111,7 +130,7 @@ const handleDownloadPdf = async () => {
   try {
     await receiptService.downloadPdf(props.transaction)
     toast.success('Nota PDF berhasil diunduh!')
-    emit('close') // Tutup modal otomatis setelah berhasil unduh PDF
+    emit('close')
   } catch (err) {
     toast.error(`Gagal mengunduh PDF: ${err.message}`)
   }
