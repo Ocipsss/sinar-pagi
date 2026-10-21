@@ -46,9 +46,12 @@
         </button>
 
         <div class="flex items-center gap-3">
-          <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-zinc-900 to-zinc-700 text-amber-400 font-black text-xs flex items-center justify-center shadow-xs">
-            SP
-          </div>
+          <img 
+  src="/pwa-512x512.png" 
+  alt="Sinar Pagi Logo" 
+  class="w-9 h-9 rounded-xl object-cover shadow-xs"
+/>
+
           <div class="flex flex-col">
             <span class="font-black text-xs md:text-sm text-zinc-900 leading-tight">Sinar Pagi</span>
             <span class="text-[11px] font-bold text-zinc-400 leading-tight">{{ activePage }}</span>
