@@ -1,9 +1,9 @@
 <template>
-<div class="min-h-screen bg-zinc-900 overflow-hidden relative">
-  <!-- SIDEBAR -->
+<div class="min-h-screen bg-zinc-900 overflow-hidden relative font-sans">
+  <!-- SIDEBAR OFF-CANVAS (Khusus Mobile HP < md) -->
   <aside 
     :class="[
-      'fixed top-0 left-0 h-full w-[280px] md:w-[320px] z-[60] transition-transform duration-300 ease-in-out will-change-transform', 
+      'fixed top-0 left-0 h-full w-[280px] z-[60] transition-transform duration-300 ease-in-out will-change-transform md:hidden', 
       isOpen ? 'translate-x-0' : '-translate-x-full'
     ]"
   >
@@ -15,32 +15,128 @@
     />
   </aside>
 
-  <!-- OVERLAY ASAL SENTUH (Untuk menutup sidebar saat disentuh/diklik) -->
+  <!-- OVERLAY SENTUH MOBILE -->
   <div 
     v-if="isOpen" 
     @click="isOpen = false" 
-    class="fixed inset-0 z-[55] bg-black/20 cursor-pointer"
+    class="fixed inset-0 z-[55] bg-black/40 backdrop-blur-xs cursor-pointer md:hidden"
   ></div>
 
-  <!-- MAIN CONTAINER Halaman Kanan (Efek Blur saat Sidebar Terbuka) -->
+  <!-- OVERLAY TRANSPARAN UNTUK MENUTUP DOCK TABLET / DESKTOP -->
   <div 
-    :class="[
-      'min-h-screen bg-zinc-50 flex flex-col overflow-hidden transition-all duration-300 ease-in-out h-screen will-change-transform', 
-      isOpen ? 'translate-x-[280px] md:translate-x-[320px] blur-[2px] pointer-events-none select-none' : 'translate-x-0 blur-none'
-    ]"
-  >
+    v-if="activeDropdown" 
+    @click="activeDropdown = null" 
+    class="hidden md:block fixed inset-0 z-30 cursor-default"
+  ></div>
+
+  <!-- MAIN CONTAINER Halaman Utama -->
+  <div class="min-h-screen bg-zinc-50 flex flex-col overflow-hidden h-screen transition-all">
 
     <!-- HEADER STICKY -->
-    <header class="shrink-0 h-[56px] md:h-16 w-full bg-white border-b border-zinc-100 px-4 md:px-6 flex justify-between items-center z-40 sticky top-0">
+    <header class="shrink-0 h-[64px] md:h-18 w-full bg-white/80 backdrop-blur-xl border-b border-zinc-200/60 px-4 md:px-6 flex justify-between items-center z-40 sticky top-0 relative">
+      
+      <!-- KIRI: BURGER MENU (MOBILE) & LOGO BRAND -->
       <div class="flex items-center gap-3">
-        <!-- TOMBOL BURGER MENU -->
-        <button @click="isOpen = !isOpen" class="p-2.5 md:p-3 bg-zinc-900 text-white rounded-xl md:rounded-2xl active:scale-95 transition">
-          <Menu class="w-5 h-5 md:w-6 md:h-6"/>
+        <button 
+          @click="isOpen = !isOpen" 
+          class="md:hidden p-2.5 bg-zinc-900 text-white rounded-xl active:scale-95 transition"
+          title="Menu Navigasi"
+        >
+          <Menu class="w-5 h-5"/>
         </button>
 
-        <div class="font-black text-sm md:text-base text-zinc-900">{{ activePage }}</div>
+        <div class="flex items-center gap-3">
+          <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-zinc-900 to-zinc-700 text-amber-400 font-black text-xs flex items-center justify-center shadow-xs">
+            SP
+          </div>
+          <div class="flex flex-col">
+            <span class="font-black text-xs md:text-sm text-zinc-900 leading-tight">Sinar Pagi</span>
+            <span class="text-[11px] font-bold text-zinc-400 leading-tight">{{ activePage }}</span>
+          </div>
+        </div>
       </div>
 
+      <!-- TENGAH (TABLET & DESKTOP): DASHBOARD + DROPDOWNS + PENGATURAN -->
+      <div class="hidden md:flex items-center gap-2 bg-zinc-200/50 p-1.5 rounded-full border border-zinc-200/80">
+        
+        <!-- TOMBOL DASHBOARD LANGSUNG (KIRI) -->
+        <router-link 
+          to="/dashboard"
+          :class="[
+            'px-4.5 py-2 rounded-full text-xs md:text-sm font-black flex items-center gap-2 transition-all duration-200 active:scale-95 select-none',
+            route.path === '/dashboard'
+              ? 'bg-zinc-900 text-white shadow-md'
+              : 'text-zinc-600 hover:text-zinc-900 hover:bg-white/50'
+          ]"
+        >
+          <LayoutDashboard class="w-4 h-4" />
+          <span>Dashboard</span>
+        </router-link>
+
+        <!-- 3 KATEGORI DROPDOWN (TENGAH) -->
+        <button 
+          v-for="cat in navCategories" 
+          :key="cat.id"
+          @click="toggleDropdown(cat.id)"
+          :class="[
+            'px-4.5 py-2 rounded-full text-xs md:text-sm font-black flex items-center gap-2 transition-all duration-200 active:scale-95 select-none',
+            activeDropdown === cat.id 
+              ? 'bg-zinc-900 text-white shadow-md' 
+              : isCategoryActive(cat)
+                ? 'bg-white text-zinc-900 shadow-xs'
+                : 'text-zinc-600 hover:text-zinc-900 hover:bg-white/50'
+          ]"
+        >
+          <component :is="cat.icon" class="w-4 h-4" />
+          <span>{{ cat.title }}</span>
+          <span 
+            v-if="isCategoryActive(cat)" 
+            class="w-2 h-2 bg-amber-500 rounded-full"
+          ></span>
+        </button>
+
+        <!-- TOMBOL PENGATURAN LANGSUNG (PALING KANAN) -->
+        <router-link 
+          to="/settings"
+          :class="[
+            'px-4.5 py-2 rounded-full text-xs md:text-sm font-black flex items-center gap-2 transition-all duration-200 active:scale-95 select-none',
+            route.path === '/settings'
+              ? 'bg-zinc-900 text-white shadow-md'
+              : 'text-zinc-600 hover:text-zinc-900 hover:bg-white/50'
+          ]"
+        >
+          <Settings class="w-4 h-4" />
+          <span>Pengaturan</span>
+        </router-link>
+      </div>
+
+      <!-- FLOATING GLASSMORPHISM DOCK MACOS STYLE -->
+      <div 
+        v-if="activeDropdown"
+        class="hidden md:flex absolute top-[calc(100%+12px)] left-1/2 -translate-x-1/2 z-50 bg-zinc-900/90 backdrop-blur-2xl text-white rounded-3xl p-3 shadow-[0_20px_60px_rgba(0,0,0,0.4)] border border-zinc-700/60 animate-in fade-in zoom-in-95 duration-150 items-center gap-2"
+      >
+        <button 
+          v-for="sub in activeCategoryItems" 
+          :key="sub.name"
+          @click="handleSelect(sub)"
+          :class="[
+            'px-5 py-3.5 rounded-2xl transition-all duration-150 flex flex-col items-center gap-2 text-center group active:scale-95 min-w-[105px]',
+            route.path === sub.to 
+              ? 'bg-white text-zinc-950 shadow-lg font-black' 
+              : 'hover:bg-zinc-800/80 text-zinc-300 hover:text-white'
+          ]"
+        >
+          <div :class="[
+            'w-10 h-10 rounded-xl flex items-center justify-center transition-colors',
+            route.path === sub.to ? 'bg-zinc-900 text-amber-400' : 'bg-zinc-800 text-zinc-400 group-hover:text-amber-400 group-hover:bg-zinc-700'
+          ]">
+            <component :is="sub.icon" class="w-5 h-5" />
+          </div>
+          <span class="text-xs font-bold tracking-tight whitespace-nowrap">{{ sub.name }}</span>
+        </button>
+      </div>
+
+      <!-- KANAN: STATUS PRINTER, CLOUD SYNC, MEMBER / KASIR -->
       <div class="flex items-center gap-2 md:gap-3">
         <!-- TOMBOL PRINTER BLUETOOTH -->
         <button 
@@ -56,7 +152,6 @@
         >
           <Printer :class="['w-4 h-4 md:w-5 md:h-5', isConnecting ? 'animate-pulse' : '']" />
 
-          <!-- Indikator Status Titik Warna -->
           <span 
             :class="[
               'absolute -top-1 -right-1 w-2.5 h-2.5 md:w-3 md:h-3 rounded-full border-2 border-white',
@@ -87,7 +182,6 @@
             <template v-else>Backup {{ syncStatus.lastSyncedAt || 'OK' }}</template>
           </span>
 
-          <!-- Indikator Dot untuk Layar HP -->
           <span 
             :class="[
               'w-2 h-2 rounded-full sm:hidden',
@@ -98,11 +192,11 @@
           ></span>
         </button>
 
-        <!-- TOMBOL TOKO / MEMBER -->
-        <router-link v-if="!isKasirPage" to="/kasir" class="p-2.5 md:p-3 bg-zinc-900 text-white rounded-xl md:rounded-2xl active:scale-95 transition">
+        <!-- TOMBOL KASIR / MEMBER -->
+        <router-link v-if="!isKasirPage" to="/kasir" class="p-2.5 md:p-3 bg-zinc-900 text-white rounded-xl md:rounded-2xl active:scale-95 transition" title="Ke Kasir">
           <Store class="w-5 h-5 md:w-6 md:h-6"/>
         </router-link>
-        <button v-else @click="openMember" class="p-2.5 md:p-3 bg-zinc-900 text-white rounded-xl md:rounded-2xl active:scale-95 transition">
+        <button v-else @click="openMember" class="p-2.5 md:p-3 bg-zinc-900 text-white rounded-xl md:rounded-2xl active:scale-95 transition" title="Pilih Member">
           <Users class="w-5 h-5 md:w-6 md:h-6"/>
         </button>
       </div>
@@ -122,11 +216,11 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { 
-  Menu, Package, Store, LayoutDashboard, Plus, 
-  Users, ShoppingCart, Tags, History, Coffee, Smartphone, Wallet, RefreshCw, BarChart3, Settings, Receipt, Printer
+  Menu, Package, Store, LayoutDashboard, 
+  Users, ShoppingCart, Tags, History, Coffee, Smartphone, Wallet, RefreshCw, BarChart3, Settings, Receipt, Printer, Layers
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import SidebarComponent from '../components/Sidebar.vue'
@@ -134,61 +228,105 @@ import { syncStatus, syncRealtime } from '../services/syncService.js'
 import { usePrinter } from '../composables/usePrinter.js'
 
 const isOpen = ref(false)
+const activeDropdown = ref(null)
 const route = useRoute()
 const router = useRouter()
 
-// Inisialisasi composable printer bluetooth
 const { isConnected, isConnecting, printerDevice, toggleConnection } = usePrinter()
 
 const activePage = computed(() => route.meta.title || 'Barang')
 const isKasirPage = computed(() => route.path.startsWith('/kasir'))
 
-const groups = ref([
-  { 
-    title: 'TRANSAKSI', 
+// STRUKTUR NAVIGASI UTAMA (3 KATEGORI DROPDOWN)
+const navCategories = ref([
+  {
+    id: 'transaksi',
+    title: 'Transaksi',
+    icon: Store,
     items: [
       { name: 'Kasir', icon: Store, to: '/kasir' },
-      { name: 'Produk Digital', icon: Smartphone, to: '/digital' },
-      { name: 'Riwayat Penjualan', icon: History, to: '/sales-history' },
-      { name: 'Belanja Kulakan', icon: ShoppingCart, to: '/shopping' }
+      { name: 'Digital', icon: Smartphone, to: '/digital' },
+      { name: 'Riwayat', icon: History, to: '/sales-history' },
+      { name: 'Kulakan', icon: ShoppingCart, to: '/shopping' }
     ]
   },
-  { 
-    title: 'MASTER DATA', 
+  {
+    id: 'katalog',
+    title: 'Katalog & Kontak',
+    icon: Layers,
     items: [
-      { name: 'Dashboard', icon: LayoutDashboard, to: '/dashboard' },
       { name: 'Barang', icon: Package, to: '/products' },
-      { name: 'Kategori & Satuan', icon: Tags, to: '/categories' },
-      { name: 'Atur Rokok & Seduh', icon: Coffee, to: '/settings-menu' },
-      { name: 'Member', icon: Users, to: '/members' },
-      { name: 'Tambah Barang', icon: Plus, to: '/add-products' },
-      { name: 'Operator / Kasir', icon: Users, to: '/operators' },
+      { name: 'Kategori', icon: Tags, to: '/categories' },
+      { name: 'Menu & Seduh', icon: Coffee, to: '/settings-menu' },
+      { name: 'Member & Kasir', icon: Users, to: '/members' }
     ]
   },
-  { 
-    title: 'KEUANGAN', 
+  {
+    id: 'keuangan',
+    title: 'Keuangan',
+    icon: Wallet,
     items: [
-      { name: 'Kas & Keuangan', icon: Wallet, to: '/finance' },
-      { name: 'Pengeluaran Operasional', icon: Receipt, to: '/expenses'},
-      { name: 'Laporan & Rekap', icon: BarChart3, to: '/reports' }
-    ]
-  },
-  { 
-    title: 'PENGATURAN', 
-    items: [
-      { name: 'Pengaturan Toko', icon: Settings, to: '/settings' }
+      { name: 'Kas & Bank', icon: Wallet, to: '/finance' },
+      { name: 'Pengeluaran', icon: Receipt, to: '/expenses' },
+      { name: 'Laporan', icon: BarChart3, to: '/reports' }
     ]
   }
 ])
 
+const activeCategoryItems = computed(() => {
+  const cat = navCategories.value.find(c => c.id === activeDropdown.value)
+  return cat ? cat.items : []
+})
+
+// PETA STRUKTUR UNTUK SIDEBAR MOBILE (HP)
+const groups = computed(() => {
+  const result = [
+    {
+      title: 'UTAMA',
+      items: [{ name: 'Dashboard', icon: LayoutDashboard, to: '/dashboard' }]
+    }
+  ]
+
+  navCategories.value.forEach(cat => {
+    result.push({
+      title: cat.title.toUpperCase(),
+      items: cat.items.map(item => ({
+        name: item.name,
+        icon: item.icon,
+        to: item.to
+      }))
+    })
+  })
+
+  result.push({
+    title: 'PENGATURAN',
+    items: [{ name: 'Pengaturan Toko', icon: Settings, to: '/settings' }]
+  })
+
+  return result
+})
+
+const isCategoryActive = (cat) => {
+  return cat.items.some(item => route.path === item.to)
+}
+
+const toggleDropdown = (id) => {
+  activeDropdown.value = activeDropdown.value === id ? null : id
+}
+
 const handleSelect = (m) => {
   isOpen.value = false
+  activeDropdown.value = null
   if (m.to) {
     router.push(m.to)
   }
 }
 
-// Fungsi Manual Push dengan Feedback Notifikasi Toast
+watch(() => route.path, () => {
+  activeDropdown.value = null
+  isOpen.value = false
+})
+
 const manualSync = async () => {
   if (!syncStatus.isOnline) {
     toast.error('Perangkat sedang offline')
