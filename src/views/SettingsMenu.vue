@@ -1,4 +1,3 @@
-<!-- src/views/SettingsMenu.vue -->
 <template>
   <div class="flex-1 overflow-auto p-4 pb-24 space-y-6">
     <!-- Header -->
@@ -35,13 +34,14 @@
         </button>
       </div>
 
-      <div v-if="services.length === 0" class="py-12 text-center text-zinc-400 text-xs bg-white rounded-2xl border border-zinc-100">
+      <div v-if="sortedServices.length === 0" class="py-12 text-center text-zinc-400 text-xs bg-white rounded-2xl border border-zinc-100">
         Belum ada tarif jasa
       </div>
 
+      <!-- LIST TARIF JASA DIURUTKAN A-Z -->
       <div v-else class="space-y-2">
         <div 
-          v-for="s in services" 
+          v-for="s in sortedServices" 
           :key="s.id" 
           class="p-4 bg-white rounded-2xl border border-zinc-100 shadow-sm flex items-center justify-between"
         >
@@ -168,7 +168,13 @@
           </div>
           <div>
             <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Nama Layanan *</label>
-            <input v-model="serviceForm.name" required placeholder="Contoh: Seduh, Es Batu, dll" class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold"/>
+            <!-- INPUT DIBUAT AUTOMATIC UPPERCASE -->
+            <input 
+              v-model="serviceForm.name" 
+              required 
+              placeholder="CONTOH: SEDUH, ES BATU, DLL" 
+              class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold uppercase"
+            />
           </div>
           <div>
             <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Biaya Jasa (Rp) *</label>
@@ -285,6 +291,13 @@ const {
   deleteService
 } = useSettingsMenu()
 
+// URUTKAN TARIF JASA SECARA ALFABETIS (A-Z)
+const sortedServices = computed(() => {
+  return [...services.value].sort((a, b) => 
+    (a.name || '').localeCompare(b.name || '', 'id', { sensitivity: 'base' })
+  )
+})
+
 // Filter Kategori Paket
 const availablePackageCategories = computed(() => {
   const cats = new Set(rokokProducts.value.map(p => (p.category || 'UMUM').toUpperCase()))
@@ -314,10 +327,18 @@ const openServiceModal = async (s = null) => {
   await loadData() // Ambil data kategori terbaru
   if (s) {
     editingServiceId.value = s.id
-    serviceForm.value = { name: s.name, price: s.price, category: s.category || 'Mie' }
+    serviceForm.value = { 
+      name: (s.name || '').toUpperCase(), 
+      price: s.price, 
+      category: s.category || 'Mie' 
+    }
   } else {
     editingServiceId.value = null
-    serviceForm.value = { name: 'Seduh', price: 2000, category: categoryOptions.value[0]?.name || 'Mie' }
+    serviceForm.value = { 
+      name: 'SEDUH', 
+      price: 2000, 
+      category: categoryOptions.value[0]?.name || 'Mie' 
+    }
   }
   showServiceModal.value = true
 }
@@ -325,7 +346,7 @@ const openServiceModal = async (s = null) => {
 const handleSaveService = async () => {
   await saveService({
     id: editingServiceId.value,
-    name: serviceForm.value.name,
+    name: (serviceForm.value.name || '').toUpperCase().trim(),
     price: serviceForm.value.price,
     category: serviceForm.value.category
   })

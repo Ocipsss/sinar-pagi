@@ -1,4 +1,3 @@
-// src/composables/useSalesHistory.js
 import { ref, computed } from 'vue'
 import { salesHistoryService } from '../services/salesHistoryService.js'
 import { toast } from 'vue-sonner'
@@ -11,25 +10,29 @@ export function useSalesHistory() {
   const transactions = ref([])
   const totalPiutang = ref(0)
   const searchQuery = ref('')
-  const selectedFilter = ref('ALL')
+  const selectedFilter = ref('TODAY') // Default langsung ke 'Hari Ini'
   const selectedTransaction = ref(null)
   const loading = ref(false)
 
   const filterOptions = [
+    { label: 'Hari Ini', value: 'TODAY' },
     { label: 'Semua', value: 'ALL' },
     { label: 'Barang', value: 'BARANG' },
     { label: 'Digital', value: 'DIGITAL' },
     { label: 'Cash', value: 'CASH' },
     { label: 'QRIS', value: 'QRIS' },
-    { label: 'Tempo', value: 'TEMPO' }
+    { label: 'Tempo', value: 'TEMPO' },
+    { label: 'Void', value: 'VOID' }
   ]
 
   const loadHistory = async () => {
     loading.value = true
     try {
       const data = await salesHistoryService.getCombinedHistory()
-      transactions.value = data.transactions
-      totalPiutang.value = data.totalPiutang
+      transactions.value = data.transactions || []
+      totalPiutang.value = data.totalPiutang || 0
+    } catch (e) {
+      toast.error(`Gagal memuat riwayat: ${e.message}`)
     } finally {
       loading.value = false
     }
@@ -55,16 +58,32 @@ export function useSalesHistory() {
 
   const filteredTransactions = computed(() => {
     const q = searchQuery.value.toLowerCase().trim()
+
     return transactions.value.filter(t => {
+      // 1. Filter Pencarian Teks (Cari ID, Member, Provider, atau Nama Produk)
       const matchQuery = !q || 
         (t.memberName || '').toLowerCase().includes(q) || 
         (t.provider || '').toLowerCase().includes(q) || 
-        t.id.toLowerCase().includes(q)
+        (t.id || '').toLowerCase().includes(q) ||
+        t.items?.some(item => (item.productName || '').toLowerCase().includes(q))
 
+      // 2. Filter Kategori / Tanggal Hari Ini
       let matchFilter = true
-      if (selectedFilter.value === 'BARANG') matchFilter = t.trxType === 'BARANG'
-      else if (selectedFilter.value === 'DIGITAL') matchFilter = t.trxType === 'DIGITAL'
-      else if (selectedFilter.value !== 'ALL') matchFilter = t.paymentMethod === selectedFilter.value
+      if (selectedFilter.value === 'TODAY') {
+        matchFilter = dayjs(t.date).isSame(dayjs(), 'day')
+      } else if (selectedFilter.value === 'BARANG') {
+        matchFilter = t.trxType === 'BARANG'
+      } else if (selectedFilter.value === 'DIGITAL') {
+        matchFilter = t.trxType === 'DIGITAL'
+      } else if (selectedFilter.value === 'CASH') {
+        matchFilter = (t.paymentMethod === 'CASH' || t.paymentMethod === 'TUNAI')
+      } else if (selectedFilter.value === 'QRIS') {
+        matchFilter = t.paymentMethod === 'QRIS'
+      } else if (selectedFilter.value === 'TEMPO') {
+        matchFilter = t.paymentMethod === 'TEMPO'
+      } else if (selectedFilter.value === 'VOID') {
+        matchFilter = (t.status === 'void' || t.status === 'CANCELLED')
+      }
 
       return matchQuery && matchFilter
     })
