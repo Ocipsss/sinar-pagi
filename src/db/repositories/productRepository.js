@@ -1,16 +1,27 @@
-// src/db/repositories/productRepository.js
+
+// src/db/repositories/productRepository.js - FINAL SOFT DELETE
 import { db } from '../index.js'
 import dayjs from 'dayjs'
 
 export const productRepo = {
-  getAll: () => db.products.toArray(),
-  getById: (id) => db.products.get(id),
-  getByCode: (code) => db.products.where('code').equals(code).first(),
+  getAll: async () => {
+    const list = await db.products.toArray()
+    return list.filter(p => !p.deleted)
+  },
+  getById: async (id) => {
+    const item = await db.products.get(id)
+    return item && !item.deleted ? item : null
+  },
+  getByCode: async (code) => {
+    const item = await db.products.where('code').equals(code).first()
+    return item && !item.deleted ? item : null
+  },
   create: (data) => db.products.add({
     ...data,
     id: crypto.randomUUID(),
     updatedAt: dayjs().toISOString(),
-    synced: 0
+    synced: 0,
+    deleted: false
   }),
   update: async (id, data) => {
     const now = dayjs().toISOString()
@@ -20,5 +31,15 @@ export const productRepo = {
       synced: 0
     })
   },
-  delete: (id) => db.products.delete(id)
+  delete: async (id) => {
+    // SOFT DELETE - biar ke-sync ke cloud, jadi 501 -> 498 beneran kehapus di cloud juga
+    const now = dayjs().toISOString()
+    await db.products.update(id, {
+      deleted: true,
+      updatedAt: now,
+      synced: 0
+    })
+  },
+  // Hard delete beneran cuma buat dev, jangan dipake di produksi
+  hardDelete: (id) => db.products.delete(id)
 }

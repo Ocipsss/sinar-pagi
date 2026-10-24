@@ -1,3 +1,4 @@
+
 import { initializeApp } from 'firebase/app'
 import { initializeFirestore } from 'firebase/firestore'
 import { getStorage } from 'firebase/storage'
@@ -13,7 +14,7 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig)
 
-// INI KUNCINYA - MATIIN LONG POLLING YANG BIKIN ABORT DI VITE
+// FIX ABORT ERROR 17x DI VITE - MATIIN LONG POLLING
 export const firestore = initializeFirestore(app, {
   experimentalForceLongPolling: false,
   experimentalAutoDetectLongPolling: false

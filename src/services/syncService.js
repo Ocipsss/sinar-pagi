@@ -32,32 +32,36 @@ let isSyncing = false
 let intervalId = null
 let isPullingFromCloud = false
 
-export function getIsPullingFromCloud() {
-  return isPullingFromCloud
-}
+export function getIsPullingFromCloud() { return isPullingFromCloud }
 
 export const syncStatus = reactive({
   isOnline: navigator.onLine,
   isSyncing: false,
   unsyncedCount: 0,
   lastSyncedAt: null,
-  isAutoSyncEnabled: false // DEFAULT FALSE - hemat kuota
+  isAutoSyncEnabled: false
 })
 
 async function updateUnsyncedCount() {
   if (!db) return
   try {
-    const allTables = [...TABLES_TO_SYNC, ...TRANSACTION_TABLES]
-    const counts = await Promise.all(
-      allTables.map(t => db[t]?.where('synced').equals(0).count().catch(()=>0) || 0)
-    )
-    syncStatus.unsyncedCount = counts.reduce((a,b)=>a+b,0)
+    // Jangan Promise.all 16x sekaligus di HP, loop satu-satu + jeda biar ga AbortError
+    let total = 0
+    for (const t of [...TABLES_TO_SYNC, ...TRANSACTION_TABLES]) {
+      try {
+        if (!db[t]) continue
+        const c = await db[t].where('synced').equals(0).count().catch(()=>0)
+        total += c
+        await new Promise(r=>setTimeout(r, 20))
+      } catch(e) {
+        if (e.name !== 'AbortError') console.warn('[Sync] count', t, e)
+      }
+    }
+    syncStatus.unsyncedCount = total
   } catch (e) {
-    console.warn('[Sync] Count check error:', e)
+    if (e.name !== 'AbortError') console.warn('[Sync] Count check error:', e)
   }
 }
-
-// GANTI FUNGSI pullAllFromCloud DI syncService.js LU JADI INI:
 
 export async function pullAllFromCloud() {
   if (!navigator.onLine || isPullingFromCloud || !db || !firestore) return
@@ -67,19 +71,16 @@ export async function pullAllFromCloud() {
     console.log('[Sync] DB kosong terdeteksi, narik master dari cloud...')
     for (const tableName of TABLES_TO_SYNC) {
       if (!db[tableName]) continue
-      
-      // WRAP getDocs BIAR ABORTERROR GA SPAM
       let snap
       try {
         snap = await getDocs(collection(firestore, tableName))
       } catch (e) {
         if (e.name === 'AbortError' || e.message?.includes('aborted')) {
-          console.warn(`[Sync] getDocs ${tableName} ke-abort, skip dulu`)
-          continue // skip, lanjut tabel berikutnya, jangan spam error
+          console.warn(`[Sync] getDocs ${tableName} ke-abort, skip`)
+          continue
         }
         throw e
       }
-
       if (snap.empty) continue
       const data = snap.docs.map(d => ({
         ...d.data(),
@@ -87,19 +88,17 @@ export async function pullAllFromCloud() {
         synced: 1
       }))
       if (data.length) {
-        // bulkPut nya juga dibungkus biar kalo ke-abort ga ngerusak transaksi
         try {
           await db[tableName].bulkPut(data)
           console.log(`[Pull] ${tableName}: ${data.length}`)
         } catch (e) {
           if (e.name === 'AbortError') {
-            console.warn(`[Sync] bulkPut ${tableName} ke-abort, coba lagi nanti`)
+            console.warn(`[Sync] bulkPut ${tableName} ke-abort`)
             continue
           }
           throw e
         }
       }
-      // kasih jeda 100ms biar Chrome HP ga kewalahan (ngurangin AbortError)
       await new Promise(r => setTimeout(r, 100))
     }
     localStorage.setItem('lastPullAt', new Date().toISOString())
@@ -110,22 +109,31 @@ export async function pullAllFromCloud() {
     syncStatus.isSyncing = false
   }
 }
-// Pull delta - cuma yang berubah setelah lastPull (irit kuota harian)
+
 export async function pullDeltaFromCloud() {
   if (!navigator.onLine || isPullingFromCloud) return
   const lastPull = localStorage.getItem('lastPullAt')
   if (!lastPull) return pullAllFromCloud()
-
   isPullingFromCloud = true
   try {
     for (const tableName of TABLES_TO_SYNC) {
-      const q = query(collection(firestore, tableName), where('updatedAt', '>', lastPull))
-      const snap = await getDocs(q)
-      if (snap.empty) continue
-      // jangan timpa data lokal yang belum ke-push
-      const dirtyIds = await db[tableName].where('synced').equals(0).primaryKeys()
-      const incoming = snap.docs.map(d=>({...d.data(), id: d.id, synced: 1})).filter(i=>!dirtyIds.includes(i.id))
-      if (incoming.length) await db[tableName].bulkPut(incoming)
+      try {
+        const q = query(collection(firestore, tableName), where('updatedAt', '>', lastPull))
+        let snap
+        try {
+          snap = await getDocs(q)
+        } catch(e) {
+          if (e.name === 'AbortError') continue
+          throw e
+        }
+        if (snap.empty) continue
+        const dirtyIds = await db[tableName].where('synced').equals(0).primaryKeys().catch(()=>[])
+        const incoming = snap.docs.map(d=>({...d.data(), id: d.id, synced: 1})).filter(i=>!dirtyIds.includes(i.id))
+        if (incoming.length) await db[tableName].bulkPut(incoming)
+        await new Promise(r=>setTimeout(r, 50))
+      } catch(e) {
+        if (e.name !== 'AbortError') console.warn('[Sync] delta', tableName, e)
+      }
     }
     localStorage.setItem('lastPullAt', new Date().toISOString())
   } finally {
@@ -154,7 +162,6 @@ export const syncRealtime = {
     localStorage.setItem('auto_sync_enabled', enabled ? 'true' : 'false')
     if (!enabled) this.stopRealtime()
   },
-
   async pushLocalToCloud() {
     syncStatus.isOnline = navigator.onLine
     if (!navigator.onLine || isSyncing || !db || !firestore) {
@@ -188,10 +195,8 @@ export const syncRealtime = {
       await updateUnsyncedCount()
     }
   },
-
   initRealtimePull() { this.stopRealtime() },
   stopRealtime() { if (intervalId) { clearInterval(intervalId); intervalId = null } },
-
   async init() {
     try {
       if (!firestore || !db) return
@@ -199,17 +204,15 @@ export const syncRealtime = {
       window.addEventListener('online', updateOnlineStatus)
       window.addEventListener('offline', updateOnlineStatus)
       this.stopRealtime()
-      // Auto bootstrap kalo DB kosong (kasus clear cache di HP)
-      const prodCount = await db.products.count().catch(()=>0)
+      const prodCount = await db.products.where('deleted').notEqual(true).count().catch(()=>db.products.count().catch(()=>0))
       if (prodCount === 0 && navigator.onLine) {
         await pullAllFromCloud()
       } else {
-        // kalo ada data, cukup pull delta irit
         if (navigator.onLine) pullDeltaFromCloud()
+        await updateUnsyncedCount()
       }
-      //await updateUnsyncedCount()
     } catch (e) {
-      console.error('[Sync] Init error:', e?.message, e)
+      if (e.name !== 'AbortError') console.error('[Sync] Init error:', e?.message, e)
     }
   }
 }
