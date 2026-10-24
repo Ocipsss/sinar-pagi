@@ -1,6 +1,23 @@
 <!-- src/components/product/ProductForm.vue -->
 <template>
 <form @submit.prevent="onSubmit" @keydown="handleFormKeydown" class="bg-white p-5 rounded-3xl border flex flex-col gap-4 shadow-sm">
+  <!-- GAMBAR PRODUK - CLOUDINARY OFFLINE-FIRST -->
+  <div class="flex flex-col gap-2">
+    <label class="text-[10px] text-zinc-500 font-bold uppercase">Foto Produk (Cloudinary vezqidog)</label>
+    <div class="flex gap-3 items-start">
+      <div class="w-24 h-24 bg-zinc-50 border rounded-2xl overflow-hidden flex items-center justify-center shrink-0">
+        <img v-if="imagePreview" :src="imagePreview" class="w-full h-full object-cover" />
+        <span v-else class="text-[10px] text-zinc-400 text-center">No Image</span>
+      </div>
+      <div class="flex-1 flex flex-col gap-2">
+        <input type="file" accept="image/*" @change="onImageChange" class="block w-full text-xs file:mr-2 file:py-2 file:px-3 file:rounded-xl file:border-0 file:bg-zinc-900 file:text-white file:font-bold file:text-[11px]" />
+        <p class="text-[10px] text-zinc-400">Offline langsung nongol. Online auto upload ke Cloudinary. Max 5MB, auto compress 800px.</p>
+        <button v-if="imagePreview" type="button" @click="removeImage" class="text-[11px] text-red-500 font-bold text-left">Hapus Gambar</button>
+      </div>
+    </div>
+  </div>
+
+
   <!-- Nama Produk -->
   <div class="flex flex-col gap-1">
     <input v-model="name" placeholder="Nama Produk *" class="px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold uppercase"/>
@@ -236,6 +253,48 @@ const { start } = useProductScanner()
 const router = useRouter()
 const productStore = useProductsStore()
 
+// ===== GAMBAR - BARU =====
+const imageFile = ref(null)
+const imagePreview = ref(null)
+
+function onImageChange(e) {
+  const file = e.target.files[0]
+  if (!file) return
+  if (file.size > 5 * 1024 * 1024) {
+    toast.error('Gambar max 5MB')
+    return
+  }
+  compressImage(file).then(compressed => {
+    imageFile.value = compressed
+    imagePreview.value = URL.createObjectURL(compressed)
+  })
+}
+function removeImage() {
+  imageFile.value = null
+  imagePreview.value = null
+}
+function compressImage(file) {
+  return new Promise((resolve) => {
+    const reader = new FileReader()
+    reader.onload = (ev) => {
+      const img = new Image()
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        const maxW = 800
+        let w = img.width, h = img.height
+        if (w > maxW) { h = h * maxW / w; w = maxW }
+        canvas.width = w; canvas.height = h
+        const ctx = canvas.getContext('2d')
+        ctx.drawImage(img, 0, 0, w, h)
+        canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.7)
+      }
+      img.src = ev.target.result
+    }
+    reader.readAsDataURL(file)
+  })
+}
+
+
 const autoModal = computed(() => calcModalDariPack(packPrice.value, packQty.value))
 const marginPersen = computed(() => calcMargin(price_sell.value, price_modal.value))
 
@@ -283,6 +342,8 @@ const resetFormFields = () => {
   price_sell.value = 0
   qty.value = 0
   minStock.value = 2
+  imageFile.value = null
+  imagePreview.value = null
 }
 
 const checkExistingBarcode = async (barcodeVal) => {
@@ -335,6 +396,8 @@ const initFormData = async () => {
     price_sell.value = props.initialData.price_sell || 0
     qty.value = props.initialData.qty || 0
     minStock.value = props.initialData.minStock || 2
+    if (props.initialData.imageUrl) imagePreview.value = props.initialData.imageUrl
+    else if (props.initialData.imageLocal) imagePreview.value = URL.createObjectURL(props.initialData.imageLocal)
   } else {
     resetFormFields()
   }
@@ -385,11 +448,11 @@ const onSubmit = handleSubmit(async (vals) => {
   if (isDuplicate) return
 
   if (props.initialData?.id) {
-    await productStore.update(props.initialData.id, payload)
+    await productStore.update(props.initialData.id, payload, imageFile.value)
     toast.success('Barang berhasil diperbarui!')
     emit('success')
   } else {
-    await productStore.add(payload)
+    await productStore.add(payload, imageFile.value)
     toast.success('Barang berhasil ditambahkan!')
     resetFormFields()
     router.push('/products')
