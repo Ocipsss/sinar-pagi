@@ -8,6 +8,13 @@ import App from './App.vue'
 import { router } from './router/index.js'
 import { syncRealtime as syncService } from './services/syncService.js'
 
+// di main.js paling atas, di bawah import
+window.addEventListener('unhandledrejection', (e) => {
+  if (e.reason?.name === 'AbortError') {
+    e.preventDefault() // silent, ini cuma dari SDK Firestore pas dev
+  }
+})
+
 const updateSW = registerSW({
   onNeedRefresh() {
     if (confirm('Versi baru Sinar Pagi POS tersedia. Perbarui sekarang?')) {

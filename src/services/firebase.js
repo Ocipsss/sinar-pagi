@@ -1,6 +1,6 @@
 import { initializeApp } from 'firebase/app'
-import { getFirestore } from 'firebase/firestore'
-import {getStorage} from 'firebase/storage'
+import { initializeFirestore } from 'firebase/firestore'
+import { getStorage } from 'firebase/storage'
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -12,5 +12,11 @@ const firebaseConfig = {
 }
 
 const app = initializeApp(firebaseConfig)
-export const firestore = getFirestore(app)
-export const storage = getStorage (app)
+
+// INI KUNCINYA - MATIIN LONG POLLING YANG BIKIN ABORT DI VITE
+export const firestore = initializeFirestore(app, {
+  experimentalForceLongPolling: false,
+  experimentalAutoDetectLongPolling: false
+})
+
+export const storage = getStorage(app)
