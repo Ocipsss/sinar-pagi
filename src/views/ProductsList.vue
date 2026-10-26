@@ -8,6 +8,9 @@
       <p class="text-xs text-zinc-400">Kelola master data produk toko</p>
     </div>
     <div class="flex gap-2">
+      <button @click="publishAll" class="bg-emerald-600 text-white px-3.5 py-2.5 rounded-2xl font-bold text-xs flex items-center gap-1.5 active:scale-95 transition shadow-sm" title="Publish semua yang difilter ke sinarpagi.my.id">
+        <Globe class="w-4 h-4"/> Publish All ({{ filtered.length }})
+      </button>
       <router-link to="/add-products" class="bg-zinc-900 text-white px-3.5 py-2.5 rounded-2xl font-bold text-xs flex items-center gap-1.5 active:scale-95 transition shadow-sm">
         <Plus class="w-4 h-4"/> Tambah
       </router-link>
@@ -87,14 +90,19 @@
     </div>
 
     <div class="flex flex-col items-end gap-2 shrink-0">
-      <div>
+      <div class="flex items-center gap-1">
         <span v-if="p.qty===0" class="text-[10px] bg-zinc-900 text-white px-2.5 py-1 rounded-full font-black">HABIS</span>
         <span v-else-if="p.qty <= (p.minStock || 5)" class="text-[10px] bg-red-100 text-red-600 px-2.5 py-1 rounded-full font-black">TIPIS</span>
         <span v-else class="text-[10px] bg-emerald-100 text-emerald-700 px-2.5 py-1 rounded-full font-black">AMAN</span>
+        <span v-if="p.isPublished" class="text-[10px] bg-blue-100 text-blue-700 px-2 py-1 rounded-full font-black flex items-center gap-0.5"><Globe class="w-3 h-3"/> WEB</span>
       </div>
 
-      <!-- AKSI EDIT & HAPUS -->
+      <!-- TOGGLE PUBLISH + EDIT & HAPUS -->
       <div class="flex items-center gap-1">
+        <button @click="togglePublish(p)" :title="p.isPublished ? 'Unpublish dari Web' : 'Publish ke sinarpagi.my.id'" :class="['p-2 rounded-xl transition', p.isPublished ? 'text-emerald-600 bg-emerald-50 hover:bg-emerald-100' : 'text-zinc-400 bg-zinc-50 hover:bg-zinc-100']">
+          <Globe v-if="p.isPublished" class="w-4 h-4"/>
+          <EyeOff v-else class="w-4 h-4"/>
+        </button>
         <button @click="openEditModal(p)" title="Edit Barang" class="p-2 text-zinc-600 hover:bg-zinc-100 rounded-xl transition">
           <Pencil class="w-4 h-4"/>
         </button>
@@ -168,7 +176,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated, nextTick } from 'vue'
-import { Plus, Search, Filter, Pencil, Trash2, X, ScanLine } from 'lucide-vue-next'
+import { Plus, Search, Filter, Pencil, Trash2, X, ScanLine, Globe, EyeOff } from 'lucide-vue-next'
 import { useProductsStore } from '../stores/productStore.js'
 import { useProductScanner } from '../composables/useProductScanner.js'
 import { formatRibuan } from '../utils/formatters/currency.js'
@@ -300,6 +308,27 @@ const handleDelete = async (p) => {
   if (confirm(`Hapus barang "${p.name}"?`)) {
     await store.remove(p.id)
   }
+}
+
+const togglePublish = async (p) => {
+  const newStatus = !p.isPublished
+  await store.update(p.id, { isPublished: newStatus })
+  toast.success(newStatus ? `${p.name} publish ke web` : `${p.name} unpublish`)
+}
+
+const publishAll = async () => {
+  const count = filtered.value.length
+  if (!count) return toast.error('Ga ada barang di filter')
+  if (!confirm(`Publish ${count} barang ke sinarpagi.my.id? (sesuai filter sekarang)`)) return
+  let ok = 0
+  for (const prod of filtered.value) {
+    if (!prod.isPublished) {
+      await store.update(prod.id, { isPublished: true })
+      ok++
+    }
+  }
+  toast.success(`${ok} barang publish ke web!`)
+  if (ok === 0) toast.info('Semua sudah publish')
 }
 
 // --- LOGIKA LISTENER BARCODE SCANNER HID ---

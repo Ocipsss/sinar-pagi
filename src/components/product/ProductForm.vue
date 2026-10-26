@@ -17,6 +17,28 @@
     </div>
   </div>
 
+  <!-- TOGGLE PUBLISH KE WEB - BARU -->
+  <div class="flex items-center justify-between p-4 bg-zinc-50 rounded-[1.5rem] border">
+    <div class="flex items-center gap-3">
+      <div class="w-10 h-10 rounded-full flex items-center justify-center shrink-0"
+           :class="isPublished ? 'bg-emerald-100 text-emerald-600' : 'bg-zinc-200 text-zinc-500'">
+        <Globe v-if="isPublished" :size="20" />
+        <EyeOff v-else :size="20" />
+      </div>
+      <div>
+        <p class="font-bold text-[13px] text-zinc-900">{{ isPublished ? 'Tampil di Web' : 'Hanya di Kasir' }}</p>
+        <p class="text-[11px] text-zinc-500">{{ isPublished ? 'Nongol di sinarpagi.my.id' : 'Tidak tampil di web pelanggan' }}</p>
+      </div>
+    </div>
+    <button 
+      type="button"
+      @click="isPublished = !isPublished"
+      class="relative w-14 h-8 rounded-full transition-all duration-300 shrink-0"
+      :class="isPublished ? 'bg-emerald-500' : 'bg-zinc-300'">
+      <span class="absolute top-1 w-6 h-6 bg-white rounded-full shadow transition-all duration-300"
+            :class="isPublished ? 'left-7' : 'left-1'"></span>
+    </button>
+  </div>
 
   <!-- Nama Produk -->
   <div class="flex flex-col gap-1">
@@ -220,7 +242,7 @@
 
 <script setup>
 import { ref, computed, watch, onMounted, onActivated } from 'vue'
-import { ScanLine, ChevronDown, X } from 'lucide-vue-next'
+import { ScanLine, ChevronDown, X, Globe, EyeOff } from 'lucide-vue-next'
 import { useRouter } from 'vue-router'
 import { useProductForm } from '../../composables/useProductForm.js'
 import { useProductScanner } from '../../composables/useProductScanner.js'
@@ -256,6 +278,7 @@ const productStore = useProductsStore()
 // ===== GAMBAR - BARU =====
 const imageFile = ref(null)
 const imagePreview = ref(null)
+const isPublished = ref(false)
 
 function onImageChange(e) {
   const file = e.target.files[0]
@@ -272,6 +295,7 @@ function onImageChange(e) {
 function removeImage() {
   imageFile.value = null
   imagePreview.value = null
+  isPublished.value = false
 }
 function compressImage(file) {
   return new Promise((resolve) => {
@@ -344,6 +368,7 @@ const resetFormFields = () => {
   minStock.value = 2
   imageFile.value = null
   imagePreview.value = null
+  isPublished.value = false
 }
 
 const checkExistingBarcode = async (barcodeVal) => {
@@ -396,6 +421,7 @@ const initFormData = async () => {
     price_sell.value = props.initialData.price_sell || 0
     qty.value = props.initialData.qty || 0
     minStock.value = props.initialData.minStock || 2
+    isPublished.value = props.initialData.isPublished || false
     if (props.initialData.imageUrl) imagePreview.value = props.initialData.imageUrl
     else if (props.initialData.imageLocal) imagePreview.value = URL.createObjectURL(props.initialData.imageLocal)
   } else {
@@ -441,7 +467,8 @@ const onSubmit = handleSubmit(async (vals) => {
     price_modal: toNumber(price_modal.value),
     price_sell: toNumber(price_sell.value),
     qty: toNumber(qty.value),
-    minStock: toNumber(minStock.value) || 2
+    minStock: toNumber(minStock.value) || 2,
+    isPublished: isPublished.value
   }
 
   const isDuplicate = await checkExistingBarcode(payload.code)
