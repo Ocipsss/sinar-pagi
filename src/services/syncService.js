@@ -1,4 +1,3 @@
-
 import { reactive } from 'vue'
 import { db } from '../db'
 import { firestore } from './firebase'
@@ -45,7 +44,6 @@ export const syncStatus = reactive({
 async function updateUnsyncedCount() {
   if (!db) return
   try {
-    // Jangan Promise.all 16x sekaligus di HP, loop satu-satu + jeda biar ga AbortError
     let total = 0
     for (const t of [...TABLES_TO_SYNC, ...TRANSACTION_TABLES]) {
       try {
@@ -179,7 +177,8 @@ export const syncRealtime = {
           const batch = writeBatch(firestore)
           const chunk = unsynced.slice(i, i + 400)
           chunk.forEach(item => {
-            const { synced, ...clean } = item
+            // DI SINI PERBAIKANNYA: Hapus 'synced' dan 'imageLocal' (serta field Blob lain jika ada) agar aman dikirim ke Firestore
+            const { synced, imageLocal, ...clean } = item
             batch.set(doc(firestore, tableName, item.id), clean, { merge: true })
           })
           await batch.commit()
