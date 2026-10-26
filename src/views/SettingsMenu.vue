@@ -3,7 +3,7 @@
     <!-- Header -->
     <div>
       <h1 class="font-black text-xl text-zinc-900">Pengaturan Menu & Jasa</h1>
-      <p class="text-xs text-zinc-400">Atur paket eceran (rokok/permen) dan tarif jasa per kategori</p>
+      <p class="text-xs text-zinc-400">Atur paket eceran (rokok/permen) dan tarif jasa per kategori & per produk</p>
     </div>
 
     <!-- Tab Navigasi -->
@@ -46,9 +46,13 @@
           class="p-4 bg-white rounded-2xl border border-zinc-100 shadow-sm flex items-center justify-between"
         >
           <div>
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 flex-wrap">
               <span class="font-bold text-sm text-zinc-900">{{ s.name }}</span>
-              <span class="px-2 py-0.5 bg-amber-100 text-amber-800 rounded-md text-[10px] font-black uppercase">
+              <!-- BADGE BARU: BEDAIN JASA UMUM VS KHUSUS PRODUK -->
+              <span v-if="s.productId" class="px-2 py-0.5 bg-zinc-900 text-white rounded-md text-[10px] font-black uppercase">
+                KHUSUS: {{ getProductName(s.productId) }}
+              </span>
+              <span v-else class="px-2 py-0.5 bg-amber-100 text-amber-800 rounded-md text-[10px] font-black uppercase">
                 {{ s.category || 'Umum' }}
               </span>
             </div>
@@ -112,12 +116,20 @@
               </div>
               <div class="text-[11px] text-zinc-400">Harga Utuh: Rp {{ formatRibuan(p.price_sell) }}</div>
             </div>
-            <button 
-              @click="openPackageModal(p)" 
-              class="px-3 py-1.5 bg-zinc-100 text-zinc-800 rounded-xl text-xs font-bold hover:bg-zinc-200 active:scale-95 transition"
-            >
-              + Opsi Paket
-            </button>
+            <div class="flex gap-1">
+              <button 
+                @click="openServiceModal(null, p)" 
+                class="px-3 py-1.5 bg-amber-100 text-amber-800 rounded-xl text-xs font-bold hover:bg-amber-200 active:scale-95 transition"
+              >
+                + Jasa
+              </button>
+              <button 
+                @click="openPackageModal(p)" 
+                class="px-3 py-1.5 bg-zinc-100 text-zinc-800 rounded-xl text-xs font-bold hover:bg-zinc-200 active:scale-95 transition"
+              >
+                + Paket
+              </button>
+            </div>
           </div>
 
           <div class="space-y-1.5">
@@ -141,22 +153,62 @@
               </div>
             </div>
           </div>
+
+          <!-- JASA KHUSUS UNTUK PRODUK INI -->
+          <div v-if="getServicesForProduct(p).some(s => s.productId)" class="space-y-1.5 pt-2 border-t border-dashed border-zinc-200">
+            <div class="text-[10px] font-black text-zinc-500 uppercase tracking-wider">Jasa Khusus Produk Ini (override kategori)</div>
+            <div 
+              v-for="js in getServicesForProduct(p).filter(s => s.productId)" 
+              :key="js.id" 
+              class="flex justify-between items-center p-2.5 bg-amber-50 border border-amber-100 rounded-xl text-xs"
+            >
+              <span class="font-bold text-zinc-800">{{ js.name }}</span>
+              <div class="flex items-center gap-1.5">
+                <span class="font-black text-amber-700 mr-1">Rp {{ formatRibuan(js.price) }}</span>
+                <button @click="openServiceModal(js)" class="p-1 text-zinc-600 hover:bg-amber-100 rounded-lg"><Pencil class="w-3.5 h-3.5"/></button>
+                <button @click="handleDeleteService(js)" class="p-1 text-red-500 hover:bg-red-100 rounded-lg"><Trash2 class="w-3.5 h-3.5"/></button>
+              </div>
+            </div>
+          </div>
+
         </div>
       </div>
     </div>
 
     <!-- Modal Form Jasa -->
     <div v-if="showServiceModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl space-y-4">
+      <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl space-y-4 max-h-[90vh] overflow-auto">
         <div class="flex justify-between items-center">
           <h2 class="font-black text-base">{{ editingServiceId ? 'Edit Tarif Jasa' : 'Tambah Tarif Jasa' }}</h2>
           <button @click="showServiceModal = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
         </div>
 
         <form @submit.prevent="handleSaveService" class="space-y-3">
+          <!-- Toggle Custom -->
+          <div class="flex items-center gap-2 p-3 bg-zinc-50 rounded-xl border border-zinc-100">
+            <button type="button" @click="isCustomService = !isCustomService" :class="['w-10 h-6 rounded-full p-0.5 transition shrink-0', isCustomService ? 'bg-zinc-900' : 'bg-zinc-200']">
+              <div :class="['w-4 h-4 bg-white rounded-full shadow transition-transform', isCustomService ? 'translate-x-4' : 'translate-x-0']"></div>
+            </button>
+            <div>
+              <div class="text-xs font-black text-zinc-800">Jasa khusus untuk 1 produk</div>
+              <div class="text-[10px] text-zinc-500">Kalo aktif, jasa ini cuma muncul buat produk yang dipilih</div>
+            </div>
+          </div>
+
+          <div v-if="isCustomService">
+            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Pilih Produk *</label>
+            <button 
+              type="button" 
+              @click="showProductPickerModal = true"
+              class="w-full px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-sm font-bold text-left flex justify-between items-center focus:outline-none focus:ring-2 focus:ring-zinc-900"
+            >
+              <span class="truncate">{{ getProductName(serviceForm.productId) || 'PILIH PRODUK' }}</span>
+              <ChevronDown class="w-4 h-4 text-zinc-400 shrink-0" />
+            </button>
+          </div>
+
           <div>
             <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Untuk Kategori Produk *</label>
-            <!-- Tombol Pemilih Modal -->
             <button 
               type="button" 
               @click="showCategoryPickerModal = true"
@@ -165,10 +217,11 @@
               <span class="truncate">{{ serviceForm.category || 'PILIH KATEGORI' }}</span>
               <ChevronDown class="w-4 h-4 text-zinc-400 shrink-0" />
             </button>
+            <p v-if="isCustomService" class="text-[10px] text-zinc-400 mt-1">Otomatis ikut kategori produk, tapi bisa diubah</p>
           </div>
+
           <div>
             <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Nama Layanan *</label>
-            <!-- INPUT DIBUAT AUTOMATIC UPPERCASE -->
             <input 
               v-model="serviceForm.name" 
               required 
@@ -250,11 +303,8 @@
           <h3 class="font-black text-base text-zinc-900">Pilih Kategori Produk</h3>
           <button type="button" @click="showCategoryPickerModal = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
         </div>
-
         <div class="space-y-1.5 overflow-auto flex-1 pr-1">
-          <div v-if="categoryOptions.length === 0" class="py-6 text-center text-xs text-zinc-400">
-            Belum ada kategori
-          </div>
+          <div v-if="categoryOptions.length === 0" class="py-6 text-center text-xs text-zinc-400">Belum ada kategori</div>
           <button 
             v-for="cat in categoryOptions" 
             :key="cat.id" 
@@ -267,6 +317,32 @@
         </div>
       </div>
     </div>
+
+    <!-- Modal Picker Pilih Produk (BARU) -->
+    <div v-if="showProductPickerModal" class="fixed inset-0 z-[110] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="w-full max-w-sm bg-white rounded-[2rem] p-5 shadow-xl max-h-[80vh] flex flex-col">
+        <div class="flex justify-between items-center mb-3">
+          <h3 class="font-black text-base text-zinc-900">Pilih Produk</h3>
+          <button type="button" @click="showProductPickerModal = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
+        </div>
+        <div class="relative mb-3">
+          <input v-model="productSearch" placeholder="Cari produk..." class="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-bold"/>
+        </div>
+        <div class="space-y-1.5 overflow-auto flex-1 pr-1">
+          <button 
+            v-for="prod in productOptions" 
+            :key="prod.id" 
+            type="button"
+            @click="serviceForm.productId = prod.id; serviceForm.category = prod.category; showProductPickerModal = false"
+            :class="['w-full p-3 rounded-xl font-bold text-xs text-left transition', serviceForm.productId === prod.id ? 'bg-zinc-900 text-white shadow-md' : 'bg-zinc-50 hover:bg-zinc-100 text-zinc-800']"
+          >
+            <div class="truncate">{{ prod.name }}</div>
+            <div class="text-[10px] opacity-60 uppercase">{{ prod.category }}</div>
+          </button>
+        </div>
+      </div>
+    </div>
+
   </div>
 </template>
 
@@ -280,25 +356,26 @@ const activeTab = ref('seduh')
 const selectedPackageCat = ref('ALL')
 
 const {
+  allProducts,
   rokokProducts,
   services,
   categoryOptions,
   loadData,
   getPackagesForProduct,
+  getServicesForProduct,
+  getProductById,
   savePackage,
   deletePackage,
   saveService,
   deleteService
 } = useSettingsMenu()
 
-// URUTKAN TARIF JASA SECARA ALFABETIS (A-Z)
 const sortedServices = computed(() => {
   return [...services.value].sort((a, b) => 
     (a.name || '').localeCompare(b.name || '', 'id', { sensitivity: 'base' })
   )
 })
 
-// Filter Kategori Paket
 const availablePackageCategories = computed(() => {
   const cats = new Set(rokokProducts.value.map(p => (p.category || 'UMUM').toUpperCase()))
   return Array.from(cats)
@@ -311,44 +388,72 @@ const filteredRokokProducts = computed(() => {
   )
 })
 
-// Modal State Jasa & Picker Kategori
+// Modal State Jasa & Picker
 const showServiceModal = ref(false)
 const showCategoryPickerModal = ref(false)
+const showProductPickerModal = ref(false)
 const editingServiceId = ref(null)
-const serviceForm = ref({ name: '', price: 0, category: 'Mie' })
+const isCustomService = ref(false)
+const productSearch = ref('')
+const serviceForm = ref({ name: '', price: 0, category: 'Mie', productId: null })
 
-// Modal State Paket Eceran
-const showPackageModal = ref(false)
-const editingPackageId = ref(null)
-const selectedRokokProduct = ref(null)
-const packageForm = ref({ name: '', qty_pcs: 1, price_sell: 0 })
+const productOptions = computed(() => {
+  const q = productSearch.value.toLowerCase()
+  let list = allProducts.value
+  if(q) list = list.filter(p => (p.name||'').toLowerCase().includes(q))
+  return list.slice(0, 80)
+})
 
-const openServiceModal = async (s = null) => {
-  await loadData() // Ambil data kategori terbaru
+const getProductName = (id) => {
+  if(!id) return ''
+  return getProductById(id)?.name || 'Produk tidak ditemukan'
+}
+
+const openServiceModal = async (s = null, productOverride = null) => {
+  await loadData()
+  productSearch.value = ''
   if (s) {
     editingServiceId.value = s.id
+    isCustomService.value = !!s.productId
     serviceForm.value = { 
       name: (s.name || '').toUpperCase(), 
       price: s.price, 
-      category: s.category || 'Mie' 
+      category: s.category || 'Mie',
+      productId: s.productId || null
+    }
+  } else if (productOverride) {
+    editingServiceId.value = null
+    isCustomService.value = true
+    serviceForm.value = { 
+      name: 'SEDUH', 
+      price: 3000, 
+      category: productOverride.category || categoryOptions.value[0]?.name || 'Mie',
+      productId: productOverride.id
     }
   } else {
     editingServiceId.value = null
+    isCustomService.value = false
     serviceForm.value = { 
       name: 'SEDUH', 
       price: 2000, 
-      category: categoryOptions.value[0]?.name || 'Mie' 
+      category: categoryOptions.value[0]?.name || 'Mie',
+      productId: null
     }
   }
   showServiceModal.value = true
 }
 
 const handleSaveService = async () => {
+  if(isCustomService.value && !serviceForm.value.productId){
+    alert('Pilih produk dulu met')
+    return
+  }
   await saveService({
     id: editingServiceId.value,
     name: (serviceForm.value.name || '').toUpperCase().trim(),
     price: serviceForm.value.price,
-    category: serviceForm.value.category
+    category: serviceForm.value.category,
+    productId: isCustomService.value ? serviceForm.value.productId : null
   })
   showServiceModal.value = false
 }
@@ -358,6 +463,12 @@ const handleDeleteService = async (s) => {
     await deleteService(s.id)
   }
 }
+
+// Modal State Paket Eceran
+const showPackageModal = ref(false)
+const editingPackageId = ref(null)
+const selectedRokokProduct = ref(null)
+const packageForm = ref({ name: '', qty_pcs: 1, price_sell: 0 })
 
 const openPackageModal = (p, pkg = null) => {
   selectedRokokProduct.value = p
@@ -396,8 +507,6 @@ const handleDeletePackage = async (pkg) => {
 onMounted(() => {
   loadData()
 })
-
-// Sinkronkan data saat berpindah tab kembali ke halaman ini (KeepAlive)
 onActivated(() => {
   loadData()
 })

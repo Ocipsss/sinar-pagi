@@ -13,19 +13,16 @@ export function useKasir() {
   const store = useKasirStore()
   const operatorStore = useOperatorStore()
 
-  // State Data Master
   const products = ref([])
   const members = ref([])
   const packagesList = ref([])
   const servicesList = ref([])
 
-  // State UI & Pencarian
   const q = ref('')
   const memberQ = ref('')
   const showSearch = ref(false)
   const selectedProductForOption = ref(null)
 
-  // Computed Keuangan & Pembayaran
   const total = computed(() => store.cart.reduce((s, c) => s + c.price_sell * c.cartQty, 0))
   const kembalian = computed(() => Math.max(0, (store.bayarNominal || 0) - total.value))
   const kurangBayar = computed(() => Math.max(0, total.value - (store.bayarNominal || 0)))
@@ -37,11 +34,9 @@ export function useKasir() {
     }
   })
 
-  // Computed Filter Produk & Member
   const filteredProducts = computed(() => {
     const qq = q.value.toLowerCase().trim()
     if (!qq) return products.value.slice(0, 15)
-
     return products.value
       .filter(p => p.name.toLowerCase().includes(qq) || (p.code || '').toLowerCase().includes(qq))
       .sort((a, b) => {
@@ -49,7 +44,6 @@ export function useKasir() {
         const nameB = b.name.toLowerCase()
         const idxA = nameA.indexOf(qq)
         const idxB = nameB.indexOf(qq)
-
         if (idxA !== -1 && idxB !== -1) {
           if (idxA !== idxB) return idxA - idxB
           return nameA.localeCompare(nameB)
@@ -67,13 +61,22 @@ export function useKasir() {
     return members.value.filter(m => m.name.toLowerCase().includes(qq) || (m.phone || '').includes(qq)).slice(0, 20)
   })
 
+  // === FIX UTAMA DI SINI MET ===
   const filteredServicesByCategory = computed(() => {
     if (!selectedProductForOption.value) return []
-    const pCat = (selectedProductForOption.value.category || '').toLowerCase()
-    return servicesList.value.filter(s => (s.category || '').toLowerCase() === pCat)
+    const product = selectedProductForOption.value
+    
+    // 1. Cek dulu ada jasa KHUSUS buat produk ini ga?
+    const custom = servicesList.value.filter(s => s.productId === product.id)
+    if (custom.length > 0) {
+      return custom // kalo ada, cuma yang khusus ini doang yang keluar
+    }
+
+    // 2. Kalo ga ada custom, baru pake jasa umum per kategori
+    const pCat = (product.category || '').toLowerCase()
+    return servicesList.value.filter(s => !s.productId && (s.category || '').toLowerCase() === pCat)
   })
 
-  // Muat Data Awal
   const load = async () => {
     const [data, packages, services] = await Promise.all([
       kasirService.getInitialData(),
@@ -98,7 +101,11 @@ export function useKasir() {
     const pCat = (product.category || '').toLowerCase()
     const isPackageCategory = ['rokok', 'permen'].includes(pCat)
     const hasPackages = getProductPackages(product.id).length > 0
-    const hasConfiguredServices = servicesList.value.some(s => (s.category || '').toLowerCase() === pCat)
+    
+    // FIX JUGA DI SINI: cek jasa custom juga
+    const hasConfiguredServices = servicesList.value.some(s => 
+      s.productId === product.id || (!s.productId && (s.category || '').toLowerCase() === pCat)
+    )
 
     if ((isPackageCategory && hasPackages) || (!isPackageCategory && hasConfiguredServices)) {
       selectedProductForOption.value = product
@@ -117,7 +124,6 @@ export function useKasir() {
     q.value = ''
   }
 
-  // Proses Checkout & Edit Transaksi
   const checkout = async () => {
     if (store.paymentMethod === 'TEMPO' && !store.selectedMember) throw new Error('Pilih member untuk TEMPO')
     if (store.paymentMethod === 'CASH' && store.bayarNominal < total.value) throw new Error('Nominal kurang')
@@ -129,7 +135,6 @@ export function useKasir() {
         memberId: store.selectedMember?.id || null,
         total: total.value
       }
-
       const updatedItems = store.cart.map(item => ({
         productId: item.id,
         productName: item.name,
@@ -137,13 +142,11 @@ export function useKasir() {
         qty: item.cartQty,
         serviceId: item.isServed ? 'SERVICE_SEDUH' : null
       }))
-
       const newPaymentData = {
         paymentMethod: store.paymentMethod,
         memberId: store.selectedMember?.id || null,
         amountPaid: store.paymentMethod === 'TEMPO' ? 0 : store.paymentMethod === 'QRIS' ? total.value : store.bayarNominal
       }
-
       const res = await salesHistoryService.updateTransaction(originalTrx, updatedItems, newPaymentData)
       store.clearCart()
       return res
@@ -160,20 +163,17 @@ export function useKasir() {
     return res
   }
 
-  // --- LOGIKA SCANNER BARCODE FISIK (HID MODE) ---
   let barcodeBuffer = ''
   let lastKeyTime = Date.now()
 
   const processBarcodeScan = (codeToScan) => {
     if (!codeToScan) return false
     const cleanCode = String(codeToScan).trim().toLowerCase()
-
     const matchedProduct = products.value.find(
       p => String(p.code || '').trim().toLowerCase() === cleanCode
     ) || products.value.find(
       p => String(p.name || '').trim().toLowerCase() === cleanCode
     )
-
     if (matchedProduct) {
       handleSelectProduct(matchedProduct)
       q.value = ''
@@ -187,16 +187,12 @@ export function useKasir() {
 
   const handleGlobalKeydown = (e) => {
     if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Tab'].includes(e.key)) return
-
     const activeEl = document.activeElement
     const isTypingInInput = activeEl && ['INPUT', 'TEXTAREA', 'SELECT'].includes(activeEl.tagName)
     const isKasirSearchInput = activeEl && activeEl.id === 'kasir-search-input'
-    
     if (isTypingInInput && !isKasirSearchInput) return
-
     const currentTime = Date.now()
     if (currentTime - lastKeyTime > 50) barcodeBuffer = ''
-
     if (e.key === 'Enter') {
       if (isKasirSearchInput && q.value.trim().length > 0) {
         e.preventDefault()
@@ -214,7 +210,6 @@ export function useKasir() {
         barcodeBuffer += e.key
       }
     }
-
     lastKeyTime = currentTime
   }
 
@@ -222,7 +217,6 @@ export function useKasir() {
     window.removeEventListener('keydown', handleGlobalKeydown)
     window.addEventListener('keydown', handleGlobalKeydown)
   }
-
   const detachListener = () => {
     window.removeEventListener('keydown', handleGlobalKeydown)
   }
