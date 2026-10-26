@@ -1,6 +1,6 @@
 <!-- src/views/Kasir.vue -->
 <template>
-<div class="flex flex-col md:flex-row flex-1 h-full overflow-hidden p-0 md:p-4 gap-4">
+<div class="flex flex-col md:flex-row flex-1 h-full overflow-hidden p-0 md:p-4 gap-4 font-sans">
   <!-- KOLOM KIRI (TABLET): Search & Keranjang Belanja -->
   <div class="flex-1 flex flex-col overflow-hidden min-w-0">
     <!-- Search & Bar Atas -->
@@ -20,7 +20,7 @@
           <!-- TOMBOL SCANNER KAMERA KHUSUS HP -->
           <button 
             type="button"
-            @click="toggleCameraScanner"
+            @click="toggleCamera"
             class="absolute right-3 top-1/2 -translate-y-1/2 p-2 bg-zinc-900 text-white rounded-xl block md:hidden active:scale-95 transition flex items-center justify-center"
             title="Scan Barcode Kamera"
           >
@@ -45,7 +45,7 @@
       <div v-show="isScanning" class="mt-3 bg-black rounded-2xl overflow-hidden relative border border-zinc-700 shadow-lg block md:hidden">
         <div id="reader-kasir" class="w-full"></div>
         <button 
-          @click="stopActiveScanner"
+          @click="stop"
           class="absolute top-3 right-3 z-10 px-3 py-1.5 bg-red-600 text-white rounded-xl text-xs font-black shadow-md active:scale-95 transition"
         >
           Tutup Kamera
@@ -356,7 +356,8 @@ const {
   load, handleSelectProduct, confirmAddToCart, getProductPackages, checkout, processBarcodeScan
 } = useKasir()
 
-const { isScanning } = useProductScanner()
+// Menggunakan composable scanner dengan container ID "reader-kasir"
+const { isScanning, start, stop } = useProductScanner('reader-kasir')
 
 const searchInputRef = ref(null)
 const memberSearchInputRef = ref(null)
@@ -364,52 +365,23 @@ const showMemberPicker = ref(false)
 const showPendingModal = ref(false)
 const completedTransaction = ref(null)
 
-let qr = null
-
 const focusSearchInput = () => {
   nextTick(() => {
     searchInputRef.value?.focus()
   })
 }
 
-const toggleCameraScanner = async () => {
-  if (isScanning.value) {
-    await stopActiveScanner()
-  } else {
-    try {
-      const { Html5Qrcode } = await import('html5-qrcode')
-      qr = new Html5Qrcode("reader-kasir")
-      isScanning.value = true
-      await qr.start(
-        { facingMode: "environment" },
-        { fps: 10, qrbox: 250 },
-        (decoded) => {
-          processBarcodeScan(decoded)
-          stopActiveScanner()
-        },
-        null
-      )
-    } catch (err) {
-      isScanning.value = false
-      qr = null
-      toast.error('Gagal mengakses kamera HP')
+const toggleCamera = async () => {
+  try {
+    if (isScanning.value) {
+      await stop()
+    } else {
+      await start((decoded) => {
+        processBarcodeScan(decoded)
+      })
     }
-  }
-}
-
-const stopActiveScanner = async () => {
-  if (qr) {
-    try {
-      await qr.stop()
-      qr.clear()
-    } catch (e) {
-      console.warn("Gagal menghentikan scanner:", e)
-    } finally {
-      qr = null
-      isScanning.value = false
-    }
-  } else {
-    isScanning.value = false
+  } catch (err) {
+    toast.error(err.message || 'Gagal mengakses kamera HP')
   }
 }
 
@@ -434,23 +406,19 @@ const onCheckout = async () => {
   try { 
     const isEditing = !!store.editingTransactionId
     
-    // Ambil Snapshot Keranjang dan Metadata Pembayaran
     const currentCartSnapshot = JSON.parse(JSON.stringify(store.cart))
     const currentMemberSnapshot = store.selectedMember
     const currentMethodSnapshot = store.paymentMethod
     const currentPaidSnapshot = store.bayarNominal
 
-    // Dapatkan Nama Kasir resmi dari Getter operatorStore (atau fallback 'Admin')
     const currentOperatorName = operatorStore.operatorName || (
       typeof operatorStore.activeOperator === 'object' && operatorStore.activeOperator !== null 
         ? (operatorStore.activeOperator.name || 'Admin')
         : (operatorStore.activeOperator || 'Admin')
     )
 
-    // Jalankan checkout (kembalikan ID & Total resmi DB)
     const res = await checkout()
     
-    // Format objek transaksi struk yang bersih dan valid
     completedTransaction.value = {
       id: res.id,
       date: new Date().toISOString(),
@@ -510,6 +478,5 @@ onActivated(() => {
 
 onUnmounted(() => {
   window.removeEventListener('open-member-picker', openMemberHandler)
-  stopActiveScanner()
 })
 </script>

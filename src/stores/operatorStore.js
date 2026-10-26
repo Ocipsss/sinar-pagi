@@ -3,7 +3,8 @@ import { operatorRepo } from '../db/repositories/operatorRepository.js'
 
 export const useOperatorStore = defineStore('operator', {
   state: () => ({
-    activeOperator: null
+    activeOperator: null,
+    operators: []
   }),
 
   getters: {
@@ -13,15 +14,22 @@ export const useOperatorStore = defineStore('operator', {
   },
 
   actions: {
+    async loadOperators() {
+      this.operators = await operatorRepo.getAll()
+      return this.operators
+    },
+
     async login(operatorId, pinInput) {
-      const operators = await operatorRepo.getAll()
-      const target = operators.find(o => o.id === operatorId)
+      if (this.operators.length === 0) {
+        await this.loadOperators()
+      }
+      
+      const target = this.operators.find(o => o.id === operatorId)
 
       if (!target) {
         throw new Error('Operator tidak ditemukan.')
       }
 
-      // Jika operator memiliki PIN, cocokkan PIN
       if (target.pin && target.pin !== pinInput) {
         throw new Error('PIN yang Anda masukkan salah.')
       }

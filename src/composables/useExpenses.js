@@ -1,3 +1,4 @@
+// src/composables/useExpenses.js
 import { ref, computed } from 'vue'
 import { expenseService } from '../services/expenseService.js'
 import { toast } from 'vue-sonner'
@@ -64,7 +65,7 @@ export function useExpenses() {
       .reduce((sum, e) => sum + (Number(e.amount) || 0), 0)
   })
 
-  const openModal = () => {
+  const resetForm = () => {
     form.value = {
       category: 'Plastik & Bungkusan',
       amount: null,
@@ -72,7 +73,16 @@ export function useExpenses() {
       note: '',
       date: dayjs().format('YYYY-MM-DDTHH:mm')
     }
+  }
+
+  const openModal = () => {
+    resetForm()
     showModal.value = true
+  }
+
+  const closeModal = () => {
+    showModal.value = false
+    resetForm()
   }
 
   const saveExpense = async () => {
@@ -91,7 +101,7 @@ export function useExpenses() {
         amount
       })
       toast.success('Pengeluaran berhasil dicatat & kas dipotong!')
-      showModal.value = false
+      closeModal()
       await loadExpenses()
     } catch (err) {
       toast.error(`Gagal menyimpan: ${err.message}`)
@@ -132,6 +142,7 @@ export function useExpenses() {
     totalBulanIni,
     loadExpenses,
     openModal,
+    closeModal,
     saveExpense,
     deleteExpense,
     formatDate

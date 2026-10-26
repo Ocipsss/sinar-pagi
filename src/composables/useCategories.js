@@ -7,6 +7,7 @@ export function useCategories() {
   const categories = ref([])
   const units = ref([])
   const searchQuery = ref('')
+  const activeTab = ref('category') // Pindahkan state tab ke composable
   const showModal = ref(false)
   const formName = ref('')
   const editingId = ref(null)
@@ -34,10 +35,11 @@ export function useCategories() {
     units.value = data.sort((a, b) => (a.name || '').localeCompare(b.name || ''))
   }
 
-  const openModal = (cat = null) => {
-    if (cat) {
-      editingId.value = cat.id
-      formName.value = cat.name
+  // Unified Modal Handler (Support Category & Unit)
+  const openModal = (item = null) => {
+    if (item) {
+      editingId.value = item.id
+      formName.value = item.name
     } else {
       editingId.value = null
       formName.value = ''
@@ -46,10 +48,15 @@ export function useCategories() {
     nextTick(() => inputRef.value?.focus())
   }
 
-  const saveCategory = async () => {
-    if (!formName.value.trim()) return
+  const closeModal = () => {
+    showModal.value = false
+    formName.value = ''
+    editingId.value = null
+  }
 
+  const saveCategory = async () => {
     const formattedName = formName.value.trim().toUpperCase()
+    if (!formattedName) return
 
     if (editingId.value) {
       await categoryRepo.update(editingId.value, formattedName)
@@ -57,10 +64,7 @@ export function useCategories() {
       await categoryRepo.create(formattedName)
     }
 
-    showModal.value = false
-    formName.value = ''
-    editingId.value = null
-
+    closeModal()
     await loadCategories()
   }
 
@@ -72,9 +76,8 @@ export function useCategories() {
   }
 
   const saveUnit = async () => {
-    if (!formName.value.trim()) return
-
     const formattedName = formName.value.trim().toUpperCase()
+    if (!formattedName) return
 
     if (editingId.value) {
       await unitRepo.update(editingId.value, formattedName)
@@ -82,10 +85,7 @@ export function useCategories() {
       await unitRepo.create(formattedName)
     }
 
-    showModal.value = false
-    formName.value = ''
-    editingId.value = null
-
+    closeModal()
     await loadUnits()
   }
 
@@ -96,10 +96,22 @@ export function useCategories() {
     }
   }
 
+  // Single Form Submit Handler
+  const handleSubmit = async () => {
+    if (!formName.value.trim()) return
+
+    if (activeTab.value === 'category') {
+      await saveCategory()
+    } else {
+      await saveUnit()
+    }
+  }
+
   return {
     categories,
     units,
     searchQuery,
+    activeTab,
     filteredCategories,
     filteredUnits,
     showModal,
@@ -109,9 +121,9 @@ export function useCategories() {
     loadCategories,
     loadUnits,
     openModal,
-    saveCategory,
+    closeModal,
+    handleSubmit,
     deleteCategory,
-    saveUnit,
     deleteUnit
   }
 }

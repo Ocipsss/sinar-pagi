@@ -120,7 +120,7 @@
           <h2 class="font-black text-base">
             {{ editingId ? 'Edit' : 'Tambah' }} {{ activeTab === 'category' ? 'Kategori' : 'Satuan' }} Baru
           </h2>
-          <button @click="showModal = false" class="p-2 bg-zinc-100 rounded-xl">
+          <button @click="closeModal" class="p-2 bg-zinc-100 rounded-xl">
             <X class="w-4 h-4" />
           </button>
         </div>
@@ -140,7 +140,7 @@
           </div>
 
           <div class="flex gap-2 pt-2">
-            <button type="button" @click="showModal = false" class="flex-1 py-3 bg-zinc-100 font-bold text-xs rounded-xl">
+            <button type="button" @click="closeModal" class="flex-1 py-3 bg-zinc-100 font-bold text-xs rounded-xl">
               Batal
             </button>
             <button type="submit" class="flex-1 py-3 bg-zinc-900 text-white font-bold text-xs rounded-xl shadow-md">
@@ -154,16 +154,15 @@
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick } from 'vue'
+import { onMounted } from 'vue'
 import { Plus, Search, Pencil, Trash2, X } from 'lucide-vue-next'
 import { useCategories } from '../composables/useCategories.js'
-
-const activeTab = ref('category')
 
 const {
   categories,
   units,
   searchQuery,
+  activeTab,
   filteredCategories,
   filteredUnits,
   showModal,
@@ -172,40 +171,12 @@ const {
   inputRef,
   loadCategories,
   loadUnits,
-  openModal: openCatModal,
-  saveCategory,
+  openModal,
+  closeModal,
+  handleSubmit,
   deleteCategory,
-  saveUnit,
   deleteUnit
 } = useCategories()
-
-const openModal = (item = null) => {
-  if (activeTab.value === 'category') {
-    openCatModal(item)
-  } else {
-    if (item) {
-      editingId.value = item.id
-      formName.value = item.name
-    } else {
-      editingId.value = null
-      formName.value = ''
-    }
-    showModal.value = true
-    nextTick(() => inputRef.value?.focus())
-  }
-}
-
-const handleSubmit = async () => {
-  if (!formName.value.trim()) return
-
-  formName.value = formName.value.toUpperCase().trim()
-
-  if (activeTab.value === 'category') {
-    await saveCategory()
-  } else {
-    await saveUnit()
-  }
-}
 
 onMounted(() => {
   loadCategories()

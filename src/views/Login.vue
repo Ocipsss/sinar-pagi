@@ -1,5 +1,5 @@
 <template>
-<div class="min-h-screen bg-zinc-900 text-white flex items-center justify-center p-4">
+<div class="min-h-screen bg-zinc-900 text-white flex items-center justify-center p-4 font-sans">
   <div class="w-full max-w-sm bg-zinc-800 border border-zinc-700/60 p-6 rounded-[2.5rem] shadow-2xl flex flex-col gap-5">
 
     <!-- Header -->
@@ -21,7 +21,7 @@
           class="w-full px-4 py-3 bg-zinc-900 border border-zinc-700 rounded-2xl text-sm font-bold text-white focus:outline-none focus:ring-2 focus:ring-amber-500"
         >
           <option value="" disabled>-- Pilih Operator --</option>
-          <option v-for="op in operators" :key="op.id" :value="op.id">
+          <option v-for="op in operatorStore.operators" :key="op.id" :value="op.id">
             {{ op.name }} ({{ op.role }})
           </option>
         </select>
@@ -48,14 +48,14 @@
       </div>
     </div>
 
-    <!-- Button Submit - sembunyikan kalau numpad lagi terbuka biar fokus PIN -->
+    <!-- Button Submit -->
     <button
       v-if="!showNumpad"
       @click="handleLogin"
       :disabled="!selectedOperatorId || loading"
       class="w-full py-4 bg-white hover:bg-zinc-100 disabled:bg-zinc-700 disabled:text-zinc-500 text-zinc-900 font-black text-xs rounded-2xl transition active:scale-95 shadow-lg mt-2"
     >
-      {{ loading? 'VERIFIKASI...' : 'MASUK SHIFT' }}
+      {{ loading ? 'VERIFIKASI...' : 'MASUK SHIFT' }}
     </button>
   </div>
 </div>
@@ -64,7 +64,6 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
-import { operatorRepo } from '../db/repositories/operatorRepository.js'
 import { useOperatorStore } from '../stores/operatorStore.js'
 import { toast } from 'vue-sonner'
 import Numpad from '../components/Numpad.vue'
@@ -72,21 +71,19 @@ import Numpad from '../components/Numpad.vue'
 const router = useRouter()
 const operatorStore = useOperatorStore()
 
-const operators = ref([])
 const selectedOperatorId = ref('')
 const pin = ref('')
 const loading = ref(false)
 const showNumpad = ref(false)
 
 const activeSelectedOperator = computed(() => {
-  return operators.value.find(o => o.id === selectedOperatorId.value)
+  return operatorStore.operators.find(o => o.id === selectedOperatorId.value)
 })
 
 const loadOperators = async () => {
-  let list = await operatorRepo.getAll()
-  operators.value = list
-  if (list.length > 0) {
-    selectedOperatorId.value = list[0].id
+  await operatorStore.loadOperators()
+  if (operatorStore.operators.length > 0) {
+    selectedOperatorId.value = operatorStore.operators[0].id
   }
 }
 

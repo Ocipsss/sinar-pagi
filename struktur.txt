@@ -1,0 +1,94 @@
+src
+├── App.vue
+├── components
+│   ├── Numpad.vue
+│   ├── ReceiptModal.vue
+│   ├── Sidebar.vue
+│   └── product
+│       └── ProductForm.vue
+├── composables
+│   ├── useCategories.js
+│   ├── useDashboard.js
+│   ├── useExpenses.js
+│   ├── useFinance.js
+│   ├── useHeaderAction.js
+│   ├── useKasir.js
+│   ├── useMembers.js
+│   ├── useOperators.js
+│   ├── usePrinter.js
+│   ├── useProductCalculator.js
+│   ├── useProductForm.js
+│   ├── useProductScanner.js
+│   ├── useProductsDigital.js
+│   ├── useRupiah.js
+│   ├── useSalesHistory.js
+│   ├── useSettings.js
+│   ├── useSettingsMenu.js
+│   └── useShopping.js
+├── db
+│   ├── index.js
+│   └── repositories
+│       ├── categoryRepository.js
+│       ├── digitalTransactionRepository.js
+│       ├── expenseRepository.js
+│       ├── financeRepository.js
+│       ├── memberRepository.js
+│       ├── operatorRepository.js
+│       ├── packageRepository.js
+│       ├── productRepository.js
+│       ├── serviceRepository.js
+│       ├── settingsRepository.js
+│       ├── shoppingRepository.js
+│       ├── transactionRepository.js
+│       └── unitRepository.js
+├── layouts
+│   └── MainLayout.vue
+├── main.js
+├── router
+│   └── index.js
+├── schemas
+│   └── product.schema.js
+├── services
+│   ├── backupService.js
+│   ├── cloudinaryService.js
+│   ├── dashboardService.js
+│   ├── expenseService.js
+│   ├── firebase.js
+│   ├── kasirService.js
+│   ├── memberService.js
+│   ├── productService.js
+│   ├── productsDigitalService.js
+│   ├── receiptService.js
+│   ├── reportService.js
+│   ├── salesHistoryService.js
+│   ├── shoppingService.js
+│   └── syncService.js
+├── stores
+│   ├── kasirStore.js
+│   ├── operatorStore.js
+│   └── productStore.js
+├── style.css
+├── utils
+│   ├── calculator
+│   │   └── product.js
+│   └── formatters
+│       └── currency.js
+└── views
+    ├── Categories.vue
+    ├── Dashboard.vue
+    ├── Expenses.vue
+    ├── Finance.vue
+    ├── Kasir.vue
+    ├── Login.vue
+    ├── Members.vue
+    ├── Operators.vue
+    ├── ProductsAdd.vue
+    ├── ProductsDigital.vue
+    ├── ProductsList.vue
+    ├── Reports.vue
+    ├── SalesHistory.vue
+    ├── Settings.vue
+    ├── SettingsMenu.vue
+    └── Shopping.vue
+
+15 directories, 77 files

@@ -13,16 +13,19 @@ export function useKasir() {
   const store = useKasirStore()
   const operatorStore = useOperatorStore()
 
+  // State Data Master
   const products = ref([])
   const members = ref([])
   const packagesList = ref([])
   const servicesList = ref([])
 
+  // State UI & Pencarian
   const q = ref('')
   const memberQ = ref('')
   const showSearch = ref(false)
   const selectedProductForOption = ref(null)
 
+  // Computed Keuangan & Pembayaran
   const total = computed(() => store.cart.reduce((s, c) => s + c.price_sell * c.cartQty, 0))
   const kembalian = computed(() => Math.max(0, (store.bayarNominal || 0) - total.value))
   const kurangBayar = computed(() => Math.max(0, total.value - (store.bayarNominal || 0)))
@@ -30,25 +33,20 @@ export function useKasir() {
   const bayarDisplay = computed({
     get: () => store.bayarNominal ? formatRibuan(store.bayarNominal) : '',
     set: (val) => {
-      const num = parseInt(String(val).replace(/\D/g, '') || '0', 10)
-      store.bayarNominal = num
+      store.bayarNominal = parseInt(String(val).replace(/\D/g, '') || '0', 10)
     }
   })
 
+  // Computed Filter Produk & Member
   const filteredProducts = computed(() => {
     const qq = q.value.toLowerCase().trim()
     if (!qq) return products.value.slice(0, 15)
 
     return products.value
-      .filter(p => {
-        const nameMatch = p.name.toLowerCase().includes(qq)
-        const codeMatch = (p.code || '').toLowerCase().includes(qq)
-        return nameMatch || codeMatch
-      })
+      .filter(p => p.name.toLowerCase().includes(qq) || (p.code || '').toLowerCase().includes(qq))
       .sort((a, b) => {
         const nameA = a.name.toLowerCase()
         const nameB = b.name.toLowerCase()
-
         const idxA = nameA.indexOf(qq)
         const idxB = nameB.indexOf(qq)
 
@@ -56,10 +54,8 @@ export function useKasir() {
           if (idxA !== idxB) return idxA - idxB
           return nameA.localeCompare(nameB)
         }
-
         if (idxA !== -1) return -1
         if (idxB !== -1) return 1
-
         return 0
       })
       .slice(0, 20)
@@ -77,6 +73,7 @@ export function useKasir() {
     return servicesList.value.filter(s => (s.category || '').toLowerCase() === pCat)
   })
 
+  // Muat Data Awal
   const load = async () => {
     const [data, packages, services] = await Promise.all([
       kasirService.getInitialData(),
@@ -88,7 +85,6 @@ export function useKasir() {
     packagesList.value = packages
     servicesList.value = services
 
-    // Jangan reset bayarNominal jika sedang dalam mode edit transaksi
     if (!store.editingTransactionId) {
       store.bayarNominal = 0
     }
@@ -121,11 +117,11 @@ export function useKasir() {
     q.value = ''
   }
 
+  // Proses Checkout & Edit Transaksi
   const checkout = async () => {
     if (store.paymentMethod === 'TEMPO' && !store.selectedMember) throw new Error('Pilih member untuk TEMPO')
     if (store.paymentMethod === 'CASH' && store.bayarNominal < total.value) throw new Error('Nominal kurang')
 
-    // 1. JIKA MODE EDIT TRANSAKSI
     if (store.editingTransactionId) {
       const originalTrx = {
         id: store.editingTransactionId,
@@ -142,7 +138,6 @@ export function useKasir() {
         serviceId: item.isServed ? 'SERVICE_SEDUH' : null
       }))
 
-      // Sertakan metode bayar, member, dan nominal bayar terbaru yang dipilih kasir
       const newPaymentData = {
         paymentMethod: store.paymentMethod,
         memberId: store.selectedMember?.id || null,
@@ -154,7 +149,6 @@ export function useKasir() {
       return res
     }
 
-    // 2. JIKA TRANSAKSI BARU
     const res = await kasirService.checkout({
       cart: store.cart,
       member: store.selectedMember,
@@ -195,20 +189,13 @@ export function useKasir() {
     if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Tab'].includes(e.key)) return
 
     const activeEl = document.activeElement
-    const isTypingInInput = activeEl && (
-      activeEl.tagName === 'INPUT' || 
-      activeEl.tagName === 'TEXTAREA' || 
-      activeEl.tagName === 'SELECT'
-    )
-
+    const isTypingInInput = activeEl && ['INPUT', 'TEXTAREA', 'SELECT'].includes(activeEl.tagName)
     const isKasirSearchInput = activeEl && activeEl.id === 'kasir-search-input'
+    
     if (isTypingInInput && !isKasirSearchInput) return
 
     const currentTime = Date.now()
-
-    if (currentTime - lastKeyTime > 50) {
-      barcodeBuffer = ''
-    }
+    if (currentTime - lastKeyTime > 50) barcodeBuffer = ''
 
     if (e.key === 'Enter') {
       if (isKasirSearchInput && q.value.trim().length > 0) {
@@ -240,21 +227,10 @@ export function useKasir() {
     window.removeEventListener('keydown', handleGlobalKeydown)
   }
 
-  onMounted(() => {
-    attachListener()
-  })
-
-  onUnmounted(() => {
-    detachListener()
-  })
-
-  onActivated(() => {
-    attachListener()
-  })
-
-  onDeactivated(() => {
-    detachListener()
-  })
+  onMounted(attachListener)
+  onUnmounted(detachListener)
+  onActivated(attachListener)
+  onDeactivated(detachListener)
 
   return {
     store,

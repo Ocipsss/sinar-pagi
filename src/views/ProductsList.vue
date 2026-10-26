@@ -1,6 +1,6 @@
 <!-- src/views/ProductsList.vue -->
 <template>
-<div class="flex-1 overflow-auto p-4 pb-24">
+<div class="flex-1 overflow-auto p-4 pb-24 font-sans">
   <!-- HEADER -->
   <div class="flex justify-between items-center mb-4">
     <div>
@@ -36,14 +36,14 @@
     <!-- TOMBOL SCANNER KAMERA KHUSUS HP -->
     <button 
       type="button"
-      @click="toggleCameraScanner"
+      @click="toggleCamera"
       class="absolute right-11 top-1/2 -translate-y-1/2 p-1.5 bg-zinc-900 text-white rounded-xl block md:hidden active:scale-95 transition flex items-center justify-center"
       title="Scan Kamera"
     >
       <ScanLine class="w-4 h-4" />
     </button>
 
-    <!-- TOMBOL HAPUS SEARCHBAR & OTOMATIS FOKUS -->
+    <!-- TOMBOL HAPUS SEARCHBAR -->
     <button 
       v-if="q" 
       type="button"
@@ -59,7 +59,7 @@
   <div v-show="isScanning" class="mb-3 bg-black rounded-2xl overflow-hidden relative border border-zinc-700 shadow-lg block md:hidden">
     <div id="reader-products" class="w-full"></div>
     <button 
-      @click="stopActiveScanner"
+      @click="stop"
       class="absolute top-3 right-3 z-10 px-3 py-1.5 bg-red-600 text-white rounded-xl text-xs font-black shadow-md active:scale-95 transition"
     >
       Tutup Kamera
@@ -184,7 +184,7 @@ import ProductForm from '../components/product/ProductForm.vue'
 import { toast } from 'vue-sonner'
 
 const store = useProductsStore()
-const { isScanning } = useProductScanner()
+const { isScanning, start, stop } = useProductScanner('reader-products')
 
 const searchInputRef = ref(null)
 const q = ref('')
@@ -195,8 +195,6 @@ const showFilter = ref(false)
 
 const showEditModal = ref(false)
 const selectedProduct = ref(null)
-
-let qr = null
 
 const focusSearchInput = () => {
   nextTick(() => {
@@ -209,45 +207,18 @@ const clearSearch = () => {
   focusSearchInput()
 }
 
-const toggleCameraScanner = async () => {
-  if (isScanning.value) {
-    await stopActiveScanner()
-  } else {
-    try {
-      const { Html5Qrcode } = await import('html5-qrcode')
-      qr = new Html5Qrcode("reader-products")
-      isScanning.value = true
-      await qr.start(
-        { facingMode: "environment" },
-        { fps: 10, qrbox: 250 },
-        (decoded) => {
-          q.value = decoded.trim()
-          stopActiveScanner()
-          toast.success(`Barcode terbaca: ${decoded}`)
-        },
-        null
-      )
-    } catch (err) {
-      isScanning.value = false
-      qr = null
-      toast.error('Gagal mengakses kamera HP')
+const toggleCamera = async () => {
+  try {
+    if (isScanning.value) {
+      await stop()
+    } else {
+      await start((decoded) => {
+        q.value = decoded.trim()
+        toast.success(`Barcode terbaca: ${decoded}`)
+      })
     }
-  }
-}
-
-const stopActiveScanner = async () => {
-  if (qr) {
-    try {
-      await qr.stop()
-      qr.clear()
-    } catch (e) {
-      console.warn("Gagal menghentikan scanner:", e)
-    } finally {
-      qr = null
-      isScanning.value = false
-    }
-  } else {
-    isScanning.value = false
+  } catch (err) {
+    toast.error(err.message || 'Gagal mengakses kamera HP')
   }
 }
 
@@ -339,20 +310,12 @@ const handleGlobalKeydown = (e) => {
   if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Tab'].includes(e.key)) return
 
   const activeEl = document.activeElement
-  const isTypingInInput = activeEl && (
-    activeEl.tagName === 'INPUT' || 
-    activeEl.tagName === 'TEXTAREA' || 
-    activeEl.tagName === 'SELECT'
-  )
-
+  const isTypingInInput = activeEl && ['INPUT', 'TEXTAREA', 'SELECT'].includes(activeEl.tagName)
   const isProductSearchInput = activeEl && activeEl.id === 'product-search-input'
   if (isTypingInInput && !isProductSearchInput) return
 
   const currentTime = Date.now()
-
-  if (currentTime - lastKeyTime > 50) {
-    barcodeBuffer = ''
-  }
+  if (currentTime - lastKeyTime > 50) barcodeBuffer = ''
 
   if (e.key === 'Enter') {
     if (isProductSearchInput) {
@@ -394,7 +357,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   detachListener()
-  stopActiveScanner()
+  stop()
 })
 
 onActivated(() => {
@@ -405,6 +368,6 @@ onActivated(() => {
 
 onDeactivated(() => {
   detachListener()
-  stopActiveScanner()
+  stop()
 })
 </script>

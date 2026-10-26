@@ -1,7 +1,8 @@
+// src/composables/useProductScanner.js
 import { ref, onUnmounted } from 'vue'
 import { Html5Qrcode } from 'html5-qrcode'
 
-export function useProductScanner() {
+export function useProductScanner(elementId = 'reader') {
   const isScanning = ref(false)
   let qr = null
 
@@ -13,7 +14,7 @@ export function useProductScanner() {
 
     try {
       isScanning.value = true
-      qr = new Html5Qrcode("reader")
+      qr = new Html5Qrcode(elementId)
       await qr.start(
         { facingMode: "environment" },
         { fps: 10, qrbox: 250 },
@@ -26,6 +27,7 @@ export function useProductScanner() {
     } catch (err) {
       console.error("Gagal membuka kamera:", err)
       isScanning.value = false
+      qr = null
       throw new Error("Kamera tidak dapat diakses atau tidak ditemukan.")
     }
   }
@@ -41,10 +43,11 @@ export function useProductScanner() {
         isScanning.value = false
         qr = null
       }
+    } else {
+      isScanning.value = false
     }
   }
 
-  // Bersihkan kamera otomatis saat komponen ditutup
   onUnmounted(() => {
     stop()
   })

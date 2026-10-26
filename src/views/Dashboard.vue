@@ -1,3 +1,4 @@
+<!-- src/views/Dashboard.vue -->
 <template>
   <div class="flex-1 overflow-auto p-4 space-y-4 pb-28 font-sans">
     
@@ -100,13 +101,13 @@
       <div class="flex justify-between items-center">
         <div>
           <div class="font-black text-sm text-zinc-900">Tren Omzet 7 Hari Terakhir</div>
-          <p class="text-[11px] text-zinc-400 font-medium">Grafik histori grafik pendapatan harian toko</p>
+          <p class="text-[11px] text-zinc-400 font-medium">Grafik histori pendapatan harian toko</p>
         </div>
         <span class="px-2.5 py-1 bg-zinc-100 text-zinc-600 rounded-lg text-[10px] font-black uppercase">7 Hari</span>
       </div>
 
       <div class="h-[190px] pt-2">
-        <Line v-if="chartReady && chartData.labels.length > 0" :data="chartData" :options="chartOptions"/>
+        <Line v-if="chartData.labels.length > 0" :data="chartData" :options="chartOptions"/>
         <div v-else class="h-full flex flex-col items-center justify-center text-xs text-zinc-400 font-bold gap-2">
           <BarChart3 class="w-6 h-6 text-zinc-300 animate-pulse" />
           <span>{{ loading ? 'Memuat grafik...' : 'Belum ada data grafik' }}</span>
@@ -202,7 +203,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onActivated } from 'vue'
+import { computed, onMounted, onActivated } from 'vue'
 import { Line } from 'vue-chartjs'
 import { Chart as ChartJS, CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler } from 'chart.js'
 import { 
@@ -215,10 +216,31 @@ import { formatRibuan } from '../utils/formatters/currency.js'
 ChartJS.register(CategoryScale, LinearScale, PointElement, LineElement, Tooltip, Filler)
 
 const { stats, lowProducts, topProducts, chartRaw, loading, load } = useDashboard()
+
 const today = new Date().toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long' })
 
-const chartReady = ref(false)
-const chartData = ref({ labels: [], datasets: [] })
+// Otomatis ter-update tanpa butuh state ref 'chartReady' manual
+const chartData = computed(() => {
+  if (!chartRaw.value || !Array.isArray(chartRaw.value) || chartRaw.value.length === 0) {
+    return { labels: [], datasets: [] }
+  }
+
+  return {
+    labels: chartRaw.value.map(c => c.label || ''),
+    datasets: [{
+      data: chartRaw.value.map(c => Number(c.value) || 0),
+      borderColor: '#18181b',
+      backgroundColor: 'rgba(24,24,27,0.06)',
+      borderWidth: 3,
+      pointBackgroundColor: '#18181b',
+      pointBorderColor: '#ffffff',
+      pointBorderWidth: 2,
+      pointRadius: 4,
+      fill: true,
+      tension: 0.3
+    }]
+  }
+})
 
 const chartOptions = { 
   responsive: true, 
@@ -236,24 +258,6 @@ const chartOptions = {
 const initDashboard = async () => {
   try {
     await load()
-    if (chartRaw.value && Array.isArray(chartRaw.value)) {
-      chartData.value = { 
-        labels: chartRaw.value.map(c => c.label || ''), 
-        datasets: [{ 
-          data: chartRaw.value.map(c => Number(c.value) || 0), 
-          borderColor: '#18181b', 
-          backgroundColor: 'rgba(24,24,27,0.06)', 
-          borderWidth: 3,
-          pointBackgroundColor: '#18181b',
-          pointBorderColor: '#ffffff',
-          pointBorderWidth: 2,
-          pointRadius: 4,
-          fill: true, 
-          tension: 0.3 
-        }] 
-      }
-      chartReady.value = true
-    }
   } catch (e) {
     console.error('Gagal memuat dashboard:', e)
   }

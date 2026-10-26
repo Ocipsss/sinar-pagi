@@ -1,5 +1,6 @@
+<!-- src/views/Expenses.vue -->
 <template>
-<div class="flex-1 overflow-auto p-4 pb-28 space-y-4">
+<div class="flex-1 overflow-auto p-4 pb-28 space-y-4 font-sans">
   <!-- Header Title & Action -->
   <div class="flex justify-between items-center">
     <div>
@@ -124,7 +125,7 @@
           <h2 class="font-black text-base text-zinc-900">Catat Pengeluaran Operasional</h2>
           <p class="text-xs text-zinc-400">Saldo kas/bank akan otomatis terpotong</p>
         </div>
-        <button @click="showModal = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4" /></button>
+        <button @click="closeModal" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4" /></button>
       </div>
 
       <form @submit.prevent="saveExpense" class="space-y-3.5">
@@ -178,7 +179,7 @@
         </div>
 
         <div class="flex gap-2 pt-2">
-          <button type="button" @click="showModal = false" class="flex-1 py-3 bg-zinc-100 font-bold text-xs rounded-xl">Batal</button>
+          <button type="button" @click="closeModal" class="flex-1 py-3 bg-zinc-100 font-bold text-xs rounded-xl">Batal</button>
           <button type="submit" :disabled="loading" class="flex-1 py-3 bg-zinc-900 disabled:bg-zinc-400 text-white font-bold text-xs rounded-xl shadow-md">Simpan & Potong Kas</button>
         </div>
       </form>
@@ -205,16 +206,12 @@ const {
   totalBulanIni,
   loadExpenses,
   openModal,
+  closeModal,
   saveExpense,
   deleteExpense,
   formatDate
 } = useExpenses()
 
-onMounted(() => {
-  loadExpenses()
-})
-
-onActivated(() => {
-  loadExpenses()
-})
+onMounted(loadExpenses)
+onActivated(loadExpenses)
 </script>

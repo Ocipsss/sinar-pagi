@@ -27,6 +27,9 @@ export function useFinance() {
     try {
       await financeRepo.recalculateFromHistory()
       await loadData()
+      toast.success('Berhasil menghitung ulang saldo dan piutang!')
+    } catch (err) {
+      toast.error(`Gagal menghitung ulang: ${err.message}`)
     } finally {
       loading.value = false
     }
@@ -35,15 +38,15 @@ export function useFinance() {
   const setBalance = async (accountId, amount, note) => {
     const targetAmount = Number(amount)
 
-    // GUARD: Blokir nilai minus & NaN (0 tetap diperbolehkan)
     if (isNaN(targetAmount) || targetAmount < 0) {
       toast.error('Nominal saldo awal tidak boleh bernilai negatif!')
-      return
+      return false
     }
 
     await financeRepo.setInitialBalance(accountId, targetAmount, note)
     toast.success('Saldo awal berhasil diperbarui!')
     await loadData()
+    return true
   }
 
   const handleTransfer = async (fromAccId, toAccId, amount, note) => {
@@ -55,19 +58,13 @@ export function useFinance() {
     }
     
     await financeRepo.addMutation({
-      accountId: fromAccId,
-      type: 'OUT',
-      amount: transferAmount,
-      category: 'Pindah Saldo',
-      note: `Transfer ke ${toAccId}: ${note}`
+      accountId: fromAccId, type: 'OUT', amount: transferAmount,
+      category: 'Pindah Saldo', note: `Transfer ke ${toAccId}: ${note}`
     })
 
     await financeRepo.addMutation({
-      accountId: toAccId,
-      type: 'IN',
-      amount: transferAmount,
-      category: 'Pindah Saldo',
-      note: `Transfer dari ${fromAccId}: ${note}`
+      accountId: toAccId, type: 'IN', amount: transferAmount,
+      category: 'Pindah Saldo', note: `Transfer dari ${fromAccId}: ${note}`
     })
 
     toast.success('Transfer saldo berhasil!')
