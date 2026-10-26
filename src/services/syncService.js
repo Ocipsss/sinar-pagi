@@ -1,9 +1,11 @@
+// src/services/syncService.js
 import { reactive } from 'vue'
 import { db } from '../db'
 import { firestore } from './firebase'
 import { collection, doc, writeBatch, getDocs, query, where } from 'firebase/firestore'
 import dayjs from 'dayjs'
 import Big from 'big.js'
+import { cloudinaryService } from './cloudinaryService.js' // <-- Tambahan import service cloudinary
 
 const TABLES_TO_SYNC = [
   'products',
@@ -139,21 +141,6 @@ export async function pullDeltaFromCloud() {
   }
 }
 
-async function recalculateMemberDebt(memberId) {
-  if (!memberId || !db?.transactions || !db?.members || !db?.debt_payments) return
-  try {
-    const unpaid = await db.transactions.where('memberId').equals(memberId).filter(t => (t.remaining || 0) > 0 && t.status !== 'void' && t.status !== 'CANCELLED' && !t.deleted).toArray()
-    const totalTrxDebt = unpaid.reduce((acc, t) => Big(acc).plus(t.remaining || 0).toString(), '0')
-    const payments = await db.debt_payments.where('memberId').equals(memberId).toArray()
-    const validPayments = payments.filter(p => !p.deleted)
-    const totalPaid = validPayments.reduce((acc, p) => Big(acc).plus(p.amount || 0).toString(), '0')
-    const finalDebt = Math.max(0, Number(Big(totalTrxDebt).minus(totalPaid)))
-    await db.members.update(memberId, { debt: finalDebt })
-  } catch (e) {
-    console.warn('[Sync] recalc debt fail', e)
-  }
-}
-
 export const syncRealtime = {
   toggleAutoSync(enabled) {
     syncStatus.isAutoSyncEnabled = enabled
@@ -169,6 +156,14 @@ export const syncRealtime = {
     isSyncing = true
     syncStatus.isSyncing = true
     try {
+      // ===== PERBAIKAN UTAMA: UPLOAD GAMBAR PENDING KE CLOUDINARY TERLEBIH DAHULU =====
+      try {
+        await cloudinaryService.uploadPendingImages()
+      } catch (imgErr) {
+        console.warn('[Sync] Gagal upload pending images ke Cloudinary:', imgErr?.message)
+      }
+      // ==============================================================================
+
       for (const tableName of [...TABLES_TO_SYNC, ...TRANSACTION_TABLES]) {
         if (!db[tableName]) continue
         const unsynced = await db[tableName].where('synced').equals(0).toArray()
@@ -177,7 +172,6 @@ export const syncRealtime = {
           const batch = writeBatch(firestore)
           const chunk = unsynced.slice(i, i + 400)
           chunk.forEach(item => {
-            // DI SINI PERBAIKANNYA: Hapus 'synced' dan 'imageLocal' (serta field Blob lain jika ada) agar aman dikirim ke Firestore
             const { synced, imageLocal, ...clean } = item
             batch.set(doc(firestore, tableName, item.id), clean, { merge: true })
           })
