@@ -1,9 +1,9 @@
-
-// src/db/index.js - v3 CLOUDINARY SUPPORT
+// src/db/index.js - v4 MULTI-PRODUK JASA SUPPORT
 import Dexie from 'dexie'
 
 export const db = new Dexie('SinarPagiDB')
 
+// v3 tetap dipertahankan buat migrasi lama
 db.version(3).stores({
   products: 'id, code, name, category, price_modal, price_sell, qty, unit, minStock, idealStock, purchasePackName, packQty, packPrice, updatedAt, synced, imageSynced, deleted',
   product_packages: 'id, productId, name, qty_pcs, price_sell, updatedAt, synced, deleted',
@@ -22,10 +22,25 @@ db.version(3).stores({
   operators: 'id, name, role, pin, updatedAt, synced, deleted',
   settings: 'id, updatedAt, synced'
 }).upgrade(tx => {
-  // migrasi dari v2 ke v3: set default imageSynced=1 buat produk lama yang ga ada gambar
   return tx.table('products').toCollection().modify(p => {
     if (p.imageSynced === undefined) p.imageSynced = 1
     if (p.deleted === undefined) p.deleted = false
+  })
+})
+
+// v4: tambah index kategori + productId + productIds multiEntry
+db.version(4).stores({
+  services: 'id, name, price, category, productId, *productIds, updatedAt, synced, deleted'
+}).upgrade(async tx => {
+  // migrasi data lama productId single -> productIds array
+  await tx.table('services').toCollection().modify(s => {
+    if (s.productIds === undefined) {
+      if (s.productId) s.productIds = [s.productId]
+      else s.productIds = []
+    }
+    // pastikan deleted dll ada
+    if (s.deleted === undefined) s.deleted = false
+    if (s.synced === undefined) s.synced = 0
   })
 })
 

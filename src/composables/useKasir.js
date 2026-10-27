@@ -61,20 +61,29 @@ export function useKasir() {
     return members.value.filter(m => m.name.toLowerCase().includes(qq) || (m.phone || '').includes(qq)).slice(0, 20)
   })
 
-  // === FIX UTAMA DI SINI MET ===
+  // Helper: support lama productId & baru productIds
+  const getServiceIds = (s) => {
+    if (s.productIds && Array.isArray(s.productIds) && s.productIds.length) return s.productIds
+    if (s.productId) return [s.productId]
+    return []
+  }
+
+  // FIX MULTI PRODUK
   const filteredServicesByCategory = computed(() => {
     if (!selectedProductForOption.value) return []
     const product = selectedProductForOption.value
     
-    // 1. Cek dulu ada jasa KHUSUS buat produk ini ga?
-    const custom = servicesList.value.filter(s => s.productId === product.id)
-    if (custom.length > 0) {
-      return custom // kalo ada, cuma yang khusus ini doang yang keluar
-    }
+    const custom = servicesList.value.filter(s => {
+      const ids = getServiceIds(s)
+      return ids.includes(product.id)
+    })
+    if (custom.length > 0) return custom
 
-    // 2. Kalo ga ada custom, baru pake jasa umum per kategori
     const pCat = (product.category || '').toLowerCase()
-    return servicesList.value.filter(s => !s.productId && (s.category || '').toLowerCase() === pCat)
+    return servicesList.value.filter(s => {
+      const ids = getServiceIds(s)
+      return ids.length === 0 && (s.category || '').toLowerCase() === pCat
+    })
   })
 
   const load = async () => {
@@ -87,10 +96,7 @@ export function useKasir() {
     members.value = data.members
     packagesList.value = packages
     servicesList.value = services
-
-    if (!store.editingTransactionId) {
-      store.bayarNominal = 0
-    }
+    if (!store.editingTransactionId) store.bayarNominal = 0
   }
 
   const getProductPackages = (productId) => {
@@ -102,10 +108,10 @@ export function useKasir() {
     const isPackageCategory = ['rokok', 'permen'].includes(pCat)
     const hasPackages = getProductPackages(product.id).length > 0
     
-    // FIX JUGA DI SINI: cek jasa custom juga
-    const hasConfiguredServices = servicesList.value.some(s => 
-      s.productId === product.id || (!s.productId && (s.category || '').toLowerCase() === pCat)
-    )
+    const hasConfiguredServices = servicesList.value.some(s => {
+      const ids = getServiceIds(s)
+      return ids.includes(product.id) || (ids.length === 0 && (s.category || '').toLowerCase() === pCat)
+    })
 
     if ((isPackageCategory && hasPackages) || (!isPackageCategory && hasConfiguredServices)) {
       selectedProductForOption.value = product

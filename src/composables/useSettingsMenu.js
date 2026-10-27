@@ -1,5 +1,5 @@
 // src/composables/useSettingsMenu.js
-import { ref, computed } from 'vue'
+import { ref } from 'vue'
 import { productRepo } from '../db/repositories/productRepository.js'
 import { packageRepository } from '../db/repositories/packageRepository.js'
 import { serviceRepository } from '../db/repositories/serviceRepository.js'
@@ -12,6 +12,13 @@ export function useSettingsMenu() {
   const services = ref([])
   const categoryOptions = ref([])
   const loading = ref(false)
+
+  // Helper: ambil semua productId dari service (support lama productId & baru productIds)
+  const getServiceIds = (s) => {
+    if (s.productIds && Array.isArray(s.productIds) && s.productIds.length) return s.productIds
+    if (s.productId) return [s.productId]
+    return []
+  }
 
   const loadData = async () => {
     loading.value = true
@@ -51,16 +58,21 @@ export function useSettingsMenu() {
     return packages.value.filter(pkg => pkg.productId === productId)
   }
 
-  // INI KUNCI BUAT KASIR NANTI
+  // KUNCI BUAT KASIR: support multi produk
   const getServicesForProduct = (product) => {
     if(!product) return []
-    // 1. ada jasa khusus produk ini?
-    const custom = services.value.filter(s => s.productId === product.id)
+    // 1. ada jasa khusus yang productIds nya include produk ini?
+    const custom = services.value.filter(s => {
+      const ids = getServiceIds(s)
+      return ids.includes(product.id)
+    })
     if (custom.length > 0) return custom
+
     // 2. kalo ga ada, pake jasa umum kategori
-    return services.value.filter(s => 
-      !s.productId && (s.category || '').toUpperCase() === (product.category || '').toUpperCase()
-    )
+    return services.value.filter(s => {
+      const ids = getServiceIds(s)
+      return ids.length === 0 && (s.category || '').toUpperCase() === (product.category || '').toUpperCase()
+    })
   }
 
   const getProductById = (id) => allProducts.value.find(p => p.id === id)
@@ -73,8 +85,17 @@ export function useSettingsMenu() {
     await packageRepository.deletePackage(id)
     await loadData()
   }
-  const saveService = async (serviceData) => {
-    await serviceRepository.saveService(serviceData)
+    const saveService = async (serviceData) => {
+    const plainProductIds = serviceData.productIds 
+      ? [...serviceData.productIds] 
+      : (serviceData.productId ? [serviceData.productId] : [])
+
+    const normalized = {
+      ...serviceData,
+      productId: null,
+      productIds: plainProductIds
+    }
+    await serviceRepository.saveService(normalized)
     await loadData()
   }
   const deleteService = async (id) => {
@@ -93,6 +114,7 @@ export function useSettingsMenu() {
     getPackagesForProduct,
     getServicesForProduct,
     getProductById,
+    getServiceIds,
     savePackage,
     deletePackage,
     saveService,

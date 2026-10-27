@@ -48,15 +48,18 @@
           <div>
             <div class="flex items-center gap-2 flex-wrap">
               <span class="font-bold text-sm text-zinc-900">{{ s.name }}</span>
-              <!-- BADGE BARU: BEDAIN JASA UMUM VS KHUSUS PRODUK -->
-              <span v-if="s.productId" class="px-2 py-0.5 bg-zinc-900 text-white rounded-md text-[10px] font-black uppercase">
-                KHUSUS: {{ getProductName(s.productId) }}
+              <!-- BADGE: SUPPORT MULTI PRODUK -->
+              <span v-if="getServiceIds(s).length" class="px-2 py-0.5 bg-zinc-900 text-white rounded-md text-[10px] font-black uppercase">
+                KHUSUS: {{ getServiceIds(s).length > 1 ? `${getServiceIds(s).length} PRODUK` : getProductName(getServiceIds(s)[0]) }}
               </span>
               <span v-else class="px-2 py-0.5 bg-amber-100 text-amber-800 rounded-md text-[10px] font-black uppercase">
                 {{ s.category || 'Umum' }}
               </span>
             </div>
             <div class="text-xs text-amber-600 font-black mt-0.5">Rp {{ formatRibuan(s.price) }}</div>
+            <div v-if="getServiceIds(s).length > 1" class="text-[10px] text-zinc-400 mt-1 truncate max-w-[220px]">
+              {{ getServiceIds(s).map(id => getProductName(id)).join(', ') }}
+            </div>
           </div>
           <div class="flex gap-1">
             <button @click="openServiceModal(s)" class="p-2 text-zinc-600 hover:bg-zinc-100 rounded-xl">
@@ -154,11 +157,11 @@
             </div>
           </div>
 
-          <!-- JASA KHUSUS UNTUK PRODUK INI -->
-          <div v-if="getServicesForProduct(p).some(s => s.productId)" class="space-y-1.5 pt-2 border-t border-dashed border-zinc-200">
+          <!-- JASA KHUSUS UNTUK PRODUK INI - SUPPORT MULTI -->
+          <div v-if="getServicesForProduct(p).some(s => getServiceIds(s).length)" class="space-y-1.5 pt-2 border-t border-dashed border-zinc-200">
             <div class="text-[10px] font-black text-zinc-500 uppercase tracking-wider">Jasa Khusus Produk Ini (override kategori)</div>
             <div 
-              v-for="js in getServicesForProduct(p).filter(s => s.productId)" 
+              v-for="js in getServicesForProduct(p).filter(s => getServiceIds(s).length)" 
               :key="js.id" 
               class="flex justify-between items-center p-2.5 bg-amber-50 border border-amber-100 rounded-xl text-xs"
             >
@@ -190,21 +193,27 @@
               <div :class="['w-4 h-4 bg-white rounded-full shadow transition-transform', isCustomService ? 'translate-x-4' : 'translate-x-0']"></div>
             </button>
             <div>
-              <div class="text-xs font-black text-zinc-800">Jasa khusus untuk 1 produk</div>
-              <div class="text-[10px] text-zinc-500">Kalo aktif, jasa ini cuma muncul buat produk yang dipilih</div>
+              <div class="text-xs font-black text-zinc-800">Jasa khusus untuk produk pilihan</div>
+              <div class="text-[10px] text-zinc-500">Bisa pilih 1 atau beberapa produk sekaligus</div>
             </div>
           </div>
 
           <div v-if="isCustomService">
-            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Pilih Produk *</label>
+            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Pilih Produk * ({{ serviceForm.productIds.length }} dipilih)</label>
             <button 
               type="button" 
               @click="showProductPickerModal = true"
               class="w-full px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-sm font-bold text-left flex justify-between items-center focus:outline-none focus:ring-2 focus:ring-zinc-900"
             >
-              <span class="truncate">{{ getProductName(serviceForm.productId) || 'PILIH PRODUK' }}</span>
+              <span class="truncate">{{ serviceForm.productIds.length ? `${serviceForm.productIds.length} PRODUK DIPILIH` : 'PILIH PRODUK' }}</span>
               <ChevronDown class="w-4 h-4 text-zinc-400 shrink-0" />
             </button>
+            <div v-if="serviceForm.productIds.length" class="flex flex-wrap gap-1 mt-2">
+              <span v-for="pid in serviceForm.productIds" :key="pid" class="px-2 py-1 bg-zinc-900 text-white rounded-full text-[10px] font-bold flex items-center gap-1">
+                {{ getProductName(pid) }}
+                <button type="button" @click="toggleProduct(pid)" class="ml-1 bg-white/20 rounded-full w-3.5 h-3.5 flex items-center justify-center">✕</button>
+              </span>
+            </div>
           </div>
 
           <div>
@@ -217,7 +226,7 @@
               <span class="truncate">{{ serviceForm.category || 'PILIH KATEGORI' }}</span>
               <ChevronDown class="w-4 h-4 text-zinc-400 shrink-0" />
             </button>
-            <p v-if="isCustomService" class="text-[10px] text-zinc-400 mt-1">Otomatis ikut kategori produk, tapi bisa diubah</p>
+            <p v-if="isCustomService" class="text-[10px] text-zinc-400 mt-1">Otomatis ikut kategori produk pertama, tapi bisa diubah</p>
           </div>
 
           <div>
@@ -318,11 +327,11 @@
       </div>
     </div>
 
-    <!-- Modal Picker Pilih Produk (BARU) -->
+    <!-- Modal Picker Pilih Produk (MULTI-SELECT) -->
     <div v-if="showProductPickerModal" class="fixed inset-0 z-[110] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
       <div class="w-full max-w-sm bg-white rounded-[2rem] p-5 shadow-xl max-h-[80vh] flex flex-col">
         <div class="flex justify-between items-center mb-3">
-          <h3 class="font-black text-base text-zinc-900">Pilih Produk</h3>
+          <h3 class="font-black text-base text-zinc-900">Pilih Produk ({{ serviceForm.productIds.length }})</h3>
           <button type="button" @click="showProductPickerModal = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
         </div>
         <div class="relative mb-3">
@@ -333,12 +342,19 @@
             v-for="prod in productOptions" 
             :key="prod.id" 
             type="button"
-            @click="serviceForm.productId = prod.id; serviceForm.category = prod.category; showProductPickerModal = false"
-            :class="['w-full p-3 rounded-xl font-bold text-xs text-left transition', serviceForm.productId === prod.id ? 'bg-zinc-900 text-white shadow-md' : 'bg-zinc-50 hover:bg-zinc-100 text-zinc-800']"
+            @click="toggleProduct(prod.id)"
+            :class="['w-full p-3 rounded-xl font-bold text-xs text-left transition flex justify-between items-center', serviceForm.productIds.includes(prod.id) ? 'bg-zinc-900 text-white shadow-md' : 'bg-zinc-50 hover:bg-zinc-100 text-zinc-800']"
           >
-            <div class="truncate">{{ prod.name }}</div>
-            <div class="text-[10px] opacity-60 uppercase">{{ prod.category }}</div>
+            <div class="min-w-0 flex-1">
+              <div class="truncate">{{ prod.name }}</div>
+              <div class="text-[10px] opacity-60 uppercase">{{ prod.category }}</div>
+            </div>
+            <div v-if="serviceForm.productIds.includes(prod.id)" class="ml-2 w-5 h-5 bg-white text-zinc-900 rounded-full flex items-center justify-center text-[10px] font-black shrink-0">✓</div>
           </button>
+        </div>
+        <div class="flex gap-2 pt-3 border-t border-zinc-100 mt-3">
+          <button type="button" @click="serviceForm.productIds = []" class="flex-1 py-2.5 bg-zinc-100 rounded-xl text-xs font-bold">Clear</button>
+          <button type="button" @click="showProductPickerModal = false" class="flex-1 py-2.5 bg-zinc-900 text-white rounded-xl text-xs font-bold">Selesai ({{ serviceForm.productIds.length }})</button>
         </div>
       </div>
     </div>
@@ -395,7 +411,7 @@ const showProductPickerModal = ref(false)
 const editingServiceId = ref(null)
 const isCustomService = ref(false)
 const productSearch = ref('')
-const serviceForm = ref({ name: '', price: 0, category: 'Mie', productId: null })
+const serviceForm = ref({ name: '', price: 0, category: 'Mie', productId: null, productIds: [] })
 
 const productOptions = computed(() => {
   const q = productSearch.value.toLowerCase()
@@ -404,9 +420,28 @@ const productOptions = computed(() => {
   return list.slice(0, 80)
 })
 
+const getServiceIds = (s) => {
+  if (s.productIds && Array.isArray(s.productIds) && s.productIds.length) return s.productIds
+  if (s.productId) return [s.productId]
+  return []
+}
+
 const getProductName = (id) => {
   if(!id) return ''
   return getProductById(id)?.name || 'Produk tidak ditemukan'
+}
+
+const toggleProduct = (id) => {
+  const list = [...(serviceForm.value.productIds || [])]
+  const idx = list.indexOf(id)
+  if(idx > -1) list.splice(idx, 1)
+  else list.push(id)
+  serviceForm.value.productIds = list
+  // auto set kategori dari produk pertama
+  if(list.length === 1){
+    const p = getProductById(list[0])
+    if(p && p.category) serviceForm.value.category = p.category
+  }
 }
 
 const openServiceModal = async (s = null, productOverride = null) => {
@@ -414,12 +449,14 @@ const openServiceModal = async (s = null, productOverride = null) => {
   productSearch.value = ''
   if (s) {
     editingServiceId.value = s.id
-    isCustomService.value = !!s.productId
+    const ids = getServiceIds(s)
+    isCustomService.value = ids.length > 0
     serviceForm.value = { 
       name: (s.name || '').toUpperCase(), 
       price: s.price, 
       category: s.category || 'Mie',
-      productId: s.productId || null
+      productId: null,
+      productIds: ids
     }
   } else if (productOverride) {
     editingServiceId.value = null
@@ -428,7 +465,8 @@ const openServiceModal = async (s = null, productOverride = null) => {
       name: 'SEDUH', 
       price: 3000, 
       category: productOverride.category || categoryOptions.value[0]?.name || 'Mie',
-      productId: productOverride.id
+      productId: null,
+      productIds: [productOverride.id]
     }
   } else {
     editingServiceId.value = null
@@ -437,25 +475,34 @@ const openServiceModal = async (s = null, productOverride = null) => {
       name: 'SEDUH', 
       price: 2000, 
       category: categoryOptions.value[0]?.name || 'Mie',
-      productId: null
+      productId: null,
+      productIds: []
     }
   }
   showServiceModal.value = true
 }
 
 const handleSaveService = async () => {
-  if(isCustomService.value && !serviceForm.value.productId){
-    alert('Pilih produk dulu met')
+  if(isCustomService.value && (!serviceForm.value.productIds || serviceForm.value.productIds.length === 0)){
+    alert('Pilih produk dulu met, bisa lebih dari 1')
     return
   }
-  await saveService({
-    id: editingServiceId.value,
-    name: (serviceForm.value.name || '').toUpperCase().trim(),
-    price: serviceForm.value.price,
-    category: serviceForm.value.category,
-    productId: isCustomService.value ? serviceForm.value.productId : null
-  })
-  showServiceModal.value = false
+  try {
+    console.log('SAVING SERVICE:', serviceForm.value)
+    await saveService({
+      id: editingServiceId.value,
+      name: (serviceForm.value.name || '').toUpperCase().trim(),
+      price: Number(serviceForm.value.price) || 0,
+      category: serviceForm.value.category,
+      productId: null,
+      productIds: isCustomService.value ? serviceForm.value.productIds : []
+    })
+    showServiceModal.value = false
+    console.log('SAVE OK')
+  } catch (e) {
+    console.error('GAGAL SAVE JASA:', e)
+    alert('Gagal simpan: ' + (e.message || e))
+  }
 }
 
 const handleDeleteService = async (s) => {
