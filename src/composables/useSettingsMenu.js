@@ -1,4 +1,4 @@
-// src/composables/useSettingsMenu.js
+// src/composables/useSettingsMenu.js - FIX JASA KHUSUS MULTI-PRODUK GA MUNCUL DI UMUM
 import { ref } from 'vue'
 import { productRepo } from '../db/repositories/productRepository.js'
 import { packageRepository } from '../db/repositories/packageRepository.js'
@@ -58,22 +58,21 @@ export function useSettingsMenu() {
     return packages.value.filter(pkg => pkg.productId === productId)
   }
 
-  // KUNCI BUAT KASIR: support multi produk
   const getServicesForProduct = (product) => {
-    if(!product) return []
-    // 1. ada jasa khusus yang productIds nya include produk ini?
-    const custom = services.value.filter(s => {
-      const ids = getServiceIds(s)
-      return ids.includes(product.id)
-    })
-    if (custom.length > 0) return custom
+  if(!product) return []
+  const pCat = (product.category || '').toUpperCase()
 
-    // 2. kalo ga ada, pake jasa umum kategori
-    return services.value.filter(s => {
-      const ids = getServiceIds(s)
-      return ids.length === 0 && (s.category || '').toUpperCase() === (product.category || '').toUpperCase()
-    })
-  }
+  const custom = services.value.filter(s => {
+    const ids = getServiceIds(s)
+    return ids.length > 0 && ids.includes(product.id)
+  })
+  if (custom.length > 0) return custom
+
+  return services.value.filter(s => {
+    const ids = getServiceIds(s)
+    return ids.length === 0 && (s.category || '').toUpperCase() === pCat
+  })
+}
 
   const getProductById = (id) => allProducts.value.find(p => p.id === id)
 
@@ -85,19 +84,24 @@ export function useSettingsMenu() {
     await packageRepository.deletePackage(id)
     await loadData()
   }
-    const saveService = async (serviceData) => {
+
+  const saveService = async (serviceData) => {
+    // PLAIN CLONE BIAR GA DataCloneError (Proxy Vue)
     const plainProductIds = serviceData.productIds 
       ? [...serviceData.productIds] 
       : (serviceData.productId ? [serviceData.productId] : [])
 
     const normalized = {
-      ...serviceData,
-      productId: null,
+      ...JSON.parse(JSON.stringify(serviceData)),
+      productId: null, // kita pake productIds aja sekarang
       productIds: plainProductIds
     }
+    // buang productId lama biar ga double
+    delete normalized.productId_old
     await serviceRepository.saveService(normalized)
     await loadData()
   }
+
   const deleteService = async (id) => {
     await serviceRepository.deleteService(id)
     await loadData()

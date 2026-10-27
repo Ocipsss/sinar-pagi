@@ -1,4 +1,4 @@
-// src/composables/useKasir.js
+// src/composables/useKasir.js - FIX JASA KHUSUS GA MUNCUL DI UMUM
 import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated } from 'vue'
 import { kasirService } from '../services/kasirService.js'
 import { salesHistoryService } from '../services/salesHistoryService.js'
@@ -61,30 +61,32 @@ export function useKasir() {
     return members.value.filter(m => m.name.toLowerCase().includes(qq) || (m.phone || '').includes(qq)).slice(0, 20)
   })
 
-  // Helper: support lama productId & baru productIds
+  // Helper: support lama productId & baru productIds (multi)
   const getServiceIds = (s) => {
     if (s.productIds && Array.isArray(s.productIds) && s.productIds.length) return s.productIds
     if (s.productId) return [s.productId]
     return []
   }
 
-  // FIX MULTI PRODUK
   const filteredServicesByCategory = computed(() => {
-    if (!selectedProductForOption.value) return []
-    const product = selectedProductForOption.value
-    
-    const custom = servicesList.value.filter(s => {
-      const ids = getServiceIds(s)
-      return ids.includes(product.id)
-    })
-    if (custom.length > 0) return custom
+  if (!selectedProductForOption.value) return []
+  const product = selectedProductForOption.value
 
-    const pCat = (product.category || '').toLowerCase()
-    return servicesList.value.filter(s => {
-      const ids = getServiceIds(s)
-      return ids.length === 0 && (s.category || '').toLowerCase() === pCat
-    })
+  const custom = servicesList.value.filter(s => {
+    const ids = getServiceIds(s)
+    return ids.length > 0 && ids.includes(product.id)
   })
+
+  // Kalo ada khusus, CUMA khusus yang tampil, umum HILANG
+  if (custom.length > 0) return custom
+
+  // Kalo ga ada khusus, baru tampil umum (yang ids nya kosong beneran)
+  const pCat = (product.category || '').toLowerCase()
+  return servicesList.value.filter(s => {
+    const ids = getServiceIds(s)
+    return ids.length === 0 && (s.category || '').toLowerCase() === pCat
+  })
+})
 
   const load = async () => {
     const [data, packages, services] = await Promise.all([
