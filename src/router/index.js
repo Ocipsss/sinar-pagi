@@ -102,6 +102,12 @@ export const router = createRouter({
           meta: { title: 'Laporan & Rekap' }
         },
         { 
+          path: 'settings/qris', 
+          name: 'SettingsQris',
+          component: () => import('../views/SettingsQris.vue'),
+          meta: { title: 'QRIS Toko' }
+        },
+        { 
           path: 'settings', 
           name: 'Settings', 
           component: () => import('../views/Settings.vue'),

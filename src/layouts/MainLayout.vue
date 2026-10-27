@@ -223,7 +223,7 @@ import { ref, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { 
   Menu, Package, Store, LayoutDashboard, 
-  Users, ShoppingCart, Tags, History, Coffee, Smartphone, Wallet, RefreshCw, BarChart3, Settings, Receipt, Printer, Layers
+  Users, ShoppingCart, Tags, History, Coffee, Smartphone, Wallet, RefreshCw, BarChart3, Settings, Receipt, Printer, Layers, QrCode
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import SidebarComponent from '../components/Sidebar.vue'
@@ -270,6 +270,7 @@ const navCategories = ref([
     icon: Wallet,
     items: [
       { name: 'Kas & Bank', icon: Wallet, to: '/finance' },
+      { name: 'QRIS Toko', icon: QrCode, to: '/settings/qris' },
       { name: 'Pengeluaran', icon: Receipt, to: '/expenses' },
       { name: 'Laporan', icon: BarChart3, to: '/reports' }
     ]
@@ -303,7 +304,10 @@ const groups = computed(() => {
 
   result.push({
     title: 'PENGATURAN',
-    items: [{ name: 'Pengaturan Toko', icon: Settings, to: '/settings' }]
+    items: [
+      { name: 'QRIS Toko', icon: QrCode, to: '/settings/qris' },
+      { name: 'Pengaturan Toko', icon: Settings, to: '/settings' }
+    ]
   })
 
   return result
