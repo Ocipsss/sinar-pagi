@@ -43,6 +43,9 @@ import { ref, onMounted } from 'vue'
 import { doc, getDoc, setDoc } from 'firebase/firestore'
 import { firestore } from '../services/firebase.js'
 
+const CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || 'vezqidog'
+const UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_PRESET || 'sinarpagi-products'
+
 const currentQris = ref(null)
 const file = ref(null)
 const previewUrl = ref('')
@@ -73,11 +76,21 @@ const upload = async () => {
   if(!file.value) return alert('Pilih gambar QRIS dulu met')
   loading.value = true
   try {
-    const { uploadToCloudinary } = await import('../services/cloudinaryService.js')
-    const res = await uploadToCloudinary(file.value, 'sinar-pagi/qris')
+    // Upload langsung ke Cloudinary kayak di cloudinaryService lu
+    const formData = new FormData()
+    formData.append('file', file.value)
+    formData.append('upload_preset', UPLOAD_PRESET)
+    formData.append('public_id', `sinar-pagi/qris/qris-toko`)
+
+    const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, {
+      method: 'POST',
+      body: formData
+    })
+    if(!res.ok) throw new Error(await res.text())
+    const data = await res.json()
     
     await setDoc(doc(firestore, 'settings', 'qris'), {
-      qrisUrl: res.secure_url,
+      qrisUrl: data.secure_url,
       merchantName: form.value.merchantName.toUpperCase(),
       nmid: form.value.nmid,
       updatedAt: new Date().toISOString()
