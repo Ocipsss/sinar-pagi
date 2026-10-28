@@ -8,8 +8,8 @@
       <p class="text-xs text-zinc-400">Kelola master data produk toko</p>
     </div>
     <div class="flex gap-2">
-      <button @click="publishAll" class="bg-emerald-600 text-white px-3.5 py-2.5 rounded-2xl font-bold text-xs flex items-center gap-1.5 active:scale-95 transition shadow-sm" title="Publish semua yang difilter ke sinarpagi.my.id">
-        <Globe class="w-4 h-4"/> Publish All ({{ filtered.length }})
+      <button v-if="toPublishCount > 0" @click="publishAll" class="bg-emerald-600 text-white px-3.5 py-2.5 rounded-2xl font-bold text-xs flex items-center gap-1.5 active:scale-95 transition shadow-sm" :title="`Publish ${toPublishCount} barang ke web`">
+        <Globe class="w-4 h-4"/> {{ toPublishCount === filtered.length ? `Publish All (${toPublishCount})` : `Publish (${toPublishCount})` }}
       </button>
       <router-link to="/add-products" class="bg-zinc-900 text-white px-3.5 py-2.5 rounded-2xl font-bold text-xs flex items-center gap-1.5 active:scale-95 transition shadow-sm">
         <Plus class="w-4 h-4"/> Tambah
@@ -141,9 +141,10 @@
       <div class="space-y-5">
         <div>
           <div class="text-[10px] font-black tracking-widest text-zinc-400 mb-2">KATEGORI</div>
-          <div class="flex flex-wrap gap-2">
-            <button v-for="c in categories" :key="c" @click="filterKategori=c" :class="['px-3 py-2 rounded-xl text-xs font-black border', filterKategori===c?'bg-zinc-900 text-white border-zinc-900':'bg-white border-zinc-200 text-zinc-600']">{{ c==='all'?'Semua':c }}</button>
-          </div>
+          <button @click="showCategoryPicker=true" class="w-full flex justify-between items-center px-4 py-3.5 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-bold">
+            <span>{{ filterKategori === 'all' ? 'Semua Kategori' : filterKategori }}</span>
+            <span class="text-zinc-400 text-xs">Pilih →</span>
+          </button>
         </div>
 
         <div>
@@ -171,6 +172,29 @@
       </div>
     </div>
   </div>
+
+  <!-- MODAL DALAM MODAL - PILIH KATEGORI -->
+  <div v-if="showCategoryPicker" class="fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+    <div class="w-full max-w-xl bg-white rounded-t-[2rem] sm:rounded-[2rem] p-5 pb-8 shadow-2xl max-h-[75vh] flex flex-col">
+      <div class="w-10 h-1 bg-zinc-200 rounded-full mx-auto mb-4"></div>
+      <div class="flex justify-between items-center mb-3">
+        <div class="font-black text-base">Pilih Kategori ({{ categories.length - 1 }})</div>
+        <button @click="showCategoryPicker=false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
+      </div>
+      <div class="relative mb-3">
+        <Search class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-400"/>
+        <input v-model="categorySearch" placeholder="Cari kategori..." class="w-full pl-10 pr-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900"/>
+      </div>
+      <div class="overflow-auto flex-1 space-y-2 pr-1">
+        <button @click="filterKategori='all'; showCategoryPicker=false" :class="['w-full text-left px-4 py-3 rounded-xl text-sm font-black border flex justify-between', filterKategori==='all'?'bg-zinc-900 text-white border-zinc-900':'bg-white border-zinc-200']">
+          <span>Semua Kategori</span><span v-if="filterKategori==='all'">✓</span>
+        </button>
+        <button v-for="c in filteredCategories" :key="c" @click="filterKategori=c; showCategoryPicker=false" :class="['w-full text-left px-4 py-3 rounded-xl text-sm font-bold border flex justify-between', filterKategori===c?'bg-zinc-900 text-white border-zinc-900':'bg-white border-zinc-200 text-zinc-700']">
+          <span>{{ c }}</span><span v-if="filterKategori===c">✓</span>
+        </button>
+      </div>
+    </div>
+  </div>
 </div>
 </template>
 
@@ -192,6 +216,8 @@ const filterKategori = ref('all')
 const filterStok = ref('all')
 const sortBy = ref('name-asc')
 const showFilter = ref(false)
+const showCategoryPicker = ref(false)
+const categorySearch = ref('')
 
 const showEditModal = ref(false)
 const selectedProduct = ref(null)
@@ -224,7 +250,13 @@ const toggleCamera = async () => {
 
 const categories = computed(() => {
   const cats = new Set(store.list.map(p => p.category).filter(Boolean))
-  return ['all', ...Array.from(cats)]
+  return ['all', ...Array.from(cats).sort((a, b) => a.localeCompare(b, 'id', { sensitivity: 'base' }))]
+})
+
+const filteredCategories = computed(() => {
+  const list = categories.value.filter(c => c !== 'all')
+  if (!categorySearch.value) return list
+  return list.filter(c => c.toLowerCase().includes(categorySearch.value.toLowerCase()))
 })
 
 const stokOptions = [
@@ -258,6 +290,13 @@ const filtered = computed(() => {
   return list
 })
 
+// SMART PUBLISH - CUMA HITUNG YANG BELUM PUBLISH / BELUM SYNC
+const toPublishFiltered = computed(() => {
+  return filtered.value.filter(p => !p.isPublished || p.synced === 0)
+})
+
+const toPublishCount = computed(() => toPublishFiltered.value.length)
+
 const resetFilter = () => {
   filterKategori.value = 'all'
   filterStok.value = 'all'
@@ -288,21 +327,18 @@ const togglePublish = async (p) => {
 }
 
 const publishAll = async () => {
-  const count = filtered.value.length
-  if (!count) return toast.error('Ga ada barang di filter')
-  if (!confirm(`Publish ${count} barang ke sinarpagi.my.id? (sesuai filter sekarang)`)) return
+  const listToPublish = toPublishFiltered.value
+  const count = listToPublish.length
+  if (!count) return toast.info('Semua sudah publish')
+  if (!confirm(`Publish ${count} barang ke sinarpagi.my.id?`)) return
   let ok = 0
-  for (const prod of filtered.value) {
-    if (!prod.isPublished) {
-      await store.update(prod.id, { isPublished: true })
-      ok++
-    }
+  for (const prod of listToPublish) {
+    await store.update(prod.id, { isPublished: true })
+    ok++
   }
   toast.success(`${ok} barang publish ke web!`)
-  if (ok === 0) toast.info('Semua sudah publish')
 }
 
-// --- LOGIKA LISTENER BARCODE SCANNER HID ---
 let barcodeBuffer = ''
 let lastKeyTime = Date.now()
 

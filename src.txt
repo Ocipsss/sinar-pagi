@@ -1534,7 +1534,7 @@ export function useShopping() {
 }
 
 ===== src/composables/useKasir.js =====
-// src/composables/useKasir.js
+// src/composables/useKasir.js - FIX JASA KHUSUS + SORT PAKET BY ORDER
 import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated } from 'vue'
 import { kasirService } from '../services/kasirService.js'
 import { salesHistoryService } from '../services/salesHistoryService.js'
@@ -1549,19 +1549,16 @@ export function useKasir() {
   const store = useKasirStore()
   const operatorStore = useOperatorStore()
 
-  // State Data Master
   const products = ref([])
   const members = ref([])
   const packagesList = ref([])
   const servicesList = ref([])
 
-  // State UI & Pencarian
   const q = ref('')
   const memberQ = ref('')
   const showSearch = ref(false)
   const selectedProductForOption = ref(null)
 
-  // Computed Keuangan & Pembayaran
   const total = computed(() => store.cart.reduce((s, c) => s + c.price_sell * c.cartQty, 0))
   const kembalian = computed(() => Math.max(0, (store.bayarNominal || 0) - total.value))
   const kurangBayar = computed(() => Math.max(0, total.value - (store.bayarNominal || 0)))
@@ -1573,11 +1570,9 @@ export function useKasir() {
     }
   })
 
-  // Computed Filter Produk & Member
   const filteredProducts = computed(() => {
     const qq = q.value.toLowerCase().trim()
     if (!qq) return products.value.slice(0, 15)
-
     return products.value
       .filter(p => p.name.toLowerCase().includes(qq) || (p.code || '').toLowerCase().includes(qq))
       .sort((a, b) => {
@@ -1585,7 +1580,6 @@ export function useKasir() {
         const nameB = b.name.toLowerCase()
         const idxA = nameA.indexOf(qq)
         const idxB = nameB.indexOf(qq)
-
         if (idxA !== -1 && idxB !== -1) {
           if (idxA !== idxB) return idxA - idxB
           return nameA.localeCompare(nameB)
@@ -1603,13 +1597,33 @@ export function useKasir() {
     return members.value.filter(m => m.name.toLowerCase().includes(qq) || (m.phone || '').includes(qq)).slice(0, 20)
   })
 
+  // Helper: support lama productId & baru productIds (multi)
+  const getServiceIds = (s) => {
+    if (s.productIds && Array.isArray(s.productIds) && s.productIds.length) return s.productIds
+    if (s.productId) return [s.productId]
+    return []
+  }
+
   const filteredServicesByCategory = computed(() => {
     if (!selectedProductForOption.value) return []
-    const pCat = (selectedProductForOption.value.category || '').toLowerCase()
-    return servicesList.value.filter(s => (s.category || '').toLowerCase() === pCat)
+    const product = selectedProductForOption.value
+
+    const custom = servicesList.value.filter(s => {
+      const ids = getServiceIds(s)
+      return ids.length > 0 && ids.includes(product.id)
+    })
+
+    // Kalo ada khusus, CUMA khusus yang tampil, umum HILANG
+    if (custom.length > 0) return custom
+
+    // Kalo ga ada khusus, baru tampil umum (yang ids nya kosong beneran)
+    const pCat = (product.category || '').toLowerCase()
+    return servicesList.value.filter(s => {
+      const ids = getServiceIds(s)
+      return ids.length === 0 && (s.category || '').toLowerCase() === pCat
+    })
   })
 
-  // Muat Data Awal
   const load = async () => {
     const [data, packages, services] = await Promise.all([
       kasirService.getInitialData(),
@@ -1618,23 +1632,27 @@ export function useKasir() {
     ])
     products.value = data.products
     members.value = data.members
-    packagesList.value = packages
+    // pastiin sort by order biar eceran bisa di atas
+    packagesList.value = [...packages].sort((a,b) => (a.order ?? 999) - (b.order ?? 999))
     servicesList.value = services
-
-    if (!store.editingTransactionId) {
-      store.bayarNominal = 0
-    }
+    if (!store.editingTransactionId) store.bayarNominal = 0
   }
 
   const getProductPackages = (productId) => {
-    return packagesList.value.filter(pkg => pkg.productId === productId)
+    return packagesList.value
+      .filter(pkg => pkg.productId === productId)
+      .sort((a,b) => (a.order ?? 999) - (b.order ?? 999))
   }
 
   const handleSelectProduct = (product) => {
     const pCat = (product.category || '').toLowerCase()
     const isPackageCategory = ['rokok', 'permen'].includes(pCat)
     const hasPackages = getProductPackages(product.id).length > 0
-    const hasConfiguredServices = servicesList.value.some(s => (s.category || '').toLowerCase() === pCat)
+    
+    const hasConfiguredServices = servicesList.value.some(s => {
+      const ids = getServiceIds(s)
+      return ids.includes(product.id) || (ids.length === 0 && (s.category || '').toLowerCase() === pCat)
+    })
 
     if ((isPackageCategory && hasPackages) || (!isPackageCategory && hasConfiguredServices)) {
       selectedProductForOption.value = product
@@ -1653,7 +1671,6 @@ export function useKasir() {
     q.value = ''
   }
 
-  // Proses Checkout & Edit Transaksi
   const checkout = async () => {
     if (store.paymentMethod === 'TEMPO' && !store.selectedMember) throw new Error('Pilih member untuk TEMPO')
     if (store.paymentMethod === 'CASH' && store.bayarNominal < total.value) throw new Error('Nominal kurang')
@@ -1665,7 +1682,6 @@ export function useKasir() {
         memberId: store.selectedMember?.id || null,
         total: total.value
       }
-
       const updatedItems = store.cart.map(item => ({
         productId: item.id,
         productName: item.name,
@@ -1673,13 +1689,11 @@ export function useKasir() {
         qty: item.cartQty,
         serviceId: item.isServed ? 'SERVICE_SEDUH' : null
       }))
-
       const newPaymentData = {
         paymentMethod: store.paymentMethod,
         memberId: store.selectedMember?.id || null,
         amountPaid: store.paymentMethod === 'TEMPO' ? 0 : store.paymentMethod === 'QRIS' ? total.value : store.bayarNominal
       }
-
       const res = await salesHistoryService.updateTransaction(originalTrx, updatedItems, newPaymentData)
       store.clearCart()
       return res
@@ -1696,20 +1710,17 @@ export function useKasir() {
     return res
   }
 
-  // --- LOGIKA SCANNER BARCODE FISIK (HID MODE) ---
   let barcodeBuffer = ''
   let lastKeyTime = Date.now()
 
   const processBarcodeScan = (codeToScan) => {
     if (!codeToScan) return false
     const cleanCode = String(codeToScan).trim().toLowerCase()
-
     const matchedProduct = products.value.find(
       p => String(p.code || '').trim().toLowerCase() === cleanCode
     ) || products.value.find(
       p => String(p.name || '').trim().toLowerCase() === cleanCode
     )
-
     if (matchedProduct) {
       handleSelectProduct(matchedProduct)
       q.value = ''
@@ -1723,16 +1734,12 @@ export function useKasir() {
 
   const handleGlobalKeydown = (e) => {
     if (['Shift', 'Control', 'Alt', 'Meta', 'CapsLock', 'Tab'].includes(e.key)) return
-
     const activeEl = document.activeElement
     const isTypingInInput = activeEl && ['INPUT', 'TEXTAREA', 'SELECT'].includes(activeEl.tagName)
     const isKasirSearchInput = activeEl && activeEl.id === 'kasir-search-input'
-    
     if (isTypingInInput && !isKasirSearchInput) return
-
     const currentTime = Date.now()
     if (currentTime - lastKeyTime > 50) barcodeBuffer = ''
-
     if (e.key === 'Enter') {
       if (isKasirSearchInput && q.value.trim().length > 0) {
         e.preventDefault()
@@ -1750,7 +1757,6 @@ export function useKasir() {
         barcodeBuffer += e.key
       }
     }
-
     lastKeyTime = currentTime
   }
 
@@ -1758,7 +1764,6 @@ export function useKasir() {
     window.removeEventListener('keydown', handleGlobalKeydown)
     window.addEventListener('keydown', handleGlobalKeydown)
   }
-
   const detachListener = () => {
     window.removeEventListener('keydown', handleGlobalKeydown)
   }
@@ -1791,7 +1796,6 @@ export function useKasir() {
     processBarcodeScan
   }
 }
-
 ===== src/composables/useProductScanner.js =====
 // src/composables/useProductScanner.js
 import { ref, onUnmounted } from 'vue'
@@ -1851,7 +1855,7 @@ export function useProductScanner(elementId = 'reader') {
 }
 
 ===== src/composables/useSettingsMenu.js =====
-// src/composables/useSettingsMenu.js
+// src/composables/useSettingsMenu.js - FULL FINAL DRAG & DROP SUPPORT
 import { ref } from 'vue'
 import { productRepo } from '../db/repositories/productRepository.js'
 import { packageRepository } from '../db/repositories/packageRepository.js'
@@ -1859,38 +1863,48 @@ import { serviceRepository } from '../db/repositories/serviceRepository.js'
 import { categoryRepo } from '../db/repositories/categoryRepository.js'
 
 export function useSettingsMenu() {
+  const allProducts = ref([])
   const rokokProducts = ref([])
   const packages = ref([])
   const services = ref([])
   const categoryOptions = ref([])
   const loading = ref(false)
 
+  // Helper: ambil semua productId dari service (support lama productId & baru productIds)
+  const getServiceIds = (s) => {
+    if (s.productIds && Array.isArray(s.productIds) && s.productIds.length) return s.productIds
+    if (s.productId) return [s.productId]
+    return []
+  }
+
   const loadData = async () => {
     loading.value = true
     try {
-      const [allProducts, allPackages, allServices, allCategories] = await Promise.all([
+      const [allProductsData, allPackages, allServices, allCategories] = await Promise.all([
         productRepo.getAll(),
         packageRepository.getAll(),
         serviceRepository.getAll(),
         categoryRepo.getAll()
       ])
       
+      allProducts.value = [...allProductsData].sort((a,b) => (a.name||'').localeCompare(b.name||'', 'id'))
+
       const packageCategories = ['rokok', 'permen']
-      
-      rokokProducts.value = allProducts
-        .filter(p => packageCategories.includes((p.category || '').toLowerCase()))
+      rokokProducts.value = allProductsData
+        .filter(p => {
+          const cat = (p.category || '').toLowerCase()
+          return packageCategories.some(k => cat.includes(k))
+        })
         .sort((a, b) => {
           const catCompare = (a.category || '').localeCompare(b.category || '')
           if (catCompare !== 0) return catCompare
           return (a.name || '').localeCompare(b.name || '')
         })
 
-      packages.value = allPackages
+      packages.value = [...allPackages].sort((a,b) => (a.order ?? 999) - (b.order ?? 999))
       services.value = allServices
-
-      // URUTKAN KATEGORI DARI A SEAMPAI Z
-      categoryOptions.value = allCategories.sort((a, b) => 
-        (a.name || '').localeCompare(b.name || '')
+      categoryOptions.value = [...allCategories].sort((a, b) => 
+        (a.name || '').localeCompare(b.name || '', 'id')
       )
     } finally {
       loading.value = false
@@ -1898,8 +1912,28 @@ export function useSettingsMenu() {
   }
 
   const getPackagesForProduct = (productId) => {
-    return packages.value.filter(pkg => pkg.productId === productId)
+    return packages.value
+      .filter(pkg => pkg.productId === productId)
+      .sort((a,b) => (a.order ?? 999) - (b.order ?? 999))
   }
+
+  const getServicesForProduct = (product) => {
+    if(!product) return []
+    const pCat = (product.category || '').toUpperCase()
+
+    const custom = services.value.filter(s => {
+      const ids = getServiceIds(s)
+      return ids.length > 0 && ids.includes(product.id)
+    })
+    if (custom.length > 0) return custom
+
+    return services.value.filter(s => {
+      const ids = getServiceIds(s)
+      return ids.length === 0 && (s.category || '').toUpperCase() === pCat
+    })
+  }
+
+  const getProductById = (id) => allProducts.value.find(p => p.id === id)
 
   const savePackage = async (pkgData) => {
     await packageRepository.savePackage(pkgData)
@@ -1911,8 +1945,41 @@ export function useSettingsMenu() {
     await loadData()
   }
 
+  // REORDER DRAG & DROP - geser paket eceran 1 BTG ke atas bawah
+  const reorderPackages = async (productId, orderedIds) => {
+    for (let i = 0; i < orderedIds.length; i++) {
+      await packageRepository.updateOrder(orderedIds[i], i)
+    }
+    await loadData()
+  }
+
+  // tetep keep biar ga error kalo masih ada yang pake
+  const movePackage = async (pkg, direction) => {
+    const list = getPackagesForProduct(pkg.productId)
+    const idx = list.findIndex(p => p.id === pkg.id)
+    const newIdx = direction === 'up' ? idx - 1 : idx + 1
+    if (newIdx < 0 || newIdx >= list.length) return
+    const current = list[idx]
+    const target = list[newIdx]
+    const currentOrder = current.order ?? idx
+    const targetOrder = target.order ?? newIdx
+    await packageRepository.updateOrder(current.id, targetOrder)
+    await packageRepository.updateOrder(target.id, currentOrder)
+    await loadData()
+  }
+
   const saveService = async (serviceData) => {
-    await serviceRepository.saveService(serviceData)
+    const plainProductIds = serviceData.productIds 
+      ? [...serviceData.productIds] 
+      : (serviceData.productId ? [serviceData.productId] : [])
+
+    const normalized = {
+      ...JSON.parse(JSON.stringify(serviceData)),
+      productId: null,
+      productIds: plainProductIds
+    }
+    delete normalized.productId_old
+    await serviceRepository.saveService(normalized)
     await loadData()
   }
 
@@ -1922,6 +1989,7 @@ export function useSettingsMenu() {
   }
 
   return {
+    allProducts,
     rokokProducts,
     packages,
     services,
@@ -1929,13 +1997,17 @@ export function useSettingsMenu() {
     loading,
     loadData,
     getPackagesForProduct,
+    getServicesForProduct,
+    getProductById,
+    getServiceIds,
     savePackage,
     deletePackage,
+    movePackage,
+    reorderPackages,
     saveService,
     deleteService
   }
 }
-
 ===== src/composables/useSalesHistory.js =====
 import { ref, computed } from 'vue'
 import { salesHistoryService } from '../services/salesHistoryService.js'
@@ -4063,7 +4135,7 @@ export const productService = {
 import { reactive } from 'vue'
 import { db } from '../db'
 import { firestore } from './firebase'
-import { collection, doc, writeBatch, getDocs, query, where } from 'firebase/firestore'
+import { collection, doc, writeBatch, getDocs, query, where, setDoc } from 'firebase/firestore'
 import dayjs from 'dayjs'
 import Big from 'big.js'
 import { cloudinaryService } from './cloudinaryService.js'
@@ -4121,6 +4193,20 @@ async function updateUnsyncedCount() {
     syncStatus.unsyncedCount = total
   } catch (e) {
     if (e.name !== 'AbortError') console.warn('[Sync] Count check error:', e)
+  }
+}
+
+// TAMBAHAN EKSTRIM - BUMP VERSION BIAR WEB HEMAT 1 READ
+async function bumpCatalogVersion() {
+  if (!navigator.onLine || !firestore) return
+  try {
+    await setDoc(doc(firestore, 'meta', 'catalog'), {
+      version: Date.now(),
+      updatedAt: new Date().toISOString()
+    }, { merge: true })
+    console.log('[Sync] meta/catalog version bumped - web bakal sync full next')
+  } catch (e) {
+    console.warn('[Sync] Gagal bump catalog version', e)
   }
 }
 
@@ -4231,8 +4317,8 @@ export const syncRealtime = {
     }
     isSyncing = true
     syncStatus.isSyncing = true
+    let shouldBumpCatalog = false
     try {
-      // Upload gambar pending ke Cloudinary terlebih dahulu sebelum push ke Firestore[span_4](start_span)[span_4](end_span)[span_5](start_span)[span_5](end_span)
       try {
         await cloudinaryService.uploadPendingImages()
       } catch (imgErr) {
@@ -4243,6 +4329,12 @@ export const syncRealtime = {
         if (!db[tableName]) continue
         const unsynced = await db[tableName].where('synced').equals(0).toArray()
         if (!unsynced.length) continue
+
+        // TANDAI KALO ADA PRODUK / PAKET / JASA YANG KE-PUSH
+        if (['products', 'product_packages', 'services'].includes(tableName)) {
+          shouldBumpCatalog = true
+        }
+
         for (let i = 0; i < unsynced.length; i += 400) {
           const batch = writeBatch(firestore)
           const chunk = unsynced.slice(i, i + 400)
@@ -4254,6 +4346,12 @@ export const syncRealtime = {
           await db[tableName].bulkUpdate(chunk.map(c => ({ key: c.id, changes: { synced: 1 } })))
         }
       }
+
+      // TAMBAHAN EKSTRIM - ABIS PUSH KATALOG, BUMP VERSI BIAR WEB TAU
+      if (shouldBumpCatalog) {
+        await bumpCatalogVersion()
+      }
+
       syncStatus.lastSyncedAt = dayjs().format('HH:mm')
     } catch (e) {
       console.warn('[Sync] Push manual gagal:', e?.message)
@@ -4287,7 +4385,6 @@ export const syncRealtime = {
 
 export const syncService = syncRealtime
 export default syncRealtime
-
 ===== src/services/cloudinaryService.js =====
 
 // src/services/cloudinaryService.js - FINAL OFFLINE-FIRST
@@ -4867,6 +4964,12 @@ export const router = createRouter({
           meta: { title: 'Laporan & Rekap' }
         },
         { 
+          path: 'settings/qris', 
+          name: 'SettingsQris',
+          component: () => import('../views/SettingsQris.vue'),
+          meta: { title: 'QRIS Toko' }
+        },
+        { 
           path: 'settings', 
           name: 'Settings', 
           component: () => import('../views/Settings.vue'),
@@ -4896,7 +4999,6 @@ router.beforeEach((to) => {
     return '/kasir'
   }
 })
-
 ===== src/style.css =====
 @import "tailwindcss";
 ===== src/db/repositories/operatorRepository.js =====
@@ -5570,21 +5672,43 @@ export const financeRepo = {
 }
 
 ===== src/db/repositories/packageRepository.js =====
-// src/db/repositories/packageRepository.js
 import { db } from '../index.js'
+
+function toPlain(obj) {
+  return JSON.parse(JSON.stringify(obj))
+}
 
 export const packageRepository = {
   async getAll() {
     const list = await db.product_packages.toArray()
-    // Hanya tampilkan paket yang belum di-soft-delete
-    return list.filter(item => !item.deleted)
+    // Hanya tampilkan paket yang belum di-soft-delete + sort by order
+    return list
+      .filter(item => !item.deleted)
+      .sort((a, b) => (a.order ?? 999) - (b.order ?? 999))
+  },
+
+  async getByProduct(productId) {
+    const list = await db.product_packages.where('productId').equals(productId).toArray()
+    return list
+      .filter(item => !item.deleted)
+      .sort((a, b) => (a.order ?? 999) - (b.order ?? 999))
   },
 
   async savePackage(packageData) {
     const id = packageData.id || `pkg_${Date.now()}`
+    
+    // kalo paket baru belum punya order, kasih order paling bawah buat produk itu
+    let orderToSave = packageData.order
+    if (orderToSave === undefined || orderToSave === null) {
+      const existing = await db.product_packages.where('productId').equals(packageData.productId).toArray()
+      const maxOrder = existing.reduce((max, p) => Math.max(max, p.order ?? 0), -1)
+      orderToSave = maxOrder + 1
+    }
+
     const newItem = { 
-      ...packageData, 
+      ...toPlain(packageData), 
       id, 
+      order: orderToSave,
       deleted: false,
       updatedAt: new Date().toISOString(),
       synced: 0 
@@ -5603,62 +5727,77 @@ export const packageRepository = {
       updatedAt: now, 
       synced: 0 
     })
+  },
+
+  async updateOrder(id, newOrder) {
+    await db.product_packages.update(String(id), {
+      order: newOrder,
+      updatedAt: new Date().toISOString(),
+      synced: 0
+    })
   }
 }
-
 ===== src/db/repositories/serviceRepository.js =====
 // src/db/repositories/serviceRepository.js
 import { db } from '../index.js'
-import dayjs from 'dayjs'
 
 export const serviceRepository = {
-  // Hanya ambil jasa yang belum di-soft-delete
-  getAll: async () => {
-    const list = await db.services.toArray()
-    return list.filter(s => !s.deleted)
+  async getAll() {
+    try {
+      const all = await db.services.toArray()
+      return all.filter(s => !s.deleted && s.deleted !== 1)
+    } catch (e) {
+      console.error('getAll services error', e)
+      return []
+    }
   },
 
-  getById: async (id) => {
-    const item = await db.services.get(id)
-    return item && !item.deleted ? item : null
+  async getById(id) {
+    return await db.services.get(id)
   },
 
-  saveService: async (data) => {
-    const now = dayjs().toISOString()
-    const id = data.id || crypto.randomUUID()
-    await db.services.put({
-      ...data,
-      id,
-      deleted: false,
+  async saveService(data) {
+    const now = new Date().toISOString()
+    const id = data.id || `srv_${Date.now()}_${Math.random().toString(36).slice(2,6)}`
+
+    // WAJIB plain array, jangan Proxy Vue
+    const plainIds = Array.isArray(data.productIds) 
+      ? JSON.parse(JSON.stringify(data.productIds)) 
+      : (data.productId ? [data.productId] : [])
+
+    const payload = {
+      id: String(id),
+      name: (data.name || '').toUpperCase().trim(),
+      price: Number(data.price) || 0,
+      category: (data.category || 'UMUM').toUpperCase().trim(),
+      productId: data.productId || null,
+      productIds: plainIds, // ini yang bikin DataCloneError kalo ga di-plain
       updatedAt: now,
-      synced: 0
-    })
-    return id
+      synced: 0,
+      deleted: 0
+    }
+
+    await db.services.put(payload)
+    return payload
   },
 
-  deleteService: async (id) => {
-    const stringId = String(id)
-    const now = dayjs().toISOString()
-
-    // Soft Delete di IndexedDB lokal agar sinkron ke cloud via syncService
-    await db.services.update(stringId, {
-      deleted: true,
-      updatedAt: now,
+  async deleteService(id) {
+    await db.services.update(id, {
+      deleted: 1,
+      updatedAt: new Date().toISOString(),
       synced: 0
     })
   }
 }
-
 ===== src/db/index.js =====
-
-// src/db/index.js - v3 CLOUDINARY SUPPORT
+// src/db/index.js
 import Dexie from 'dexie'
 
 export const db = new Dexie('SinarPagiDB')
 
-db.version(3).stores({
+db.version(1).stores({
   products: 'id, code, name, category, price_modal, price_sell, qty, unit, minStock, idealStock, purchasePackName, packQty, packPrice, updatedAt, synced, imageSynced, deleted',
-  product_packages: 'id, productId, name, qty_pcs, price_sell, updatedAt, synced, deleted',
+  product_packages: 'id, productId, name, order, qty_pcs, price_sell, updatedAt, synced, deleted',
   categories: 'id, name, updatedAt, synced, deleted',
   transactions: 'id, date, total, memberId, paymentMethod, amountPaid, paidAmount, remaining, change, status, dueDate, updatedAt, synced',
   transaction_items: 'id, transactionId, productId, serviceId, updatedAt, synced',
@@ -5669,20 +5808,13 @@ db.version(3).stores({
   cash_mutations: 'id, date, accountId, type, amount, category, note, refId, updatedAt, synced',
   expenses: 'id, date, category, amount, note, paymentMethod, cashPart, qrisPart, updatedAt, synced',
   digital_transactions: 'id, date, type, provider, nominal, adminFee, adminPaymentMethod, totalReceived, profit, updatedAt, synced',
-  services: 'id, name, price, updatedAt, synced, deleted',
+  services: 'id, name, price, category, productId, *productIds, updatedAt, synced, deleted',
   units: 'id, name, updatedAt, synced, deleted',
   operators: 'id, name, role, pin, updatedAt, synced, deleted',
   settings: 'id, updatedAt, synced'
-}).upgrade(tx => {
-  // migrasi dari v2 ke v3: set default imageSynced=1 buat produk lama yang ga ada gambar
-  return tx.table('products').toCollection().modify(p => {
-    if (p.imageSynced === undefined) p.imageSynced = 1
-    if (p.deleted === undefined) p.deleted = false
-  })
 })
 
 export default db
-
 ===== src/views/Shopping.vue =====
 <!-- src/views/Shopping.vue -->
 <template>
@@ -8500,6 +8632,117 @@ const handleLogin = async () => {
 onMounted(loadOperators)
 </script>
 
+===== src/views/SettingsQris.vue =====
+<template>
+  <div class="flex-1 overflow-auto p-4 pb-24 space-y-4">
+    <h1 class="font-black text-xl text-zinc-900">QRIS Toko</h1>
+    <p class="text-xs text-zinc-400">Upload QRIS untuk pembayaran di web katalog</p>
+
+    <div v-if="currentQris?.qrisUrl" class="bg-white p-4 rounded-2xl border border-zinc-100 shadow-sm flex flex-col items-center gap-3">
+      <p class="text-[11px] font-black uppercase tracking-wider text-zinc-500">QRIS Aktif Saat Ini</p>
+      <img :src="currentQris.qrisUrl" class="w-64 h-64 object-contain border border-zinc-100 rounded-2xl bg-zinc-50" />
+      <div class="text-center">
+        <p class="text-xs font-bold text-zinc-900">{{ currentQris.merchantName }}</p>
+        <p class="text-[11px] text-zinc-400">{{ currentQris.nmid }}</p>
+      </div>
+    </div>
+
+    <div class="bg-white p-5 rounded-2xl border border-zinc-100 shadow-sm space-y-3">
+      <div>
+        <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Nama Merchant</label>
+        <input v-model="form.merchantName" placeholder="WARUNG SINAR PAGI" class="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-bold uppercase" />
+      </div>
+      <div>
+        <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">NMID</label>
+        <input v-model="form.nmid" placeholder="ID1027..." class="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-bold" />
+      </div>
+      
+      <div>
+        <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Gambar QRIS *</label>
+        <label class="block w-full p-4 border-2 border-dashed border-zinc-200 rounded-xl text-center cursor-pointer hover:bg-zinc-50 transition">
+          <span class="text-xs font-bold text-zinc-700">{{ file ? file.name : 'Pilih Gambar QRIS (PNG/JPG)' }}</span>
+          <input type="file" accept="image/*" @change="onFile" class="hidden" />
+        </label>
+        <img v-if="previewUrl" :src="previewUrl" class="mt-2 w-40 h-40 object-contain border rounded-xl bg-zinc-50" />
+      </div>
+
+      <button @click="upload" :disabled="loading || !file" class="w-full py-3.5 bg-zinc-900 text-white rounded-xl font-black text-xs shadow-md disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 transition">
+        {{ loading ? 'Mengupload...' : 'Simpan QRIS ke Cloud' }}
+      </button>
+    </div>
+  </div>
+</template>
+
+<script setup>
+import { ref, onMounted } from 'vue'
+import { doc, getDoc, setDoc } from 'firebase/firestore'
+import { firestore } from '../services/firebase.js'
+
+const CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || 'vezqidog'
+const UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_PRESET || 'sinarpagi-products'
+
+const currentQris = ref(null)
+const file = ref(null)
+const previewUrl = ref('')
+const loading = ref(false)
+const form = ref({ merchantName: 'WARUNG SINAR PAGI', nmid: '' })
+
+onMounted(async () => {
+  try {
+    const snap = await getDoc(doc(firestore, 'settings', 'qris'))
+    if(snap.exists()) {
+      currentQris.value = snap.data()
+      form.value.merchantName = currentQris.value.merchantName || 'WARUNG SINAR PAGI'
+      form.value.nmid = currentQris.value.nmid || ''
+    }
+  } catch(e) { 
+    console.error('Gagal load QRIS', e)
+  }
+})
+
+const onFile = (e) => {
+  const f = e.target.files[0]
+  if(!f) return
+  file.value = f
+  previewUrl.value = URL.createObjectURL(f)
+}
+
+const upload = async () => {
+  if(!file.value) return alert('Pilih gambar QRIS dulu met')
+  loading.value = true
+  try {
+    // Upload langsung ke Cloudinary kayak di cloudinaryService lu
+    const formData = new FormData()
+    formData.append('file', file.value)
+    formData.append('upload_preset', UPLOAD_PRESET)
+    formData.append('public_id', `sinar-pagi/qris/qris-toko`)
+
+    const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUD_NAME}/image/upload`, {
+      method: 'POST',
+      body: formData
+    })
+    if(!res.ok) throw new Error(await res.text())
+    const data = await res.json()
+    
+    await setDoc(doc(firestore, 'settings', 'qris'), {
+      qrisUrl: data.secure_url,
+      merchantName: form.value.merchantName.toUpperCase(),
+      nmid: form.value.nmid,
+      updatedAt: new Date().toISOString()
+    })
+    
+    alert('QRIS berhasil diupdate met!')
+    file.value = null
+    previewUrl.value = ''
+    location.reload()
+  } catch(e) {
+    console.error(e)
+    alert('Gagal: ' + (e.message || e))
+  } finally {
+    loading.value = false
+  }
+}
+</script>
 ===== src/views/Reports.vue =====
 <!-- src/views/Reports.vue -->
 <template>
@@ -8908,7 +9151,7 @@ onActivated(initDashboard)
     <!-- Header -->
     <div>
       <h1 class="font-black text-xl text-zinc-900">Pengaturan Menu & Jasa</h1>
-      <p class="text-xs text-zinc-400">Atur paket eceran (rokok/permen) dan tarif jasa per kategori</p>
+      <p class="text-xs text-zinc-400">Geser paket ⋮⋮ buat atur posisi eceran 1 BTG ke atas/bawah</p>
     </div>
 
     <!-- Tab Navigasi -->
@@ -8943,7 +9186,6 @@ onActivated(initDashboard)
         Belum ada tarif jasa
       </div>
 
-      <!-- LIST TARIF JASA DIURUTKAN A-Z -->
       <div v-else class="space-y-2">
         <div 
           v-for="s in sortedServices" 
@@ -8951,13 +9193,19 @@ onActivated(initDashboard)
           class="p-4 bg-white rounded-2xl border border-zinc-100 shadow-sm flex items-center justify-between"
         >
           <div>
-            <div class="flex items-center gap-2">
+            <div class="flex items-center gap-2 flex-wrap">
               <span class="font-bold text-sm text-zinc-900">{{ s.name }}</span>
-              <span class="px-2 py-0.5 bg-amber-100 text-amber-800 rounded-md text-[10px] font-black uppercase">
+              <span v-if="getServiceIds(s).length" class="px-2 py-0.5 bg-zinc-900 text-white rounded-md text-[10px] font-black uppercase">
+                KHUSUS: {{ getServiceIds(s).length > 1 ? `${getServiceIds(s).length} PRODUK` : getProductName(getServiceIds(s)[0]) }}
+              </span>
+              <span v-else class="px-2 py-0.5 bg-amber-100 text-amber-800 rounded-md text-[10px] font-black uppercase">
                 {{ s.category || 'Umum' }}
               </span>
             </div>
             <div class="text-xs text-amber-600 font-black mt-0.5">Rp {{ formatRibuan(s.price) }}</div>
+            <div v-if="getServiceIds(s).length > 1" class="text-[10px] text-zinc-400 mt-1 truncate max-w-[220px]">
+              {{ getServiceIds(s).map(id => getProductName(id)).join(', ') }}
+            </div>
           </div>
           <div class="flex gap-1">
             <button @click="openServiceModal(s)" class="p-2 text-zinc-600 hover:bg-zinc-100 rounded-xl">
@@ -8973,7 +9221,6 @@ onActivated(initDashboard)
 
     <!-- TAB 2: HARGA PAKET (ROKOK & PERMEN) -->
     <div v-if="activeTab === 'rokok'" class="space-y-4">
-      <!-- Sub-Filter Kategori Paket -->
       <div class="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
         <button 
           @click="selectedPackageCat = 'ALL'"
@@ -9017,51 +9264,125 @@ onActivated(initDashboard)
               </div>
               <div class="text-[11px] text-zinc-400">Harga Utuh: Rp {{ formatRibuan(p.price_sell) }}</div>
             </div>
-            <button 
-              @click="openPackageModal(p)" 
-              class="px-3 py-1.5 bg-zinc-100 text-zinc-800 rounded-xl text-xs font-bold hover:bg-zinc-200 active:scale-95 transition"
-            >
-              + Opsi Paket
-            </button>
+            <div class="flex gap-1">
+              <button 
+                @click="openServiceModal(null, p)" 
+                class="px-3 py-1.5 bg-amber-100 text-amber-800 rounded-xl text-xs font-bold hover:bg-amber-200 active:scale-95 transition"
+              >
+                + Jasa
+              </button>
+              <button 
+                @click="openPackageModal(p)" 
+                class="px-3 py-1.5 bg-zinc-100 text-zinc-800 rounded-xl text-xs font-bold hover:bg-zinc-200 active:scale-95 transition"
+              >
+                + Paket
+              </button>
+            </div>
           </div>
 
+          <!-- LIST PAKET DRAG & DROP -->
           <div class="space-y-1.5">
+            <div class="text-[10px] font-black text-zinc-400 uppercase tracking-wider flex items-center gap-1">
+              <GripVertical class="w-3 h-3"/> Tekan & geser ⋮⋮ buat atur posisi eceran
+            </div>
             <div 
-              v-for="pkg in getPackagesForProduct(p.id)" 
-              :key="pkg.id" 
-              class="flex justify-between items-center p-2.5 bg-zinc-50 rounded-xl text-xs"
+              v-for="(pkg, idx) in getPackagesForProduct(p.id)" 
+              :key="pkg.id"
+              :data-pkg-id="pkg.id"
+              draggable="true"
+              @dragstart="onDragStart(pkg)"
+              @dragover.prevent="onDragOver(pkg)"
+              @dragleave="dragOverId = null"
+              @drop="onDrop(p.id, pkg)"
+              @dragend="onDragEnd"
+              :class="[
+                'flex justify-between items-center p-2.5 rounded-xl text-xs border-2 transition-all cursor-grab active:cursor-grabbing select-none',
+                draggedPkg?.id === pkg.id ? 'opacity-30 bg-zinc-200 border-dashed border-zinc-400' : 'bg-zinc-50 border-transparent',
+                dragOverId === pkg.id ? 'border-amber-400 bg-amber-50 scale-[1.02] shadow-md' : ''
+              ]"
             >
-              <div>
-                <span class="font-bold text-zinc-800">{{ pkg.name }}</span>
-                <span class="text-zinc-400 ml-2">({{ pkg.qty_pcs }} pcs/batang)</span>
+              <div class="flex items-center gap-2">
+                <div class="w-7 h-7 bg-white border border-zinc-200 rounded-lg flex items-center justify-center cursor-grab">
+                  <GripVertical class="w-4 h-4 text-zinc-400"/>
+                </div>
+                <span class="w-5 h-5 bg-zinc-900 text-white rounded-full flex items-center justify-center text-[10px] font-black">{{ idx + 1 }}</span>
+                <div>
+                  <span class="font-bold text-zinc-800">{{ pkg.name }}</span>
+                  <span class="text-zinc-400 ml-1.5">({{ pkg.qty_pcs }})</span>
+                </div>
               </div>
-              <div class="flex items-center gap-1.5">
+              <div class="flex items-center gap-1">
                 <span class="font-black text-zinc-900 mr-1">Rp {{ formatRibuan(pkg.price_sell) }}</span>
-                <button @click="openPackageModal(p, pkg)" title="Edit Paket" class="p-1 text-zinc-600 hover:bg-zinc-200 rounded-lg transition">
+                <button @click="openPackageModal(p, pkg)" class="p-1.5 bg-white border border-zinc-200 rounded-lg hover:bg-zinc-100">
                   <Pencil class="w-3.5 h-3.5"/>
                 </button>
-                <button @click="handleDeletePackage(pkg)" title="Hapus Paket" class="p-1 text-red-500 hover:bg-red-100 rounded-lg transition">
+                <button @click="handleDeletePackage(pkg)" class="p-1.5 bg-white border border-zinc-200 rounded-lg text-red-500 hover:bg-red-50">
                   <Trash2 class="w-3.5 h-3.5"/>
                 </button>
               </div>
             </div>
+            <div v-if="getPackagesForProduct(p.id).length === 0" class="text-[11px] text-zinc-400 text-center py-2">Belum ada paket, klik + Paket</div>
           </div>
+
+          <div v-if="getServicesForProduct(p).some(s => getServiceIds(s).length)" class="space-y-1.5 pt-2 border-t border-dashed border-zinc-200">
+            <div class="text-[10px] font-black text-zinc-500 uppercase tracking-wider">Jasa Khusus Produk Ini (override kategori)</div>
+            <div 
+              v-for="js in getServicesForProduct(p).filter(s => getServiceIds(s).length)" 
+              :key="js.id" 
+              class="flex justify-between items-center p-2.5 bg-amber-50 border border-amber-100 rounded-xl text-xs"
+            >
+              <span class="font-bold text-zinc-800">{{ js.name }}</span>
+              <div class="flex items-center gap-1.5">
+                <span class="font-black text-amber-700 mr-1">Rp {{ formatRibuan(js.price) }}</span>
+                <button @click="openServiceModal(js)" class="p-1 text-zinc-600 hover:bg-amber-100 rounded-lg"><Pencil class="w-3.5 h-3.5"/></button>
+                <button @click="handleDeleteService(js)" class="p-1 text-red-500 hover:bg-red-100 rounded-lg"><Trash2 class="w-3.5 h-3.5"/></button>
+              </div>
+            </div>
+          </div>
+
         </div>
       </div>
     </div>
 
     <!-- Modal Form Jasa -->
     <div v-if="showServiceModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl space-y-4">
+      <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl space-y-4 max-h-[90vh] overflow-auto">
         <div class="flex justify-between items-center">
           <h2 class="font-black text-base">{{ editingServiceId ? 'Edit Tarif Jasa' : 'Tambah Tarif Jasa' }}</h2>
           <button @click="showServiceModal = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
         </div>
 
         <form @submit.prevent="handleSaveService" class="space-y-3">
+          <div class="flex items-center gap-2 p-3 bg-zinc-50 rounded-xl border border-zinc-100">
+            <button type="button" @click="isCustomService = !isCustomService" :class="['w-10 h-6 rounded-full p-0.5 transition shrink-0', isCustomService ? 'bg-zinc-900' : 'bg-zinc-200']">
+              <div :class="['w-4 h-4 bg-white rounded-full shadow transition-transform', isCustomService ? 'translate-x-4' : 'translate-x-0']"></div>
+            </button>
+            <div>
+              <div class="text-xs font-black text-zinc-800">Jasa khusus untuk produk pilihan</div>
+              <div class="text-[10px] text-zinc-500">Bisa pilih 1 atau beberapa produk sekaligus</div>
+            </div>
+          </div>
+
+          <div v-if="isCustomService">
+            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Pilih Produk * ({{ serviceForm.productIds.length }} dipilih)</label>
+            <button 
+              type="button" 
+              @click="showProductPickerModal = true"
+              class="w-full px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-sm font-bold text-left flex justify-between items-center focus:outline-none focus:ring-2 focus:ring-zinc-900"
+            >
+              <span class="truncate">{{ serviceForm.productIds.length ? `${serviceForm.productIds.length} PRODUK DIPILIH` : 'PILIH PRODUK' }}</span>
+              <ChevronDown class="w-4 h-4 text-zinc-400 shrink-0" />
+            </button>
+            <div v-if="serviceForm.productIds.length" class="flex flex-wrap gap-1 mt-2">
+              <span v-for="pid in serviceForm.productIds" :key="pid" class="px-2 py-1 bg-zinc-900 text-white rounded-full text-[10px] font-bold flex items-center gap-1">
+                {{ getProductName(pid) }}
+                <button type="button" @click="toggleProduct(pid)" class="ml-1 bg-white/20 rounded-full w-3.5 h-3.5 flex items-center justify-center">✕</button>
+              </span>
+            </div>
+          </div>
+
           <div>
             <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Untuk Kategori Produk *</label>
-            <!-- Tombol Pemilih Modal -->
             <button 
               type="button" 
               @click="showCategoryPickerModal = true"
@@ -9070,10 +9391,11 @@ onActivated(initDashboard)
               <span class="truncate">{{ serviceForm.category || 'PILIH KATEGORI' }}</span>
               <ChevronDown class="w-4 h-4 text-zinc-400 shrink-0" />
             </button>
+            <p v-if="isCustomService" class="text-[10px] text-zinc-400 mt-1">Otomatis ikut kategori produk pertama, tapi bisa diubah</p>
           </div>
+
           <div>
             <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Nama Layanan *</label>
-            <!-- INPUT DIBUAT AUTOMATIC UPPERCASE -->
             <input 
               v-model="serviceForm.name" 
               required 
@@ -9101,7 +9423,7 @@ onActivated(initDashboard)
       </div>
     </div>
 
-    <!-- Modal Form Paket Eceran (Rokok / Permen) -->
+    <!-- Modal Form Paket Eceran -->
     <div v-if="showPackageModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl space-y-4">
         <div class="flex justify-between items-center">
@@ -9148,18 +9470,15 @@ onActivated(initDashboard)
       </div>
     </div>
 
-    <!-- Modal Picker Pilih Kategori (Urut A-Z) -->
+    <!-- Modal Picker Kategori -->
     <div v-if="showCategoryPickerModal" class="fixed inset-0 z-[100] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
       <div class="w-full max-w-sm bg-white rounded-[2rem] p-5 shadow-xl animate-in zoom-in-95 duration-200 max-h-[80vh] flex flex-col">
         <div class="flex justify-between items-center mb-3">
           <h3 class="font-black text-base text-zinc-900">Pilih Kategori Produk</h3>
           <button type="button" @click="showCategoryPickerModal = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
         </div>
-
         <div class="space-y-1.5 overflow-auto flex-1 pr-1">
-          <div v-if="categoryOptions.length === 0" class="py-6 text-center text-xs text-zinc-400">
-            Belum ada kategori
-          </div>
+          <div v-if="categoryOptions.length === 0" class="py-6 text-center text-xs text-zinc-400">Belum ada kategori</div>
           <button 
             v-for="cat in categoryOptions" 
             :key="cat.id" 
@@ -9172,12 +9491,45 @@ onActivated(initDashboard)
         </div>
       </div>
     </div>
+
+    <!-- Modal Picker Produk MULTI -->
+    <div v-if="showProductPickerModal" class="fixed inset-0 z-[110] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="w-full max-w-sm bg-white rounded-[2rem] p-5 shadow-xl max-h-[80vh] flex flex-col">
+        <div class="flex justify-between items-center mb-3">
+          <h3 class="font-black text-base text-zinc-900">Pilih Produk ({{ serviceForm.productIds.length }})</h3>
+          <button type="button" @click="showProductPickerModal = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
+        </div>
+        <div class="relative mb-3">
+          <input v-model="productSearch" placeholder="Cari produk..." class="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-bold"/>
+        </div>
+        <div class="space-y-1.5 overflow-auto flex-1 pr-1">
+          <button 
+            v-for="prod in productOptions" 
+            :key="prod.id" 
+            type="button"
+            @click="toggleProduct(prod.id)"
+            :class="['w-full p-3 rounded-xl font-bold text-xs text-left transition flex justify-between items-center', serviceForm.productIds.includes(prod.id) ? 'bg-zinc-900 text-white shadow-md' : 'bg-zinc-50 hover:bg-zinc-100 text-zinc-800']"
+          >
+            <div class="min-w-0 flex-1">
+              <div class="truncate">{{ prod.name }}</div>
+              <div class="text-[10px] opacity-60 uppercase">{{ prod.category }}</div>
+            </div>
+            <div v-if="serviceForm.productIds.includes(prod.id)" class="ml-2 w-5 h-5 bg-white text-zinc-900 rounded-full flex items-center justify-center text-[10px] font-black shrink-0">✓</div>
+          </button>
+        </div>
+        <div class="flex gap-2 pt-3 border-t border-zinc-100 mt-3">
+          <button type="button" @click="serviceForm.productIds = []" class="flex-1 py-2.5 bg-zinc-100 rounded-xl text-xs font-bold">Clear</button>
+          <button type="button" @click="showProductPickerModal = false" class="flex-1 py-2.5 bg-zinc-900 text-white rounded-xl text-xs font-bold">Selesai ({{ serviceForm.productIds.length }})</button>
+        </div>
+      </div>
+    </div>
+
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, onActivated } from 'vue'
-import { Plus, Pencil, Trash2, X, ChevronDown } from 'lucide-vue-next'
+import { Plus, Pencil, Trash2, X, ChevronDown, GripVertical } from 'lucide-vue-next'
 import { useSettingsMenu } from '../composables/useSettingsMenu.js'
 import { formatRibuan, formatRp, toNumber } from '../utils/formatters/currency.js'
 
@@ -9185,25 +9537,27 @@ const activeTab = ref('seduh')
 const selectedPackageCat = ref('ALL')
 
 const {
+  allProducts,
   rokokProducts,
   services,
   categoryOptions,
   loadData,
   getPackagesForProduct,
+  getServicesForProduct,
+  getProductById,
   savePackage,
   deletePackage,
+  reorderPackages,
   saveService,
   deleteService
 } = useSettingsMenu()
 
-// URUTKAN TARIF JASA SECARA ALFABETIS (A-Z)
 const sortedServices = computed(() => {
   return [...services.value].sort((a, b) => 
     (a.name || '').localeCompare(b.name || '', 'id', { sensitivity: 'base' })
   )
 })
 
-// Filter Kategori Paket
 const availablePackageCategories = computed(() => {
   const cats = new Set(rokokProducts.value.map(p => (p.category || 'UMUM').toUpperCase()))
   return Array.from(cats)
@@ -9216,46 +9570,131 @@ const filteredRokokProducts = computed(() => {
   )
 })
 
-// Modal State Jasa & Picker Kategori
+// DRAG & DROP STATE
+const draggedPkg = ref(null)
+const dragOverId = ref(null)
+
+const onDragStart = (pkg) => {
+  draggedPkg.value = pkg
+}
+const onDragOver = (pkg) => {
+  dragOverId.value = pkg.id
+}
+const onDragEnd = () => {
+  draggedPkg.value = null
+  dragOverId.value = null
+}
+const onDrop = async (productId, targetPkg) => {
+  if (!draggedPkg.value || draggedPkg.value.id === targetPkg.id) {
+    onDragEnd()
+    return
+  }
+  const list = getPackagesForProduct(productId)
+  const fromIdx = list.findIndex(p => p.id === draggedPkg.value.id)
+  const toIdx = list.findIndex(p => p.id === targetPkg.id)
+  const newList = [...list]
+  const [moved] = newList.splice(fromIdx, 1)
+  newList.splice(toIdx, 0, moved)
+  await reorderPackages(productId, newList.map(p => p.id))
+  onDragEnd()
+}
+
+// Modal State Jasa & Picker
 const showServiceModal = ref(false)
 const showCategoryPickerModal = ref(false)
+const showProductPickerModal = ref(false)
 const editingServiceId = ref(null)
-const serviceForm = ref({ name: '', price: 0, category: 'Mie' })
+const isCustomService = ref(false)
+const productSearch = ref('')
+const serviceForm = ref({ name: '', price: 0, category: 'Mie', productId: null, productIds: [] })
 
-// Modal State Paket Eceran
-const showPackageModal = ref(false)
-const editingPackageId = ref(null)
-const selectedRokokProduct = ref(null)
-const packageForm = ref({ name: '', qty_pcs: 1, price_sell: 0 })
+const productOptions = computed(() => {
+  const q = productSearch.value.toLowerCase()
+  let list = allProducts.value
+  if(q) list = list.filter(p => (p.name||'').toLowerCase().includes(q))
+  return list.slice(0, 80)
+})
 
-const openServiceModal = async (s = null) => {
-  await loadData() // Ambil data kategori terbaru
+const getServiceIds = (s) => {
+  if (s.productIds && Array.isArray(s.productIds) && s.productIds.length) return s.productIds
+  if (s.productId) return [s.productId]
+  return []
+}
+
+const getProductName = (id) => {
+  if(!id) return ''
+  return getProductById(id)?.name || 'Produk tidak ditemukan'
+}
+
+const toggleProduct = (id) => {
+  const list = [...(serviceForm.value.productIds || [])]
+  const idx = list.indexOf(id)
+  if(idx > -1) list.splice(idx, 1)
+  else list.push(id)
+  serviceForm.value.productIds = list
+  if(list.length === 1){
+    const p = getProductById(list[0])
+    if(p && p.category) serviceForm.value.category = p.category
+  }
+}
+
+const openServiceModal = async (s = null, productOverride = null) => {
+  await loadData()
+  productSearch.value = ''
   if (s) {
     editingServiceId.value = s.id
+    const ids = getServiceIds(s)
+    isCustomService.value = ids.length > 0
     serviceForm.value = { 
       name: (s.name || '').toUpperCase(), 
       price: s.price, 
-      category: s.category || 'Mie' 
+      category: s.category || 'Mie',
+      productId: null,
+      productIds: ids
+    }
+  } else if (productOverride) {
+    editingServiceId.value = null
+    isCustomService.value = true
+    serviceForm.value = { 
+      name: 'SEDUH', 
+      price: 3000, 
+      category: productOverride.category || categoryOptions.value[0]?.name || 'Mie',
+      productId: null,
+      productIds: [productOverride.id]
     }
   } else {
     editingServiceId.value = null
+    isCustomService.value = false
     serviceForm.value = { 
       name: 'SEDUH', 
       price: 2000, 
-      category: categoryOptions.value[0]?.name || 'Mie' 
+      category: categoryOptions.value[0]?.name || 'Mie',
+      productId: null,
+      productIds: []
     }
   }
   showServiceModal.value = true
 }
 
 const handleSaveService = async () => {
-  await saveService({
-    id: editingServiceId.value,
-    name: (serviceForm.value.name || '').toUpperCase().trim(),
-    price: serviceForm.value.price,
-    category: serviceForm.value.category
-  })
-  showServiceModal.value = false
+  if(isCustomService.value && (!serviceForm.value.productIds || serviceForm.value.productIds.length === 0)){
+    alert('Pilih produk dulu met, bisa lebih dari 1')
+    return
+  }
+  try {
+    await saveService({
+      id: editingServiceId.value,
+      name: (serviceForm.value.name || '').toUpperCase().trim(),
+      price: Number(serviceForm.value.price) || 0,
+      category: serviceForm.value.category,
+      productId: null,
+      productIds: isCustomService.value ? serviceForm.value.productIds : []
+    })
+    showServiceModal.value = false
+  } catch (e) {
+    console.error('GAGAL SAVE JASA:', e)
+    alert('Gagal simpan: ' + (e.message || e))
+  }
 }
 
 const handleDeleteService = async (s) => {
@@ -9263,6 +9702,12 @@ const handleDeleteService = async (s) => {
     await deleteService(s.id)
   }
 }
+
+// Modal State Paket Eceran
+const showPackageModal = ref(false)
+const editingPackageId = ref(null)
+const selectedRokokProduct = ref(null)
+const packageForm = ref({ name: '', qty_pcs: 1, price_sell: 0 })
 
 const openPackageModal = (p, pkg = null) => {
   selectedRokokProduct.value = p
@@ -9301,13 +9746,10 @@ const handleDeletePackage = async (pkg) => {
 onMounted(() => {
   loadData()
 })
-
-// Sinkronkan data saat berpindah tab kembali ke halaman ini (KeepAlive)
 onActivated(() => {
   loadData()
 })
 </script>
-
 ===== src/views/Operators.vue =====
 <template>
   <div class="flex-1 overflow-auto p-4 pb-24">
@@ -9891,7 +10333,7 @@ import { ref, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { 
   Menu, Package, Store, LayoutDashboard, 
-  Users, ShoppingCart, Tags, History, Coffee, Smartphone, Wallet, RefreshCw, BarChart3, Settings, Receipt, Printer, Layers
+  Users, ShoppingCart, Tags, History, Coffee, Smartphone, Wallet, RefreshCw, BarChart3, Settings, Receipt, Printer, Layers, QrCode
 } from 'lucide-vue-next'
 import { toast } from 'vue-sonner'
 import SidebarComponent from '../components/Sidebar.vue'
@@ -9938,6 +10380,7 @@ const navCategories = ref([
     icon: Wallet,
     items: [
       { name: 'Kas & Bank', icon: Wallet, to: '/finance' },
+      { name: 'QRIS Toko', icon: QrCode, to: '/settings/qris' },
       { name: 'Pengeluaran', icon: Receipt, to: '/expenses' },
       { name: 'Laporan', icon: BarChart3, to: '/reports' }
     ]
@@ -9971,7 +10414,10 @@ const groups = computed(() => {
 
   result.push({
     title: 'PENGATURAN',
-    items: [{ name: 'Pengaturan Toko', icon: Settings, to: '/settings' }]
+    items: [
+      { name: 'QRIS Toko', icon: QrCode, to: '/settings/qris' },
+      { name: 'Pengaturan Toko', icon: Settings, to: '/settings' }
+    ]
   })
 
   return result
@@ -10021,4 +10467,3 @@ const manualSync = async () => {
 
 const openMember = () => window.dispatchEvent(new CustomEvent('open-member-picker'))
 </script>
-
