@@ -2,7 +2,7 @@
 import { reactive } from 'vue'
 import { db } from '../db'
 import { firestore } from './firebase'
-import { collection, doc, writeBatch, getDocs, query, where } from 'firebase/firestore'
+import { collection, doc, writeBatch, getDocs, query, where, setDoc } from 'firebase/firestore'
 import dayjs from 'dayjs'
 import Big from 'big.js'
 import { cloudinaryService } from './cloudinaryService.js'
@@ -60,6 +60,20 @@ async function updateUnsyncedCount() {
     syncStatus.unsyncedCount = total
   } catch (e) {
     if (e.name !== 'AbortError') console.warn('[Sync] Count check error:', e)
+  }
+}
+
+// TAMBAHAN EKSTRIM - BUMP VERSION BIAR WEB HEMAT 1 READ
+async function bumpCatalogVersion() {
+  if (!navigator.onLine || !firestore) return
+  try {
+    await setDoc(doc(firestore, 'meta', 'catalog'), {
+      version: Date.now(),
+      updatedAt: new Date().toISOString()
+    }, { merge: true })
+    console.log('[Sync] meta/catalog version bumped - web bakal sync full next')
+  } catch (e) {
+    console.warn('[Sync] Gagal bump catalog version', e)
   }
 }
 
@@ -170,8 +184,8 @@ export const syncRealtime = {
     }
     isSyncing = true
     syncStatus.isSyncing = true
+    let shouldBumpCatalog = false
     try {
-      // Upload gambar pending ke Cloudinary terlebih dahulu sebelum push ke Firestore[span_4](start_span)[span_4](end_span)[span_5](start_span)[span_5](end_span)
       try {
         await cloudinaryService.uploadPendingImages()
       } catch (imgErr) {
@@ -182,6 +196,12 @@ export const syncRealtime = {
         if (!db[tableName]) continue
         const unsynced = await db[tableName].where('synced').equals(0).toArray()
         if (!unsynced.length) continue
+
+        // TANDAI KALO ADA PRODUK / PAKET / JASA YANG KE-PUSH
+        if (['products', 'product_packages', 'services'].includes(tableName)) {
+          shouldBumpCatalog = true
+        }
+
         for (let i = 0; i < unsynced.length; i += 400) {
           const batch = writeBatch(firestore)
           const chunk = unsynced.slice(i, i + 400)
@@ -193,6 +213,12 @@ export const syncRealtime = {
           await db[tableName].bulkUpdate(chunk.map(c => ({ key: c.id, changes: { synced: 1 } })))
         }
       }
+
+      // TAMBAHAN EKSTRIM - ABIS PUSH KATALOG, BUMP VERSI BIAR WEB TAU
+      if (shouldBumpCatalog) {
+        await bumpCatalogVersion()
+      }
+
       syncStatus.lastSyncedAt = dayjs().format('HH:mm')
     } catch (e) {
       console.warn('[Sync] Push manual gagal:', e?.message)
