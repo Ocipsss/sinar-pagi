@@ -1,4 +1,4 @@
-// src/composables/useSettingsMenu.js - FIX JASA KHUSUS MULTI-PRODUK GA MUNCUL DI UMUM
+// src/composables/useSettingsMenu.js - FULL FINAL DRAG & DROP SUPPORT
 import { ref } from 'vue'
 import { productRepo } from '../db/repositories/productRepository.js'
 import { packageRepository } from '../db/repositories/packageRepository.js'
@@ -44,7 +44,7 @@ export function useSettingsMenu() {
           return (a.name || '').localeCompare(b.name || '')
         })
 
-      packages.value = allPackages
+      packages.value = [...allPackages].sort((a,b) => (a.order ?? 999) - (b.order ?? 999))
       services.value = allServices
       categoryOptions.value = [...allCategories].sort((a, b) => 
         (a.name || '').localeCompare(b.name || '', 'id')
@@ -55,24 +55,26 @@ export function useSettingsMenu() {
   }
 
   const getPackagesForProduct = (productId) => {
-    return packages.value.filter(pkg => pkg.productId === productId)
+    return packages.value
+      .filter(pkg => pkg.productId === productId)
+      .sort((a,b) => (a.order ?? 999) - (b.order ?? 999))
   }
 
   const getServicesForProduct = (product) => {
-  if(!product) return []
-  const pCat = (product.category || '').toUpperCase()
+    if(!product) return []
+    const pCat = (product.category || '').toUpperCase()
 
-  const custom = services.value.filter(s => {
-    const ids = getServiceIds(s)
-    return ids.length > 0 && ids.includes(product.id)
-  })
-  if (custom.length > 0) return custom
+    const custom = services.value.filter(s => {
+      const ids = getServiceIds(s)
+      return ids.length > 0 && ids.includes(product.id)
+    })
+    if (custom.length > 0) return custom
 
-  return services.value.filter(s => {
-    const ids = getServiceIds(s)
-    return ids.length === 0 && (s.category || '').toUpperCase() === pCat
-  })
-}
+    return services.value.filter(s => {
+      const ids = getServiceIds(s)
+      return ids.length === 0 && (s.category || '').toUpperCase() === pCat
+    })
+  }
 
   const getProductById = (id) => allProducts.value.find(p => p.id === id)
 
@@ -80,23 +82,45 @@ export function useSettingsMenu() {
     await packageRepository.savePackage(pkgData)
     await loadData()
   }
+
   const deletePackage = async (id) => {
     await packageRepository.deletePackage(id)
     await loadData()
   }
 
+  // REORDER DRAG & DROP - geser paket eceran 1 BTG ke atas bawah
+  const reorderPackages = async (productId, orderedIds) => {
+    for (let i = 0; i < orderedIds.length; i++) {
+      await packageRepository.updateOrder(orderedIds[i], i)
+    }
+    await loadData()
+  }
+
+  // tetep keep biar ga error kalo masih ada yang pake
+  const movePackage = async (pkg, direction) => {
+    const list = getPackagesForProduct(pkg.productId)
+    const idx = list.findIndex(p => p.id === pkg.id)
+    const newIdx = direction === 'up' ? idx - 1 : idx + 1
+    if (newIdx < 0 || newIdx >= list.length) return
+    const current = list[idx]
+    const target = list[newIdx]
+    const currentOrder = current.order ?? idx
+    const targetOrder = target.order ?? newIdx
+    await packageRepository.updateOrder(current.id, targetOrder)
+    await packageRepository.updateOrder(target.id, currentOrder)
+    await loadData()
+  }
+
   const saveService = async (serviceData) => {
-    // PLAIN CLONE BIAR GA DataCloneError (Proxy Vue)
     const plainProductIds = serviceData.productIds 
       ? [...serviceData.productIds] 
       : (serviceData.productId ? [serviceData.productId] : [])
 
     const normalized = {
       ...JSON.parse(JSON.stringify(serviceData)),
-      productId: null, // kita pake productIds aja sekarang
+      productId: null,
       productIds: plainProductIds
     }
-    // buang productId lama biar ga double
     delete normalized.productId_old
     await serviceRepository.saveService(normalized)
     await loadData()
@@ -121,6 +145,8 @@ export function useSettingsMenu() {
     getServiceIds,
     savePackage,
     deletePackage,
+    movePackage,
+    reorderPackages,
     saveService,
     deleteService
   }

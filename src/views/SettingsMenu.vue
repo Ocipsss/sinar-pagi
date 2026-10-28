@@ -3,7 +3,7 @@
     <!-- Header -->
     <div>
       <h1 class="font-black text-xl text-zinc-900">Pengaturan Menu & Jasa</h1>
-      <p class="text-xs text-zinc-400">Atur paket eceran (rokok/permen) dan tarif jasa per kategori & per produk</p>
+      <p class="text-xs text-zinc-400">Geser paket ⋮⋮ buat atur posisi eceran 1 BTG ke atas/bawah</p>
     </div>
 
     <!-- Tab Navigasi -->
@@ -38,7 +38,6 @@
         Belum ada tarif jasa
       </div>
 
-      <!-- LIST TARIF JASA DIURUTKAN A-Z -->
       <div v-else class="space-y-2">
         <div 
           v-for="s in sortedServices" 
@@ -48,7 +47,6 @@
           <div>
             <div class="flex items-center gap-2 flex-wrap">
               <span class="font-bold text-sm text-zinc-900">{{ s.name }}</span>
-              <!-- BADGE: SUPPORT MULTI PRODUK -->
               <span v-if="getServiceIds(s).length" class="px-2 py-0.5 bg-zinc-900 text-white rounded-md text-[10px] font-black uppercase">
                 KHUSUS: {{ getServiceIds(s).length > 1 ? `${getServiceIds(s).length} PRODUK` : getProductName(getServiceIds(s)[0]) }}
               </span>
@@ -75,7 +73,6 @@
 
     <!-- TAB 2: HARGA PAKET (ROKOK & PERMEN) -->
     <div v-if="activeTab === 'rokok'" class="space-y-4">
-      <!-- Sub-Filter Kategori Paket -->
       <div class="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
         <button 
           @click="selectedPackageCat = 'ALL'"
@@ -135,29 +132,50 @@
             </div>
           </div>
 
+          <!-- LIST PAKET DRAG & DROP -->
           <div class="space-y-1.5">
+            <div class="text-[10px] font-black text-zinc-400 uppercase tracking-wider flex items-center gap-1">
+              <GripVertical class="w-3 h-3"/> Tekan & geser ⋮⋮ buat atur posisi eceran
+            </div>
             <div 
-              v-for="pkg in getPackagesForProduct(p.id)" 
-              :key="pkg.id" 
-              class="flex justify-between items-center p-2.5 bg-zinc-50 rounded-xl text-xs"
+              v-for="(pkg, idx) in getPackagesForProduct(p.id)" 
+              :key="pkg.id"
+              :data-pkg-id="pkg.id"
+              draggable="true"
+              @dragstart="onDragStart(pkg)"
+              @dragover.prevent="onDragOver(pkg)"
+              @dragleave="dragOverId = null"
+              @drop="onDrop(p.id, pkg)"
+              @dragend="onDragEnd"
+              :class="[
+                'flex justify-between items-center p-2.5 rounded-xl text-xs border-2 transition-all cursor-grab active:cursor-grabbing select-none',
+                draggedPkg?.id === pkg.id ? 'opacity-30 bg-zinc-200 border-dashed border-zinc-400' : 'bg-zinc-50 border-transparent',
+                dragOverId === pkg.id ? 'border-amber-400 bg-amber-50 scale-[1.02] shadow-md' : ''
+              ]"
             >
-              <div>
-                <span class="font-bold text-zinc-800">{{ pkg.name }}</span>
-                <span class="text-zinc-400 ml-2">({{ pkg.qty_pcs }} pcs/batang)</span>
+              <div class="flex items-center gap-2">
+                <div class="w-7 h-7 bg-white border border-zinc-200 rounded-lg flex items-center justify-center cursor-grab">
+                  <GripVertical class="w-4 h-4 text-zinc-400"/>
+                </div>
+                <span class="w-5 h-5 bg-zinc-900 text-white rounded-full flex items-center justify-center text-[10px] font-black">{{ idx + 1 }}</span>
+                <div>
+                  <span class="font-bold text-zinc-800">{{ pkg.name }}</span>
+                  <span class="text-zinc-400 ml-1.5">({{ pkg.qty_pcs }})</span>
+                </div>
               </div>
-              <div class="flex items-center gap-1.5">
+              <div class="flex items-center gap-1">
                 <span class="font-black text-zinc-900 mr-1">Rp {{ formatRibuan(pkg.price_sell) }}</span>
-                <button @click="openPackageModal(p, pkg)" title="Edit Paket" class="p-1 text-zinc-600 hover:bg-zinc-200 rounded-lg transition">
+                <button @click="openPackageModal(p, pkg)" class="p-1.5 bg-white border border-zinc-200 rounded-lg hover:bg-zinc-100">
                   <Pencil class="w-3.5 h-3.5"/>
                 </button>
-                <button @click="handleDeletePackage(pkg)" title="Hapus Paket" class="p-1 text-red-500 hover:bg-red-100 rounded-lg transition">
+                <button @click="handleDeletePackage(pkg)" class="p-1.5 bg-white border border-zinc-200 rounded-lg text-red-500 hover:bg-red-50">
                   <Trash2 class="w-3.5 h-3.5"/>
                 </button>
               </div>
             </div>
+            <div v-if="getPackagesForProduct(p.id).length === 0" class="text-[11px] text-zinc-400 text-center py-2">Belum ada paket, klik + Paket</div>
           </div>
 
-          <!-- JASA KHUSUS UNTUK PRODUK INI - SUPPORT MULTI -->
           <div v-if="getServicesForProduct(p).some(s => getServiceIds(s).length)" class="space-y-1.5 pt-2 border-t border-dashed border-zinc-200">
             <div class="text-[10px] font-black text-zinc-500 uppercase tracking-wider">Jasa Khusus Produk Ini (override kategori)</div>
             <div 
@@ -187,7 +205,6 @@
         </div>
 
         <form @submit.prevent="handleSaveService" class="space-y-3">
-          <!-- Toggle Custom -->
           <div class="flex items-center gap-2 p-3 bg-zinc-50 rounded-xl border border-zinc-100">
             <button type="button" @click="isCustomService = !isCustomService" :class="['w-10 h-6 rounded-full p-0.5 transition shrink-0', isCustomService ? 'bg-zinc-900' : 'bg-zinc-200']">
               <div :class="['w-4 h-4 bg-white rounded-full shadow transition-transform', isCustomService ? 'translate-x-4' : 'translate-x-0']"></div>
@@ -258,7 +275,7 @@
       </div>
     </div>
 
-    <!-- Modal Form Paket Eceran (Rokok / Permen) -->
+    <!-- Modal Form Paket Eceran -->
     <div v-if="showPackageModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl space-y-4">
         <div class="flex justify-between items-center">
@@ -305,7 +322,7 @@
       </div>
     </div>
 
-    <!-- Modal Picker Pilih Kategori (Urut A-Z) -->
+    <!-- Modal Picker Kategori -->
     <div v-if="showCategoryPickerModal" class="fixed inset-0 z-[100] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
       <div class="w-full max-w-sm bg-white rounded-[2rem] p-5 shadow-xl animate-in zoom-in-95 duration-200 max-h-[80vh] flex flex-col">
         <div class="flex justify-between items-center mb-3">
@@ -327,7 +344,7 @@
       </div>
     </div>
 
-    <!-- Modal Picker Pilih Produk (MULTI-SELECT) -->
+    <!-- Modal Picker Produk MULTI -->
     <div v-if="showProductPickerModal" class="fixed inset-0 z-[110] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
       <div class="w-full max-w-sm bg-white rounded-[2rem] p-5 shadow-xl max-h-[80vh] flex flex-col">
         <div class="flex justify-between items-center mb-3">
@@ -364,7 +381,7 @@
 
 <script setup>
 import { ref, computed, onMounted, onActivated } from 'vue'
-import { Plus, Pencil, Trash2, X, ChevronDown } from 'lucide-vue-next'
+import { Plus, Pencil, Trash2, X, ChevronDown, GripVertical } from 'lucide-vue-next'
 import { useSettingsMenu } from '../composables/useSettingsMenu.js'
 import { formatRibuan, formatRp, toNumber } from '../utils/formatters/currency.js'
 
@@ -382,6 +399,7 @@ const {
   getProductById,
   savePackage,
   deletePackage,
+  reorderPackages,
   saveService,
   deleteService
 } = useSettingsMenu()
@@ -403,6 +421,35 @@ const filteredRokokProducts = computed(() => {
     p => (p.category || 'UMUM').toUpperCase() === selectedPackageCat.value
   )
 })
+
+// DRAG & DROP STATE
+const draggedPkg = ref(null)
+const dragOverId = ref(null)
+
+const onDragStart = (pkg) => {
+  draggedPkg.value = pkg
+}
+const onDragOver = (pkg) => {
+  dragOverId.value = pkg.id
+}
+const onDragEnd = () => {
+  draggedPkg.value = null
+  dragOverId.value = null
+}
+const onDrop = async (productId, targetPkg) => {
+  if (!draggedPkg.value || draggedPkg.value.id === targetPkg.id) {
+    onDragEnd()
+    return
+  }
+  const list = getPackagesForProduct(productId)
+  const fromIdx = list.findIndex(p => p.id === draggedPkg.value.id)
+  const toIdx = list.findIndex(p => p.id === targetPkg.id)
+  const newList = [...list]
+  const [moved] = newList.splice(fromIdx, 1)
+  newList.splice(toIdx, 0, moved)
+  await reorderPackages(productId, newList.map(p => p.id))
+  onDragEnd()
+}
 
 // Modal State Jasa & Picker
 const showServiceModal = ref(false)
@@ -437,7 +484,6 @@ const toggleProduct = (id) => {
   if(idx > -1) list.splice(idx, 1)
   else list.push(id)
   serviceForm.value.productIds = list
-  // auto set kategori dari produk pertama
   if(list.length === 1){
     const p = getProductById(list[0])
     if(p && p.category) serviceForm.value.category = p.category
@@ -488,7 +534,6 @@ const handleSaveService = async () => {
     return
   }
   try {
-    console.log('SAVING SERVICE:', serviceForm.value)
     await saveService({
       id: editingServiceId.value,
       name: (serviceForm.value.name || '').toUpperCase().trim(),
@@ -498,7 +543,6 @@ const handleSaveService = async () => {
       productIds: isCustomService.value ? serviceForm.value.productIds : []
     })
     showServiceModal.value = false
-    console.log('SAVE OK')
   } catch (e) {
     console.error('GAGAL SAVE JASA:', e)
     alert('Gagal simpan: ' + (e.message || e))

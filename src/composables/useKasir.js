@@ -1,4 +1,4 @@
-// src/composables/useKasir.js - FIX JASA KHUSUS GA MUNCUL DI UMUM
+// src/composables/useKasir.js - FIX JASA KHUSUS + SORT PAKET BY ORDER
 import { ref, computed, onMounted, onUnmounted, onActivated, onDeactivated } from 'vue'
 import { kasirService } from '../services/kasirService.js'
 import { salesHistoryService } from '../services/salesHistoryService.js'
@@ -69,24 +69,24 @@ export function useKasir() {
   }
 
   const filteredServicesByCategory = computed(() => {
-  if (!selectedProductForOption.value) return []
-  const product = selectedProductForOption.value
+    if (!selectedProductForOption.value) return []
+    const product = selectedProductForOption.value
 
-  const custom = servicesList.value.filter(s => {
-    const ids = getServiceIds(s)
-    return ids.length > 0 && ids.includes(product.id)
+    const custom = servicesList.value.filter(s => {
+      const ids = getServiceIds(s)
+      return ids.length > 0 && ids.includes(product.id)
+    })
+
+    // Kalo ada khusus, CUMA khusus yang tampil, umum HILANG
+    if (custom.length > 0) return custom
+
+    // Kalo ga ada khusus, baru tampil umum (yang ids nya kosong beneran)
+    const pCat = (product.category || '').toLowerCase()
+    return servicesList.value.filter(s => {
+      const ids = getServiceIds(s)
+      return ids.length === 0 && (s.category || '').toLowerCase() === pCat
+    })
   })
-
-  // Kalo ada khusus, CUMA khusus yang tampil, umum HILANG
-  if (custom.length > 0) return custom
-
-  // Kalo ga ada khusus, baru tampil umum (yang ids nya kosong beneran)
-  const pCat = (product.category || '').toLowerCase()
-  return servicesList.value.filter(s => {
-    const ids = getServiceIds(s)
-    return ids.length === 0 && (s.category || '').toLowerCase() === pCat
-  })
-})
 
   const load = async () => {
     const [data, packages, services] = await Promise.all([
@@ -96,13 +96,16 @@ export function useKasir() {
     ])
     products.value = data.products
     members.value = data.members
-    packagesList.value = packages
+    // pastiin sort by order biar eceran bisa di atas
+    packagesList.value = [...packages].sort((a,b) => (a.order ?? 999) - (b.order ?? 999))
     servicesList.value = services
     if (!store.editingTransactionId) store.bayarNominal = 0
   }
 
   const getProductPackages = (productId) => {
-    return packagesList.value.filter(pkg => pkg.productId === productId)
+    return packagesList.value
+      .filter(pkg => pkg.productId === productId)
+      .sort((a,b) => (a.order ?? 999) - (b.order ?? 999))
   }
 
   const handleSelectProduct = (product) => {
