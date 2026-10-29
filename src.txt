@@ -46,6 +46,7 @@ import 'vue-sonner/style.css'
 import App from './App.vue'
 import { router } from './router/index.js'
 import { syncRealtime as syncService } from './services/syncService.js'
+import { initDeviceAuth } from './services/authService.js'
 
 // di main.js paling atas, di bawah import
 window.addEventListener('unhandledrejection', (e) => {
@@ -72,13 +73,16 @@ pinia.use(piniaPluginPersistedstate)
 app.use(pinia)
 app.use(router)
 
-app.mount('#app')
+// Jalankan autentikasi Firebase perangkat terlebih dahulu sebelum app di-mount
+initDeviceAuth().finally(() => {
+  app.mount('#app')
 
-try {
-  syncService.init()
-} catch (e) {
-  console.error('Sync gagal init, jalan offline dulu:', e)
-}
+  try {
+    syncService.init()
+  } catch (e) {
+    console.error('Sync gagal init, jalan offline dulu:', e)
+  }
+})
 
 ===== src/db/index.js =====
 // src/db/index.js
@@ -1375,13 +1379,18 @@ export const router = createRouter({
   ]
 })
 
-// ROUTE GUARD UNTUK SESI OPERATOR (Modul Vue Router 4 Tanpa Callback next)
-router.beforeEach((to) => {
-  const operatorStore = useOperatorStore()
-
+// ROUTE GUARD UNTUK SESI OPERATOR
+router.beforeEach(async (to) => {
   // Update judul halaman secara otomatis
   if (to.meta?.title) {
     document.title = `${to.meta.title} - Sinar Pagi POS`
+  }
+
+  const operatorStore = useOperatorStore()
+
+  // Pastikan data operator sempat dimuat dari local storage / Dexie jika belum terisi
+  if (operatorStore.operators.length === 0) {
+    await operatorStore.loadOperators().catch(() => {})
   }
 
   // Redirect jika belum login dan mencoba mengakses halaman privat
@@ -1394,11 +1403,12 @@ router.beforeEach((to) => {
     return '/kasir'
   }
 })
-===== src/services/firebase.js =====
 
+===== src/services/firebase.js =====
 import { initializeApp } from 'firebase/app'
 import { initializeFirestore } from 'firebase/firestore'
 import { getStorage } from 'firebase/storage'
+import { getAuth } from 'firebase/auth'
 
 const firebaseConfig = {
   apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
@@ -1418,6 +1428,7 @@ export const firestore = initializeFirestore(app, {
 })
 
 export const storage = getStorage(app)
+export const auth = getAuth(app)
 
 ===== src/services/syncService.js =====
 // src/services/syncService.js
@@ -1515,7 +1526,8 @@ export async function pullAllFromCloud() {
           console.warn(`[Sync] getDocs ${tableName} ke-abort, skip`)
           continue
         }
-        throw e
+        console.warn(`[Sync] Gagal pull ${tableName}:`, e?.message || e)
+        continue
       }
       if (snap.empty) continue
       const data = snap.docs.map(d => ({
@@ -1674,6 +1686,7 @@ export const syncRealtime = {
 
 export const syncService = syncRealtime
 export default syncRealtime
+
 ===== src/services/productService.js =====
 import { productRepo } from '../db/repositories/productRepository.js'
 
@@ -2244,8 +2257,7 @@ export const productsDigitalService = {
 }
 
 ===== src/services/backupService.js =====
-
-// src/services/backupService.js - VERSI FINAL HEMAT KUOTA
+// src/services/backupService.js
 import { db } from '../db/index.js'
 import dayjs from 'dayjs'
 import { firestore, storage } from './firebase.js'
@@ -2727,6 +2739,62 @@ export const salesHistoryService = {
         synced: 0
       })
     }
+  }
+}
+
+===== src/services/authService.js =====
+// src/services/authService.js
+import { auth } from './firebase.js'
+import { signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth'
+
+/**
+ * Autentikasi otomatis level perangkat (device auth)
+ * Memastikan aplikasi terhubung ke akun Firebase agar diizinkan oleh Rules Firestore
+ */
+export const initDeviceAuth = () => {
+  return new Promise((resolve) => {
+    onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        console.log('[AuthService] Perangkat terautentikasi Firebase:', user.email)
+        resolve(user)
+      } else {
+        const email = import.meta.env.VITE_FIREBASE_DEVICE_EMAIL
+        const password = import.meta.env.VITE_FIREBASE_DEVICE_PASSWORD
+
+        if (email && password) {
+          try {
+            const creds = await signInWithEmailAndPassword(auth, email, password)
+            console.log('[AuthService] Login perangkat Firebase berhasil:', creds.user.email)
+            resolve(creds.user)
+          } catch (err) {
+            console.warn('[AuthService] Gagal login perangkat Firebase (mungkin offline):', err.message)
+            resolve(null)
+          }
+        } else {
+          console.warn('[AuthService] VITE_FIREBASE_DEVICE_EMAIL atau VITE_FIREBASE_DEVICE_PASSWORD belum diatur di .env')
+          resolve(null)
+        }
+      }
+    })
+  })
+}
+
+/**
+ * Mendapatkan user Firebase yang sedang aktif
+ */
+export const getCurrentFirebaseUser = () => {
+  return auth.currentUser
+}
+
+/**
+ * Logout dari akun Firebase (jika diperlukan)
+ */
+export const logoutFirebaseDevice = async () => {
+  try {
+    await signOut(auth)
+    console.log('[AuthService] Perangkat berhasil logout dari Firebase')
+  } catch (err) {
+    console.error('[AuthService] Gagal logout Firebase:', err.message)
   }
 }
 

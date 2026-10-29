@@ -47,10 +47,10 @@
 
         <div class="flex items-center gap-3">
           <img 
-  src="/pwa-512x512.png" 
-  alt="Sinar Pagi Logo" 
-  class="w-9 h-9 rounded-xl object-cover shadow-xs"
-/>
+            src="/pwa-512x512.png" 
+            alt="Sinar Pagi Logo" 
+            class="w-9 h-9 rounded-xl object-cover shadow-xs"
+          />
 
           <div class="flex flex-col">
             <span class="font-black text-xs md:text-sm text-zinc-900 leading-tight">Sinar Pagi</span>
@@ -59,7 +59,7 @@
         </div>
       </div>
 
-      <!-- TENGAH (TABLET & DESKTOP): DASHBOARD + DROPDOWNS + PENGATURAN -->
+      <!-- TENGAH (TABLET & DESKTOP): DASHBOARD + DROPDOWNS -->
       <div class="hidden md:flex items-center gap-2 bg-zinc-200/50 p-1.5 rounded-full border border-zinc-200/80">
         
         <!-- TOMBOL DASHBOARD LANGSUNG (KIRI) -->
@@ -76,7 +76,7 @@
           <span>Dashboard</span>
         </router-link>
 
-        <!-- 3 KATEGORI DROPDOWN (TENGAH) -->
+        <!-- KATEGORI DROPDOWN (TRANSAKSI, KATALOG, KEUANGAN, SETTING) -->
         <button 
           v-for="cat in navCategories" 
           :key="cat.id"
@@ -97,20 +97,6 @@
             class="w-2 h-2 bg-amber-500 rounded-full"
           ></span>
         </button>
-
-        <!-- TOMBOL PENGATURAN LANGSUNG (PALING KANAN) -->
-        <router-link 
-          to="/settings"
-          :class="[
-            'px-4.5 py-2 rounded-full text-xs md:text-sm font-black flex items-center gap-2 transition-all duration-200 active:scale-95 select-none',
-            route.path === '/settings'
-              ? 'bg-zinc-900 text-white shadow-md'
-              : 'text-zinc-600 hover:text-zinc-900 hover:bg-white/50'
-          ]"
-        >
-          <Settings class="w-4 h-4" />
-          <span>Pengaturan</span>
-        </router-link>
       </div>
 
       <!-- FLOATING GLASSMORPHISM DOCK MACOS STYLE -->
@@ -240,7 +226,7 @@ const { isConnected, isConnecting, printerDevice, toggleConnection } = usePrinte
 const activePage = computed(() => route.meta.title || 'Barang')
 const isKasirPage = computed(() => route.path.startsWith('/kasir'))
 
-// STRUKTUR NAVIGASI UTAMA (3 KATEGORI DROPDOWN)
+// STRUKTUR NAVIGASI UTAMA
 const navCategories = ref([
   {
     id: 'transaksi',
@@ -261,7 +247,7 @@ const navCategories = ref([
       { name: 'Barang', icon: Package, to: '/products' },
       { name: 'Kategori', icon: Tags, to: '/categories' },
       { name: 'Menu & Seduh', icon: Coffee, to: '/settings-menu' },
-      { name: 'Member & Kasir', icon: Users, to: '/members' }
+      { name: 'Member', icon: Users, to: '/members' }
     ]
   },
   {
@@ -270,9 +256,18 @@ const navCategories = ref([
     icon: Wallet,
     items: [
       { name: 'Kas & Bank', icon: Wallet, to: '/finance' },
-      { name: 'QRIS Toko', icon: QrCode, to: '/settings/qris' },
       { name: 'Pengeluaran', icon: Receipt, to: '/expenses' },
       { name: 'Laporan', icon: BarChart3, to: '/reports' }
+    ]
+  },
+  {
+    id: 'setting',
+    title: 'Setting',
+    icon: Settings,
+    items: [
+      { name: 'Settings', icon: Settings, to: '/settings' },
+      { name: 'Operators', icon: Users, to: '/operators' },
+      { name: 'Settings QRIS', icon: QrCode, to: '/settings/qris' }
     ]
   }
 ])
@@ -300,14 +295,6 @@ const groups = computed(() => {
         to: item.to
       }))
     })
-  })
-
-  result.push({
-    title: 'PENGATURAN',
-    items: [
-      { name: 'QRIS Toko', icon: QrCode, to: '/settings/qris' },
-      { name: 'Pengaturan Toko', icon: Settings, to: '/settings' }
-    ]
   })
 
   return result
