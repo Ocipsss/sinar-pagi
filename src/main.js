@@ -7,6 +7,7 @@ import 'vue-sonner/style.css'
 import App from './App.vue'
 import { router } from './router/index.js'
 import { syncRealtime as syncService } from './services/syncService.js'
+import { initDeviceAuth } from './services/authService.js'
 
 // di main.js paling atas, di bawah import
 window.addEventListener('unhandledrejection', (e) => {
@@ -33,10 +34,13 @@ pinia.use(piniaPluginPersistedstate)
 app.use(pinia)
 app.use(router)
 
-app.mount('#app')
+// Jalankan autentikasi Firebase perangkat terlebih dahulu sebelum app di-mount
+initDeviceAuth().finally(() => {
+  app.mount('#app')
 
-try {
-  syncService.init()
-} catch (e) {
-  console.error('Sync gagal init, jalan offline dulu:', e)
-}
+  try {
+    syncService.init()
+  } catch (e) {
+    console.error('Sync gagal init, jalan offline dulu:', e)
+  }
+})

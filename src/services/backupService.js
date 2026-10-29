@@ -1,5 +1,4 @@
-
-// src/services/backupService.js - VERSI FINAL HEMAT KUOTA
+// src/services/backupService.js
 import { db } from '../db/index.js'
 import dayjs from 'dayjs'
 import { firestore, storage } from './firebase.js'

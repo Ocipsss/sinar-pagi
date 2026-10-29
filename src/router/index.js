@@ -118,13 +118,18 @@ export const router = createRouter({
   ]
 })
 
-// ROUTE GUARD UNTUK SESI OPERATOR (Modul Vue Router 4 Tanpa Callback next)
-router.beforeEach((to) => {
-  const operatorStore = useOperatorStore()
-
+// ROUTE GUARD UNTUK SESI OPERATOR
+router.beforeEach(async (to) => {
   // Update judul halaman secara otomatis
   if (to.meta?.title) {
     document.title = `${to.meta.title} - Sinar Pagi POS`
+  }
+
+  const operatorStore = useOperatorStore()
+
+  // Pastikan data operator sempat dimuat dari local storage / Dexie jika belum terisi
+  if (operatorStore.operators.length === 0) {
+    await operatorStore.loadOperators().catch(() => {})
   }
 
   // Redirect jika belum login dan mencoba mengakses halaman privat

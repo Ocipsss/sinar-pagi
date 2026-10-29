@@ -93,7 +93,8 @@ export async function pullAllFromCloud() {
           console.warn(`[Sync] getDocs ${tableName} ke-abort, skip`)
           continue
         }
-        throw e
+        console.warn(`[Sync] Gagal pull ${tableName}:`, e?.message || e)
+        continue
       }
       if (snap.empty) continue
       const data = snap.docs.map(d => ({
