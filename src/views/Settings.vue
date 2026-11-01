@@ -1,4 +1,3 @@
-
 <template>
 <div class="flex-1 overflow-auto p-4 pb-28 space-y-4">
   <!-- Header Title -->
@@ -58,9 +57,24 @@
         <UploadCloud class="w-4 h-4" />
         <span>{{ syncStatus.isSyncing ? 'Menyinkron...' : `Push (${syncStatus.unsyncedCount})` }}</span>
       </button>
-      <button type="button" @click="handlePull" :disabled="syncStatus.isSyncing" class="py-3 bg-white border border-zinc-200 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5">
+
+      <!-- Tombol Tarik Master + Badge Indikator Update -->
+      <button 
+        type="button" 
+        @click="handlePull" 
+        :disabled="syncStatus.isSyncing" 
+        class="relative py-3 bg-white border border-zinc-200 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5"
+      >
         <DownloadCloud class="w-4 h-4" />
         <span>Tarik Master</span>
+
+        <!-- Badge Angka Pembaruan (Hanya muncul jika ada update baru) -->
+        <span 
+          v-if="syncStatus.pendingPullCount > 0" 
+          class="absolute -top-2 -right-2 bg-amber-500 text-white font-black text-[10px] w-5 h-5 rounded-full flex items-center justify-center border-2 border-white shadow-xs animate-bounce"
+        >
+          {{ syncStatus.pendingPullCount }}
+        </span>
       </button>
     </div>
     <p class="text-[10px] text-zinc-400">Push = kirim yang berubah aja (irit). Tarik Master = buat pas abis clear cache HP.</p>
@@ -122,20 +136,29 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { Store, Cloud, Printer, Database, Download, Upload, UploadCloud, DownloadCloud, HardDrive, Trash2, Type } from 'lucide-vue-next'
 import { useSettings } from '../composables/useSettings.js'
-import { syncStatus, syncRealtime, pullAllFromCloud, pullDeltaFromCloud } from '../services/syncService.js'
+import { 
+  syncStatus, 
+  syncRealtime, 
+  pullAllFromCloud, 
+  pullDeltaFromCloud, 
+  checkForCloudUpdates 
+} from '../services/syncService.js'
 
 const { form, loading, loadSettings, saveSettings, exportBackup, importBackup, resetTransactionsData, convertDataToUppercase } = useSettings()
 const isOnline = ref(navigator.onLine)
 const updateOnlineState = () => { isOnline.value = navigator.onLine }
 const handleToggleSync = (e) => { syncRealtime.toggleAutoSync(e.target.checked) }
 const handlePush = async () => { await syncRealtime.pushLocalToCloud() }
-const handlePull = async () => { await pullDeltaFromCloud() }
+const handlePull = async () => { 
+  await pullDeltaFromCloud() 
+}
 const handlePullAll = async () => { await pullAllFromCloud() }
 
 onMounted(() => {
   loadSettings()
   window.addEventListener('online', updateOnlineState)
   window.addEventListener('offline', updateOnlineState)
+  checkForCloudUpdates()
 })
 onUnmounted(() => {
   window.removeEventListener('online', updateOnlineState)

@@ -1,13 +1,13 @@
-// src/services/syncService.js - 255 BARIS FIX ABORTERROR + AUTO RELOAD
+// src/services/syncService.js
 import { reactive } from 'vue'
 import { db } from '../db'
 import { firestore } from './firebase'
-import { collection, doc, writeBatch, getDocs, query, where, setDoc } from 'firebase/firestore'
+import { collection, doc, writeBatch, getDocs, getDoc, query, where, setDoc } from 'firebase/firestore'
 import dayjs from 'dayjs'
 import Big from 'big.js'
 import { cloudinaryService } from './cloudinaryService.js'
 
-// SILENT AbortError biar gak spam di dev (Vite HMR)
+// SILENT AbortError agar tidak spam di console saat Vite HMR
 if (typeof window !== 'undefined') {
   window.addEventListener('unhandledrejection', (e) => {
     if (e.reason?.name === 'AbortError' || e.reason?.message?.includes('aborted')) e.preventDefault()
@@ -18,34 +18,27 @@ const TABLES_TO_SYNC = [
   'products',
   'product_packages',
   'categories',
-  // 'members', // OFF - rules false
   'services',
   'units',
   'operators',
-  // 'cash_accounts', // OFF - rules false
   'settings'
 ]
 
-const TRANSACTION_TABLES = [
-  // 'transactions', // OFF - backup Storage aja
-  // 'transaction_items',
-  // 'expenses',
-  // 'digital_transactions',
-  // 'debt_payments',
-  // 'shopping_list',
-  // 'cash_mutations'
-]
+const TRANSACTION_TABLES = []
 
 let isSyncing = false
 let intervalId = null
 let isPullingFromCloud = false
 
-export function getIsPullingFromCloud() { return isPullingFromCloud }
+export function getIsPullingFromCloud() { 
+  return isPullingFromCloud 
+}
 
 export const syncStatus = reactive({
   isOnline: navigator.onLine,
   isSyncing: false,
   unsyncedCount: 0,
+  pendingPullCount: 0, // Indikator pembaruan data dari Cloud
   lastSyncedAt: null,
   isAutoSyncEnabled: false
 })
@@ -57,10 +50,10 @@ async function updateUnsyncedCount() {
     for (const t of [...TABLES_TO_SYNC, ...TRANSACTION_TABLES]) {
       try {
         if (!db[t]) continue
-        const c = await db[t].where('synced').equals(0).count().catch(()=>0)
-        total += c
-        await new Promise(r=>setTimeout(r, 20))
-      } catch(e) {
+        const count = await db[t].where('synced').equals(0).count().catch(() => 0)
+        total += count
+        await new Promise(r => setTimeout(r, 20))
+      } catch (e) {
         if (e.name !== 'AbortError') console.warn('[Sync] count', t, e)
       }
     }
@@ -80,6 +73,26 @@ async function bumpCatalogVersion() {
     console.log('[Sync] meta/catalog version bumped')
   } catch (e) {
     console.warn('[Sync] Gagal bump catalog version', e)
+  }
+}
+
+// Pengecekan ringan (HANYA 1 Read ke meta/catalog) untuk mendeteksi update dari Cloud
+export async function checkForCloudUpdates() {
+  if (!navigator.onLine || !firestore) return
+  try {
+    const catalogSnap = await getDoc(doc(firestore, 'meta', 'catalog'))
+    if (!catalogSnap.exists()) return
+
+    const cloudMeta = catalogSnap.data()
+    const lastPull = localStorage.getItem('lastPullAt')
+
+    if (!lastPull || new Date(cloudMeta.updatedAt) > new Date(lastPull)) {
+      syncStatus.pendingPullCount = cloudMeta.pendingCount || 1
+    } else {
+      syncStatus.pendingPullCount = 0
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError') console.warn('[Sync] Check update fail:', e)
   }
 }
 
@@ -120,8 +133,10 @@ export async function pullAllFromCloud() {
     }
     localStorage.setItem('lastPullAt', new Date().toISOString())
     syncStatus.lastSyncedAt = dayjs().format('HH:mm')
+    syncStatus.pendingPullCount = 0 // Reset setelah pull full
     await updateUnsyncedCount()
-    // AUTO RELOAD sekali biar operator langsung muncul tanpa refresh manual
+    
+    // Auto reload sekali saat first pull agar state Pinia & UI langsung terbarui
     if (wasEmpty) {
       console.log('[Sync] First pull selesai, reload biar store ke-load')
       setTimeout(() => window.location.reload(), 600)
@@ -144,20 +159,21 @@ export async function pullDeltaFromCloud() {
         let snap
         try {
           snap = await getDocs(q)
-        } catch(e) {
+        } catch (e) {
           if (e.name === 'AbortError') continue
           throw e
         }
         if (snap.empty) continue
-        const dirtyIds = await db[tableName].where('synced').equals(0).primaryKeys().catch(()=>[])
-        const incoming = snap.docs.map(d=>({...d.data(), id: d.id, synced: 1})).filter(i=>!dirtyIds.includes(i.id))
+        const dirtyIds = await db[tableName].where('synced').equals(0).primaryKeys().catch(() => [])
+        const incoming = snap.docs.map(d => ({ ...d.data(), id: d.id, synced: 1 })).filter(i => !dirtyIds.includes(i.id))
         if (incoming.length) await db[tableName].bulkPut(incoming)
-        await new Promise(r=>setTimeout(r, 50))
-      } catch(e) {
+        await new Promise(r => setTimeout(r, 50))
+      } catch (e) {
         if (e.name !== 'AbortError') console.warn('[Sync] delta', tableName, e)
       }
     }
     localStorage.setItem('lastPullAt', new Date().toISOString())
+    syncStatus.pendingPullCount = 0 // Reset setelah pull delta selesai
   } finally {
     isPullingFromCloud = false
   }
@@ -238,11 +254,14 @@ export const syncRealtime = {
       window.addEventListener('online', updateOnlineStatus)
       window.addEventListener('offline', updateOnlineStatus)
       this.stopRealtime()
-      const prodCount = await db.products.where('deleted').notEqual(true).count().catch(()=>db.products.count().catch(()=>0))
+      const prodCount = await db.products.where('deleted').notEqual(true).count().catch(() => db.products.count().catch(() => 0))
       if (prodCount === 0 && navigator.onLine) {
         await pullAllFromCloud()
       } else {
-        if (navigator.onLine) pullDeltaFromCloud()
+        if (navigator.onLine) {
+          pullDeltaFromCloud()
+          checkForCloudUpdates()
+        }
         await updateUnsyncedCount()
       }
     } catch (e) {

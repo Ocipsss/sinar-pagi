@@ -5,7 +5,7 @@ export const serviceRepository = {
   async getAll() {
     try {
       const all = await db.services.toArray()
-      return all.filter(s => !s.deleted && s.deleted !== 1)
+      return all.filter(s => !s.deleted)
     } catch (e) {
       console.error('getAll services error', e)
       return []
@@ -13,7 +13,8 @@ export const serviceRepository = {
   },
 
   async getById(id) {
-    return await db.services.get(id)
+    const item = await db.services.get(id)
+    return item && !item.deleted ? item : null
   },
 
   async saveService(data) {
@@ -31,10 +32,10 @@ export const serviceRepository = {
       price: Number(data.price) || 0,
       category: (data.category || 'UMUM').toUpperCase().trim(),
       productId: data.productId || null,
-      productIds: plainIds, // ini yang bikin DataCloneError kalo ga di-plain
+      productIds: plainIds,
       updatedAt: now,
       synced: 0,
-      deleted: 0
+      deleted: false
     }
 
     await db.services.put(payload)
@@ -43,7 +44,7 @@ export const serviceRepository = {
 
   async deleteService(id) {
     await db.services.update(id, {
-      deleted: 1,
+      deleted: true,
       updatedAt: new Date().toISOString(),
       synced: 0
     })

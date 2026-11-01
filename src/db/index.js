@@ -22,4 +22,16 @@ db.version(1).stores({
   settings: 'id, updatedAt, synced'
 })
 
+// Migrasi lokal otomatis sekali jalan saat DB siap
+db.on('ready', async () => {
+  try {
+    await db.services.toCollection().modify(service => {
+      if (service.deleted === 0) service.deleted = false
+      if (service.deleted === 1) service.deleted = true
+    })
+  } catch (e) {
+    console.warn('[DB Migration] Gagal konversi deleted service ke Boolean:', e)
+  }
+})
+
 export default db
