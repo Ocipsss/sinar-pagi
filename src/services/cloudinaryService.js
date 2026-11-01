@@ -1,12 +1,15 @@
-
 // src/services/cloudinaryService.js - FINAL OFFLINE-FIRST
 import { db } from '../db'
 
-const CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || 'vezqidog'
-const UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_PRESET || 'sinarpagi-products'
+const CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME
+const UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_PRESET
 
 export const cloudinaryService = {
   async uploadPendingImages() {
+    if (!CLOUD_NAME || !UPLOAD_PRESET) {
+      console.warn('[Cloudinary] CLOUD_NAME atau PRESET belum diatur di .env, skip upload')
+      return { uploaded: 0 }
+    }
     if (!navigator.onLine) {
       console.log('[Cloudinary] Offline, skip upload')
       return { uploaded: 0 }

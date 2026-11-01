@@ -1,4 +1,3 @@
-
 <template>
   <router-view />
   <Toaster position="top-center" richColors />
@@ -20,12 +19,12 @@ function handleBackButton() {
   } else {
     lastBackPressTime = currentTime
     toast.info('Tekan sekali lagi untuk keluar')
-    history.pushState(null, null, location.href)
+    history.pushState({ ...history.state }, '', location.href)
   }
 }
 
 onMounted(() => {
-  history.pushState(null, null, location.href)
+  history.pushState({ ...history.state }, '', location.href)
   window.addEventListener('popstate', handleBackButton)
   // initAutoBackup() -> DIMATIKAN, ini yang bikin boros kuota
 })

@@ -1,4 +1,4 @@
-// src/services/syncService.js
+// src/services/syncService.js - 255 BARIS FIX ABORTERROR + AUTO RELOAD
 import { reactive } from 'vue'
 import { db } from '../db'
 import { firestore } from './firebase'
@@ -7,26 +7,33 @@ import dayjs from 'dayjs'
 import Big from 'big.js'
 import { cloudinaryService } from './cloudinaryService.js'
 
+// SILENT AbortError biar gak spam di dev (Vite HMR)
+if (typeof window !== 'undefined') {
+  window.addEventListener('unhandledrejection', (e) => {
+    if (e.reason?.name === 'AbortError' || e.reason?.message?.includes('aborted')) e.preventDefault()
+  })
+}
+
 const TABLES_TO_SYNC = [
   'products',
   'product_packages',
   'categories',
-  'members',
+  // 'members', // OFF - rules false
   'services',
   'units',
   'operators',
-  'cash_accounts',
+  // 'cash_accounts', // OFF - rules false
   'settings'
 ]
 
 const TRANSACTION_TABLES = [
-  'transactions',
-  'transaction_items',
-  'expenses',
-  'digital_transactions',
-  'debt_payments',
-  'shopping_list',
-  'cash_mutations'
+  // 'transactions', // OFF - backup Storage aja
+  // 'transaction_items',
+  // 'expenses',
+  // 'digital_transactions',
+  // 'debt_payments',
+  // 'shopping_list',
+  // 'cash_mutations'
 ]
 
 let isSyncing = false
@@ -63,7 +70,6 @@ async function updateUnsyncedCount() {
   }
 }
 
-// TAMBAHAN EKSTRIM - BUMP VERSION BIAR WEB HEMAT 1 READ
 async function bumpCatalogVersion() {
   if (!navigator.onLine || !firestore) return
   try {
@@ -71,7 +77,7 @@ async function bumpCatalogVersion() {
       version: Date.now(),
       updatedAt: new Date().toISOString()
     }, { merge: true })
-    console.log('[Sync] meta/catalog version bumped - web bakal sync full next')
+    console.log('[Sync] meta/catalog version bumped')
   } catch (e) {
     console.warn('[Sync] Gagal bump catalog version', e)
   }
@@ -81,18 +87,17 @@ export async function pullAllFromCloud() {
   if (!navigator.onLine || isPullingFromCloud || !db || !firestore) return
   isPullingFromCloud = true
   syncStatus.isSyncing = true
+  let wasEmpty = false
   try {
     console.log('[Sync] DB kosong terdeteksi, narik master dari cloud...')
+    wasEmpty = true
     for (const tableName of TABLES_TO_SYNC) {
       if (!db[tableName]) continue
       let snap
       try {
         snap = await getDocs(collection(firestore, tableName))
       } catch (e) {
-        if (e.name === 'AbortError' || e.message?.includes('aborted')) {
-          console.warn(`[Sync] getDocs ${tableName} ke-abort, skip`)
-          continue
-        }
+        if (e.name === 'AbortError' || e.message?.includes('aborted')) continue
         console.warn(`[Sync] Gagal pull ${tableName}:`, e?.message || e)
         continue
       }
@@ -101,16 +106,13 @@ export async function pullAllFromCloud() {
         ...d.data(),
         id: d.id,
         synced: 1
-      }))
+      })).filter(item => !item.deleted)
       if (data.length) {
         try {
           await db[tableName].bulkPut(data)
           console.log(`[Pull] ${tableName}: ${data.length}`)
         } catch (e) {
-          if (e.name === 'AbortError') {
-            console.warn(`[Sync] bulkPut ${tableName} ke-abort`)
-            continue
-          }
+          if (e.name === 'AbortError') continue
           throw e
         }
       }
@@ -119,6 +121,11 @@ export async function pullAllFromCloud() {
     localStorage.setItem('lastPullAt', new Date().toISOString())
     syncStatus.lastSyncedAt = dayjs().format('HH:mm')
     await updateUnsyncedCount()
+    // AUTO RELOAD sekali biar operator langsung muncul tanpa refresh manual
+    if (wasEmpty) {
+      console.log('[Sync] First pull selesai, reload biar store ke-load')
+      setTimeout(() => window.location.reload(), 600)
+    }
   } finally {
     isPullingFromCloud = false
     syncStatus.isSyncing = false
@@ -190,19 +197,15 @@ export const syncRealtime = {
       try {
         await cloudinaryService.uploadPendingImages()
       } catch (imgErr) {
-        console.warn('[Sync] Gagal upload pending images ke Cloudinary:', imgErr?.message)
+        console.warn('[Sync] Gagal upload pending images:', imgErr?.message)
       }
-
       for (const tableName of [...TABLES_TO_SYNC, ...TRANSACTION_TABLES]) {
         if (!db[tableName]) continue
         const unsynced = await db[tableName].where('synced').equals(0).toArray()
         if (!unsynced.length) continue
-
-        // TANDAI KALO ADA PRODUK / PAKET / JASA YANG KE-PUSH
         if (['products', 'product_packages', 'services'].includes(tableName)) {
           shouldBumpCatalog = true
         }
-
         for (let i = 0; i < unsynced.length; i += 400) {
           const batch = writeBatch(firestore)
           const chunk = unsynced.slice(i, i + 400)
@@ -214,12 +217,9 @@ export const syncRealtime = {
           await db[tableName].bulkUpdate(chunk.map(c => ({ key: c.id, changes: { synced: 1 } })))
         }
       }
-
-      // TAMBAHAN EKSTRIM - ABIS PUSH KATALOG, BUMP VERSI BIAR WEB TAU
       if (shouldBumpCatalog) {
         await bumpCatalogVersion()
       }
-
       syncStatus.lastSyncedAt = dayjs().format('HH:mm')
     } catch (e) {
       console.warn('[Sync] Push manual gagal:', e?.message)

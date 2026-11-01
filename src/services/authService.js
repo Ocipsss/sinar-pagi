@@ -1,6 +1,6 @@
 // src/services/authService.js
 import { auth } from './firebase.js'
-import { signInWithEmailAndPassword, onAuthStateChanged, signOut } from 'firebase/auth'
+import { signInAnonymously, onAuthStateChanged, signOut } from 'firebase/auth'
 
 /**
  * Autentikasi otomatis level perangkat (device auth)
@@ -10,25 +10,25 @@ export const initDeviceAuth = () => {
   return new Promise((resolve) => {
     onAuthStateChanged(auth, async (user) => {
       if (user) {
-        console.log('[AuthService] Perangkat terautentikasi Firebase:', user.email)
+        console.log('[AuthService] Perangkat terautentikasi Firebase:', user.email || user.uid)
         resolve(user)
       } else {
-        const email = import.meta.env.VITE_FIREBASE_DEVICE_EMAIL
-        const password = import.meta.env.VITE_FIREBASE_DEVICE_PASSWORD
+        // FIX: hapus baca VITE_FIREBASE_DEVICE_EMAIL/PASSWORD dari bundle - hemat & aman
+        // const email = import.meta.env.VITE_FIREBASE_DEVICE_EMAIL - REMOVED FOR SECURITY
 
-        if (email && password) {
+        // if (email && password) { - REMOVED FOR SECURITY, ganti anonymous auth
           try {
-            const creds = await signInWithEmailAndPassword(auth, email, password)
-            console.log('[AuthService] Login perangkat Firebase berhasil:', creds.user.email)
+            const creds = await signInAnonymously(auth)
+            console.log('[AuthService] Login perangkat Firebase berhasil:', creds.user.uid)
             resolve(creds.user)
           } catch (err) {
             console.warn('[AuthService] Gagal login perangkat Firebase (mungkin offline):', err.message)
             resolve(null)
           }
-        } else {
-          console.warn('[AuthService] VITE_FIREBASE_DEVICE_EMAIL atau VITE_FIREBASE_DEVICE_PASSWORD belum diatur di .env')
-          resolve(null)
-        }
+        // } else { - REMOVED
+        //   console.warn('[AuthService] VITE_FIREBASE_DEVICE_EMAIL atau VITE_FIREBASE_DEVICE_PASSWORD belum diatur di .env')
+        //   resolve(null)
+        // }
       }
     })
   })

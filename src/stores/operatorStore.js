@@ -1,6 +1,21 @@
 import { defineStore } from 'pinia'
 import { operatorRepo } from '../db/repositories/operatorRepository.js'
 
+async function hashPin(pin) {
+  if (!pin) return ''
+  const str = String(pin)
+  if (/^[a-f0-9]{64}$/i.test(str)) return str.toLowerCase()
+  try {
+    const encoder = new TextEncoder()
+    const data = encoder.encode(str)
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data)
+    const hashArray = Array.from(new Uint8Array(hashBuffer))
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
+  } catch {
+    return str
+  }
+}
+
 export const useOperatorStore = defineStore('operator', {
   state: () => ({
     activeOperator: null,
@@ -30,8 +45,13 @@ export const useOperatorStore = defineStore('operator', {
         throw new Error('Operator tidak ditemukan.')
       }
 
-      if (target.pin && target.pin !== pinInput) {
-        throw new Error('PIN yang Anda masukkan salah.')
+      if (target.pin) {
+        const hashedInput = await hashPin(pinInput)
+        const targetIsHashed = /^[a-f0-9]{64}$/i.test(target.pin)
+        const isValid = targetIsHashed ? target.pin.toLowerCase() === hashedInput : target.pin === pinInput
+        if (!isValid) {
+          throw new Error('PIN yang Anda masukkan salah.')
+        }
       }
 
       this.activeOperator = {

@@ -2,6 +2,23 @@
 import { db } from '../index.js'
 import dayjs from 'dayjs'
 
+async function hashPin(pin) {
+  if (!pin) return ''
+  const str = String(pin)
+  // kalo udah 64 char hex (udah ke-hash) jangan di-hash lagi biar gak double
+  if (/^[a-f0-9]{64}$/i.test(str)) return str.toLowerCase()
+  try {
+    const encoder = new TextEncoder()
+    const data = encoder.encode(str)
+    const hashBuffer = await crypto.subtle.digest('SHA-256', data)
+    const hashArray = Array.from(new Uint8Array(hashBuffer))
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
+  } catch {
+    // fallback kalo crypto.subtle gak ada di webview jadul, jangan crash
+    return str
+  }
+}
+
 export const operatorRepo = {
   getAll: async () => {
     const table = db.operators || db.table('operators')
@@ -19,11 +36,12 @@ export const operatorRepo = {
   create: async (data) => {
     const id = crypto.randomUUID()
     const now = dayjs().toISOString()
+    const hashedPin = data.pin ? await hashPin(data.pin) : ''
     const item = { 
       id, 
       name: data.name,
       role: data.role || 'Kasir',
-      pin: data.pin || '',
+      pin: hashedPin,
       deleted: false,
       updatedAt: now, 
       synced: 0 
@@ -36,7 +54,11 @@ export const operatorRepo = {
   update: async (id, data) => {
     const now = dayjs().toISOString()
     const table = db.operators || db.table('operators')
-    await table.update(id, { ...data, updatedAt: now, synced: 0 })
+    const payload = { ...data }
+    if (payload.pin) {
+      payload.pin = await hashPin(payload.pin)
+    }
+    await table.update(id, { ...payload, updatedAt: now, synced: 0 })
   },
 
   delete: async (id) => {
