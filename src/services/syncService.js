@@ -68,7 +68,8 @@ async function bumpCatalogVersion() {
   try {
     await setDoc(doc(firestore, 'meta', 'catalog'), {
       version: Date.now(),
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      pendingCount: 1 // Penanda eksplisit ada update dari perangkat pengirim
     }, { merge: true })
     console.log('[Sync] meta/catalog version bumped')
   } catch (e) {
@@ -76,7 +77,7 @@ async function bumpCatalogVersion() {
   }
 }
 
-// Pengecekan ringan (HANYA 1 Read ke meta/catalog) untuk mendeteksi update dari Cloud
+// Pengecekan presisi (HANYA 1 Read ke meta/catalog) untuk mendeteksi update dari Cloud
 export async function checkForCloudUpdates() {
   if (!navigator.onLine || !firestore) return
   try {
@@ -86,7 +87,13 @@ export async function checkForCloudUpdates() {
     const cloudMeta = catalogSnap.data()
     const lastPull = localStorage.getItem('lastPullAt')
 
-    if (!lastPull || new Date(cloudMeta.updatedAt) > new Date(lastPull)) {
+    if (!cloudMeta.updatedAt) return
+
+    const cloudTime = new Date(cloudMeta.updatedAt).getTime()
+    const localTime = lastPull ? new Date(lastPull).getTime() : 0
+
+    // Jika waktu update Cloud lebih baru dibanding lastPullAt lokal di perangkat ini
+    if (cloudTime > localTime) {
       syncStatus.pendingPullCount = cloudMeta.pendingCount || 1
     } else {
       syncStatus.pendingPullCount = 0
