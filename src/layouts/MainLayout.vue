@@ -47,9 +47,9 @@
 
         <div class="flex items-center gap-3">
           <img 
-            src="/pwa-512x512.png" 
+            src="/sinar-pagi-icon-color.svg" 
             alt="Sinar Pagi Logo" 
-            class="w-9 h-9 rounded-xl object-cover shadow-xs"
+            class="w-9 h-9 object-contain"
           />
 
           <div class="flex flex-col">

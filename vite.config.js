@@ -10,7 +10,11 @@ export default defineConfig({
     tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
-      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
+      includeAssets: [
+        'sinar-pagi-icon-color.svg', 
+        'sinar-pagi-icon-color-2048.png', 
+        'sinar-pagi-color-2048.png'
+      ],
       manifest: {
         name: 'Sinar Pagi - POS & Kasir Offline',
         short_name: 'Sinar Pagi',
@@ -22,17 +26,17 @@ export default defineConfig({
         start_url: '/',
         icons: [
           {
-            src: 'pwa-192x192.png',
+            src: '/sinar-pagi-icon-color-2048.png',
             sizes: '192x192',
             type: 'image/png'
           },
           {
-            src: 'pwa-512x512.png',
+            src: '/sinar-pagi-icon-color-2048.png',
             sizes: '512x512',
             type: 'image/png'
           },
           {
-            src: 'pwa-512x512.png',
+            src: '/sinar-pagi-icon-color-2048.png',
             sizes: '512x512',
             type: 'image/png',
             purpose: 'any maskable'
