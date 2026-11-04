@@ -107,7 +107,20 @@ db.version(1).stores({
   settings: 'id, updatedAt, synced'
 })
 
+// Migrasi lokal otomatis sekali jalan saat DB siap
+db.on('ready', async () => {
+  try {
+    await db.services.toCollection().modify(service => {
+      if (service.deleted === 0) service.deleted = false
+      if (service.deleted === 1) service.deleted = true
+    })
+  } catch (e) {
+    console.warn('[DB Migration] Gagal konversi deleted service ke Boolean:', e)
+  }
+})
+
 export default db
+
 ===== src/db/repositories/productRepository.js =====
 
 // src/db/repositories/productRepository.js - FINAL v3 SOFT DELETE + CLOUDINARY OFFLINE-FIRST
@@ -482,7 +495,7 @@ export const serviceRepository = {
   async getAll() {
     try {
       const all = await db.services.toArray()
-      return all.filter(s => !s.deleted && s.deleted !== 1)
+      return all.filter(s => !s.deleted)
     } catch (e) {
       console.error('getAll services error', e)
       return []
@@ -490,7 +503,8 @@ export const serviceRepository = {
   },
 
   async getById(id) {
-    return await db.services.get(id)
+    const item = await db.services.get(id)
+    return item && !item.deleted ? item : null
   },
 
   async saveService(data) {
@@ -508,10 +522,10 @@ export const serviceRepository = {
       price: Number(data.price) || 0,
       category: (data.category || 'UMUM').toUpperCase().trim(),
       productId: data.productId || null,
-      productIds: plainIds, // ini yang bikin DataCloneError kalo ga di-plain
+      productIds: plainIds,
       updatedAt: now,
       synced: 0,
-      deleted: 0
+      deleted: false
     }
 
     await db.services.put(payload)
@@ -520,12 +534,13 @@ export const serviceRepository = {
 
   async deleteService(id) {
     await db.services.update(id, {
-      deleted: 1,
+      deleted: true,
       updatedAt: new Date().toISOString(),
       synced: 0
     })
   }
 }
+
 ===== src/db/repositories/shoppingRepository.js =====
 import { db } from '../index.js'
 import dayjs from 'dayjs'
@@ -967,9 +982,9 @@ export const expenseRepository = {
 
         <div class="flex items-center gap-3">
           <img 
-            src="/pwa-512x512.png" 
+            src="/sinar-pagi-icon-color.svg" 
             alt="Sinar Pagi Logo" 
-            class="w-9 h-9 rounded-xl object-cover shadow-xs"
+            class="w-9 h-9 object-contain"
           />
 
           <div class="flex flex-col">
@@ -1439,16 +1454,16 @@ export const storage = getStorage(app)
 export const auth = getAuth(app)
 
 ===== src/services/syncService.js =====
-// src/services/syncService.js - 255 BARIS FIX ABORTERROR + AUTO RELOAD
+// src/services/syncService.js
 import { reactive } from 'vue'
 import { db } from '../db'
 import { firestore } from './firebase'
-import { collection, doc, writeBatch, getDocs, query, where, setDoc } from 'firebase/firestore'
+import { collection, doc, writeBatch, getDocs, getDoc, query, where, setDoc } from 'firebase/firestore'
 import dayjs from 'dayjs'
 import Big from 'big.js'
 import { cloudinaryService } from './cloudinaryService.js'
 
-// SILENT AbortError biar gak spam di dev (Vite HMR)
+// SILENT AbortError agar tidak spam di console saat Vite HMR
 if (typeof window !== 'undefined') {
   window.addEventListener('unhandledrejection', (e) => {
     if (e.reason?.name === 'AbortError' || e.reason?.message?.includes('aborted')) e.preventDefault()
@@ -1459,34 +1474,27 @@ const TABLES_TO_SYNC = [
   'products',
   'product_packages',
   'categories',
-  // 'members', // OFF - rules false
   'services',
   'units',
   'operators',
-  // 'cash_accounts', // OFF - rules false
   'settings'
 ]
 
-const TRANSACTION_TABLES = [
-  // 'transactions', // OFF - backup Storage aja
-  // 'transaction_items',
-  // 'expenses',
-  // 'digital_transactions',
-  // 'debt_payments',
-  // 'shopping_list',
-  // 'cash_mutations'
-]
+const TRANSACTION_TABLES = []
 
 let isSyncing = false
 let intervalId = null
 let isPullingFromCloud = false
 
-export function getIsPullingFromCloud() { return isPullingFromCloud }
+export function getIsPullingFromCloud() { 
+  return isPullingFromCloud 
+}
 
 export const syncStatus = reactive({
   isOnline: navigator.onLine,
   isSyncing: false,
   unsyncedCount: 0,
+  pendingPullCount: 0, // Indikator pembaruan data dari Cloud
   lastSyncedAt: null,
   isAutoSyncEnabled: false
 })
@@ -1498,10 +1506,10 @@ async function updateUnsyncedCount() {
     for (const t of [...TABLES_TO_SYNC, ...TRANSACTION_TABLES]) {
       try {
         if (!db[t]) continue
-        const c = await db[t].where('synced').equals(0).count().catch(()=>0)
-        total += c
-        await new Promise(r=>setTimeout(r, 20))
-      } catch(e) {
+        const count = await db[t].where('synced').equals(0).count().catch(() => 0)
+        total += count
+        await new Promise(r => setTimeout(r, 20))
+      } catch (e) {
         if (e.name !== 'AbortError') console.warn('[Sync] count', t, e)
       }
     }
@@ -1516,11 +1524,38 @@ async function bumpCatalogVersion() {
   try {
     await setDoc(doc(firestore, 'meta', 'catalog'), {
       version: Date.now(),
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      pendingCount: 1 // Penanda eksplisit ada update dari perangkat pengirim
     }, { merge: true })
     console.log('[Sync] meta/catalog version bumped')
   } catch (e) {
     console.warn('[Sync] Gagal bump catalog version', e)
+  }
+}
+
+// Pengecekan presisi (HANYA 1 Read ke meta/catalog) untuk mendeteksi update dari Cloud
+export async function checkForCloudUpdates() {
+  if (!navigator.onLine || !firestore) return
+  try {
+    const catalogSnap = await getDoc(doc(firestore, 'meta', 'catalog'))
+    if (!catalogSnap.exists()) return
+
+    const cloudMeta = catalogSnap.data()
+    const lastPull = localStorage.getItem('lastPullAt')
+
+    if (!cloudMeta.updatedAt) return
+
+    const cloudTime = new Date(cloudMeta.updatedAt).getTime()
+    const localTime = lastPull ? new Date(lastPull).getTime() : 0
+
+    // Jika waktu update Cloud lebih baru dibanding lastPullAt lokal di perangkat ini
+    if (cloudTime > localTime) {
+      syncStatus.pendingPullCount = cloudMeta.pendingCount || 1
+    } else {
+      syncStatus.pendingPullCount = 0
+    }
+  } catch (e) {
+    if (e.name !== 'AbortError') console.warn('[Sync] Check update fail:', e)
   }
 }
 
@@ -1561,8 +1596,10 @@ export async function pullAllFromCloud() {
     }
     localStorage.setItem('lastPullAt', new Date().toISOString())
     syncStatus.lastSyncedAt = dayjs().format('HH:mm')
+    syncStatus.pendingPullCount = 0 // Reset setelah pull full
     await updateUnsyncedCount()
-    // AUTO RELOAD sekali biar operator langsung muncul tanpa refresh manual
+    
+    // Auto reload sekali saat first pull agar state Pinia & UI langsung terbarui
     if (wasEmpty) {
       console.log('[Sync] First pull selesai, reload biar store ke-load')
       setTimeout(() => window.location.reload(), 600)
@@ -1585,20 +1622,21 @@ export async function pullDeltaFromCloud() {
         let snap
         try {
           snap = await getDocs(q)
-        } catch(e) {
+        } catch (e) {
           if (e.name === 'AbortError') continue
           throw e
         }
         if (snap.empty) continue
-        const dirtyIds = await db[tableName].where('synced').equals(0).primaryKeys().catch(()=>[])
-        const incoming = snap.docs.map(d=>({...d.data(), id: d.id, synced: 1})).filter(i=>!dirtyIds.includes(i.id))
+        const dirtyIds = await db[tableName].where('synced').equals(0).primaryKeys().catch(() => [])
+        const incoming = snap.docs.map(d => ({ ...d.data(), id: d.id, synced: 1 })).filter(i => !dirtyIds.includes(i.id))
         if (incoming.length) await db[tableName].bulkPut(incoming)
-        await new Promise(r=>setTimeout(r, 50))
-      } catch(e) {
+        await new Promise(r => setTimeout(r, 50))
+      } catch (e) {
         if (e.name !== 'AbortError') console.warn('[Sync] delta', tableName, e)
       }
     }
     localStorage.setItem('lastPullAt', new Date().toISOString())
+    syncStatus.pendingPullCount = 0 // Reset setelah pull delta selesai
   } finally {
     isPullingFromCloud = false
   }
@@ -1679,11 +1717,14 @@ export const syncRealtime = {
       window.addEventListener('online', updateOnlineStatus)
       window.addEventListener('offline', updateOnlineStatus)
       this.stopRealtime()
-      const prodCount = await db.products.where('deleted').notEqual(true).count().catch(()=>db.products.count().catch(()=>0))
+      const prodCount = await db.products.where('deleted').notEqual(true).count().catch(() => db.products.count().catch(() => 0))
       if (prodCount === 0 && navigator.onLine) {
         await pullAllFromCloud()
       } else {
-        if (navigator.onLine) pullDeltaFromCloud()
+        if (navigator.onLine) {
+          pullDeltaFromCloud()
+          checkForCloudUpdates()
+        }
         await updateUnsyncedCount()
       }
     } catch (e) {
@@ -1694,6 +1735,7 @@ export const syncRealtime = {
 
 export const syncService = syncRealtime
 export default syncRealtime
+
 ===== src/services/productService.js =====
 import { productRepo } from '../db/repositories/productRepository.js'
 
@@ -5476,7 +5518,6 @@ onActivated(loadData)
 </script>
 
 ===== src/views/Settings.vue =====
-
 <template>
 <div class="flex-1 overflow-auto p-4 pb-28 space-y-4">
   <!-- Header Title -->
@@ -5536,9 +5577,24 @@ onActivated(loadData)
         <UploadCloud class="w-4 h-4" />
         <span>{{ syncStatus.isSyncing ? 'Menyinkron...' : `Push (${syncStatus.unsyncedCount})` }}</span>
       </button>
-      <button type="button" @click="handlePull" :disabled="syncStatus.isSyncing" class="py-3 bg-white border border-zinc-200 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5">
+
+      <!-- Tombol Tarik Master + Badge Indikator Update -->
+      <button 
+        type="button" 
+        @click="handlePull" 
+        :disabled="syncStatus.isSyncing" 
+        class="relative py-3 bg-white border border-zinc-200 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5"
+      >
         <DownloadCloud class="w-4 h-4" />
         <span>Tarik Master</span>
+
+        <!-- Badge Angka Pembaruan (Hanya muncul jika ada update baru) -->
+        <span 
+          v-if="syncStatus.pendingPullCount > 0" 
+          class="absolute -top-2 -right-2 bg-amber-500 text-white font-black text-[10px] w-5 h-5 rounded-full flex items-center justify-center border-2 border-white shadow-xs animate-bounce"
+        >
+          {{ syncStatus.pendingPullCount }}
+        </span>
       </button>
     </div>
     <p class="text-[10px] text-zinc-400">Push = kirim yang berubah aja (irit). Tarik Master = buat pas abis clear cache HP.</p>
@@ -5600,20 +5656,29 @@ onActivated(loadData)
 import { ref, onMounted, onUnmounted } from 'vue'
 import { Store, Cloud, Printer, Database, Download, Upload, UploadCloud, DownloadCloud, HardDrive, Trash2, Type } from 'lucide-vue-next'
 import { useSettings } from '../composables/useSettings.js'
-import { syncStatus, syncRealtime, pullAllFromCloud, pullDeltaFromCloud } from '../services/syncService.js'
+import { 
+  syncStatus, 
+  syncRealtime, 
+  pullAllFromCloud, 
+  pullDeltaFromCloud, 
+  checkForCloudUpdates 
+} from '../services/syncService.js'
 
 const { form, loading, loadSettings, saveSettings, exportBackup, importBackup, resetTransactionsData, convertDataToUppercase } = useSettings()
 const isOnline = ref(navigator.onLine)
 const updateOnlineState = () => { isOnline.value = navigator.onLine }
 const handleToggleSync = (e) => { syncRealtime.toggleAutoSync(e.target.checked) }
 const handlePush = async () => { await syncRealtime.pushLocalToCloud() }
-const handlePull = async () => { await pullDeltaFromCloud() }
+const handlePull = async () => { 
+  await pullDeltaFromCloud() 
+}
 const handlePullAll = async () => { await pullAllFromCloud() }
 
 onMounted(() => {
   loadSettings()
   window.addEventListener('online', updateOnlineState)
   window.addEventListener('offline', updateOnlineState)
+  checkForCloudUpdates()
 })
 onUnmounted(() => {
   window.removeEventListener('online', updateOnlineState)

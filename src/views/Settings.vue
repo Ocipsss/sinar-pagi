@@ -134,6 +134,8 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted } from 'vue'
+import { liveQuery } from 'dexie'
+import { db } from '../db/index.js'
 import { Store, Cloud, Printer, Database, Download, Upload, UploadCloud, DownloadCloud, HardDrive, Trash2, Type } from 'lucide-vue-next'
 import { useSettings } from '../composables/useSettings.js'
 import { 
@@ -154,14 +156,33 @@ const handlePull = async () => {
 }
 const handlePullAll = async () => { await pullAllFromCloud() }
 
+let unsyncedSubscription = null
+
 onMounted(() => {
   loadSettings()
   window.addEventListener('online', updateOnlineState)
   window.addEventListener('offline', updateOnlineState)
   checkForCloudUpdates()
+
+  // Real-time observer lokal menggunakan Dexie liveQuery (0% kuota Firebase)
+  unsyncedSubscription = liveQuery(async () => {
+    const productsCount = await db.products.filter(item => item.synced === 0 || item.synced === false).count()
+    const categoriesCount = await db.categories.filter(item => item.synced === 0 || item.synced === false).count()
+    return productsCount + categoriesCount
+  }).subscribe({
+    next: (count) => {
+      syncStatus.value.unsyncedCount = count
+    },
+    error: (err) => console.error('Error liveQuery unsynced count:', err)
+  })
 })
+
 onUnmounted(() => {
   window.removeEventListener('online', updateOnlineState)
   window.removeEventListener('offline', updateOnlineState)
+
+  if (unsyncedSubscription) {
+    unsyncedSubscription.unsubscribe()
+  }
 })
 </script>
