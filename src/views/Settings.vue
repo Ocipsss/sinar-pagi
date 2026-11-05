@@ -1,12 +1,10 @@
 <template>
 <div class="flex-1 overflow-auto p-4 pb-28 space-y-4">
-  <!-- Header Title -->
   <div>
     <h1 class="font-black text-xl text-zinc-900">Pengaturan Toko</h1>
     <p class="text-xs text-zinc-400">Kelola identitas nota, printer, dan cadangan data</p>
   </div>
 
-  <!-- Section 1: Profil Toko & Struk -->
   <div class="bg-white p-5 rounded-3xl border border-zinc-100 shadow-sm space-y-4">
     <div class="flex items-center gap-2 border-b border-zinc-50 pb-3">
       <Store class="w-5 h-5 text-zinc-900" />
@@ -33,11 +31,10 @@
     </form>
   </div>
 
-  <!-- Section 2: Sinkronisasi - VERSI FINAL HEMAT -->
   <div class="bg-white p-5 rounded-3xl border border-zinc-100 shadow-sm space-y-4">
     <div class="flex items-center gap-2 border-b border-zinc-50 pb-3">
       <Cloud class="w-5 h-5 text-zinc-900" />
-      <span class="font-black text-sm text-zinc-900">Sinkronisasi Cloud (Hemat Kuota)</span>
+      <span class="font-black text-sm text-zinc-900">Sinkronisasi Cloud (Supabase)</span>
     </div>
 
     <div class="flex items-center justify-between">
@@ -51,36 +48,32 @@
       </label>
     </div>
 
-    <!-- Tombol Sync Manual - INI YANG IRIT -->
     <div class="grid grid-cols-2 gap-2">
       <button type="button" @click="handlePush" :disabled="syncStatus.isSyncing" class="py-3 bg-zinc-900 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-1.5">
         <UploadCloud class="w-4 h-4" />
         <span>{{ syncStatus.isSyncing ? 'Menyinkron...' : `Push (${syncStatus.unsyncedCount})` }}</span>
       </button>
-
-      <!-- Tombol Tarik Master + Badge Indikator Update -->
-      <button 
-        type="button" 
-        @click="handlePull" 
-        :disabled="syncStatus.isSyncing" 
-        class="relative py-3 bg-white border border-zinc-200 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5"
-      >
+      <button type="button" @click="handlePull" :disabled="syncStatus.isSyncing" class="relative py-3 bg-white border border-zinc-200 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5">
         <DownloadCloud class="w-4 h-4" />
         <span>Tarik Master</span>
-
-        <!-- Badge Angka Pembaruan (Hanya muncul jika ada update baru) -->
-        <span 
-          v-if="syncStatus.pendingPullCount > 0" 
-          class="absolute -top-2 -right-2 bg-amber-500 text-white font-black text-[10px] w-5 h-5 rounded-full flex items-center justify-center border-2 border-white shadow-xs animate-bounce"
-        >
+        <span v-if="syncStatus.pendingPullCount > 0" class="absolute -top-2 -right-2 bg-amber-500 text-white font-black text-[10px] w-5 h-5 rounded-full flex items-center justify-center border-2 border-white shadow-xs animate-bounce">
           {{ syncStatus.pendingPullCount }}
         </span>
       </button>
     </div>
-    <p class="text-[10px] text-zinc-400">Push = kirim yang berubah aja (irit). Tarik Master = buat pas abis clear cache HP.</p>
+
+    <!-- TOMBOL BARU KHUSUS HP - GAK PERLU CONSOLE -->
+    <div class="pt-2 border-t border-zinc-50">
+      <p class="text-[10px] text-zinc-500 mb-2 font-bold">Kalo abis Import JSON tapi Belum sync masih 41 (bukan 498):</p>
+      <button type="button" @click="forceResyncAll" :disabled="loading" class="w-full py-3 bg-amber-500 hover:bg-amber-400 text-zinc-900 rounded-xl font-black text-xs flex items-center justify-center gap-2">
+        <RefreshCw class="w-4 h-4" />
+        <span>Paksa Tandai Semua Belum Sync (Fix 41 jadi 498)</span>
+      </button>
+    </div>
+
+    <p class="text-[10px] text-zinc-400">Push = kirim yang berubah aja ke Supabase. Tarik Master = buat pas abis clear cache HP.</p>
   </div>
 
-  <!-- Section 3: Printer -->
   <div class="bg-white p-5 rounded-3xl border border-zinc-100 shadow-sm space-y-4">
     <div class="flex items-center gap-2 border-b border-zinc-50 pb-3">
       <Printer class="w-5 h-5 text-zinc-900" />
@@ -88,17 +81,15 @@
     </div>
     <div class="space-y-3 text-xs">
       <div>
-        <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Ukuran Kertas Thermal (Tombol Fisik Printer)</label>
+        <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Ukuran Kertas Thermal</label>
         <div class="grid grid-cols-2 gap-2">
           <button type="button" @click="form.printerPaperSize = '58mm'" :class="['py-2.5 rounded-xl font-bold border transition', form.printerPaperSize === '58mm' ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-zinc-50 border-zinc-200 text-zinc-600']">58 mm (Kecil)</button>
           <button type="button" @click="form.printerPaperSize = '80mm'" :class="['py-2.5 rounded-xl font-bold border transition', form.printerPaperSize === '80mm' ? 'bg-zinc-900 text-white border-zinc-900' : 'bg-zinc-50 border-zinc-200 text-zinc-600']">80 mm (Besar)</button>
         </div>
-        <p class="text-[10px] text-zinc-400 mt-1">Ini untuk setting tombol fisik di printer bluetooth. 58mm biasanya untuk printer mini portable.</p>
       </div>
     </div>
   </div>
 
-  <!-- Section 4: Backup File Lokal (AMAN) -->
   <div class="bg-white p-5 rounded-3xl border border-zinc-100 shadow-sm space-y-4">
     <div class="flex items-center gap-2 border-b border-zinc-50 pb-3">
       <Database class="w-5 h-5 text-zinc-900" />
@@ -110,7 +101,6 @@
     </div>
   </div>
 
-  <!-- Section 5: Dev Mode - Khusus pas develop di HP -->
   <div class="bg-amber-50 p-5 rounded-3xl border border-amber-200 shadow-sm space-y-3">
     <div class="flex items-center gap-2 border-b border-amber-200/60 pb-3">
       <HardDrive class="w-5 h-5 text-amber-600" />
@@ -120,7 +110,6 @@
     <button type="button" @click="handlePullAll" class="w-full py-3 bg-amber-600 text-white rounded-xl font-bold text-xs">🔄 Tarik Ulang Semua Master dari Cloud</button>
   </div>
 
-  <!-- Section 6: Reset -->
   <div class="bg-red-50 p-5 rounded-3xl border border-red-200/80 shadow-sm space-y-3">
     <div class="flex items-center gap-2 border-b border-red-200/60 pb-3">
       <Trash2 class="w-5 h-5 text-red-600" />
@@ -136,7 +125,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { liveQuery } from 'dexie'
 import { db } from '../db/index.js'
-import { Store, Cloud, Printer, Database, Download, Upload, UploadCloud, DownloadCloud, HardDrive, Trash2, Type } from 'lucide-vue-next'
+import { Store, Cloud, Printer, Database, Download, Upload, UploadCloud, DownloadCloud, HardDrive, Trash2, Type, RefreshCw } from 'lucide-vue-next'
 import { useSettings } from '../composables/useSettings.js'
 import { 
   syncStatus, 
@@ -146,14 +135,12 @@ import {
   checkForCloudUpdates 
 } from '../services/syncService.js'
 
-const { form, loading, loadSettings, saveSettings, exportBackup, importBackup, resetTransactionsData, convertDataToUppercase } = useSettings()
+const { form, loading, loadSettings, saveSettings, exportBackup, importBackup, resetTransactionsData, convertDataToUppercase, forceResyncAll } = useSettings()
 const isOnline = ref(navigator.onLine)
 const updateOnlineState = () => { isOnline.value = navigator.onLine }
 const handleToggleSync = (e) => { syncRealtime.toggleAutoSync(e.target.checked) }
 const handlePush = async () => { await syncRealtime.pushLocalToCloud() }
-const handlePull = async () => { 
-  await pullDeltaFromCloud() 
-}
+const handlePull = async () => { await pullDeltaFromCloud() }
 const handlePullAll = async () => { await pullAllFromCloud() }
 
 let unsyncedSubscription = null
@@ -164,14 +151,20 @@ onMounted(() => {
   window.addEventListener('offline', updateOnlineState)
   checkForCloudUpdates()
 
-  // Real-time observer lokal menggunakan Dexie liveQuery (0% kuota Firebase)
   unsyncedSubscription = liveQuery(async () => {
-    const productsCount = await db.products.filter(item => item.synced === 0 || item.synced === false).count()
-    const categoriesCount = await db.categories.filter(item => item.synced === 0 || item.synced === false).count()
-    return productsCount + categoriesCount
+    let total = 0
+    try {
+      const tables = ['products','categories','units','product_packages','services','members','settings','operators','cash_accounts','transactions','transaction_items','cash_mutations','expenses','debt_payments','digital_transactions','shopping_list']
+      for (const t of tables) {
+        if (!db[t]) continue
+        const count = await db[t].where('synced').equals(0).count().catch(() => 0)
+        total += count
+      }
+    } catch {}
+    return total
   }).subscribe({
     next: (count) => {
-      syncStatus.value.unsyncedCount = count
+      syncStatus.unsyncedCount = count
     },
     error: (err) => console.error('Error liveQuery unsynced count:', err)
   })
@@ -180,7 +173,6 @@ onMounted(() => {
 onUnmounted(() => {
   window.removeEventListener('online', updateOnlineState)
   window.removeEventListener('offline', updateOnlineState)
-
   if (unsyncedSubscription) {
     unsyncedSubscription.unsubscribe()
   }

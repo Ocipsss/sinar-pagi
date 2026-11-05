@@ -30,8 +30,33 @@ export const useOperatorStore = defineStore('operator', {
 
   actions: {
     async loadOperators() {
-      this.operators = await operatorRepo.getAll()
+      let list = await operatorRepo.getAll()
+      // ALTERNATIF LOGIN: kalo kosong, bikin default operator biar bisa login dulu
+      if (!list || list.length === 0) {
+        console.log('[OperatorStore] Kosong, bikin default ADMIN')
+        try {
+          await operatorRepo.create({
+            name: 'ADMIN',
+            role: 'OWNER',
+            pin: '1234'
+          })
+          list = await operatorRepo.getAll()
+        } catch (e) {
+          console.warn('[OperatorStore] Gagal bikin default', e)
+        }
+      }
+      this.operators = list
       return this.operators
+    },
+
+    async createDefaultOperator() {
+      await operatorRepo.create({
+        name: 'ADMIN',
+        role: 'OWNER',
+        pin: '1234'
+      })
+      await this.loadOperators()
+      return this.operators[0]
     },
 
     async login(operatorId, pinInput) {

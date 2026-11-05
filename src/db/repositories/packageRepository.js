@@ -36,6 +36,7 @@ export const packageRepository = {
       id, 
       order: orderToSave,
       deleted: false,
+      updated_at: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
       synced: 0 
     }
@@ -47,18 +48,21 @@ export const packageRepository = {
     const stringId = String(id)
     const now = new Date().toISOString()
 
-    // Soft Delete di lokal agar syncService aman mendorong status hapus ke Firestore
+    // Soft Delete di lokal agar syncService aman mendorong status hapus ke Supabase
     await db.product_packages.update(stringId, { 
       deleted: true, 
+      updated_at: now,
       updatedAt: now, 
       synced: 0 
     })
   },
 
   async updateOrder(id, newOrder) {
+    const now = new Date().toISOString()
     await db.product_packages.update(String(id), {
       order: newOrder,
-      updatedAt: new Date().toISOString(),
+      updated_at: now,
+      updatedAt: now,
       synced: 0
     })
   }

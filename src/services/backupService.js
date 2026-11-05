@@ -1,12 +1,11 @@
-// src/services/backupService.js
+// src/services/backupService.js - VERSI SUPABASE FINAL + forceResync
 import { db } from '../db/index.js'
 import dayjs from 'dayjs'
-import { firestore, storage } from './firebase.js'
-import { doc, getDoc } from 'firebase/firestore'
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage'
+import { supabase } from './supabase.js'
+
+const BUCKET_NAME = 'sinarPagiBucket'
 
 export const backupService = {
-  // 1. Export Manual ke File JSON Lokal - PERTAHANIN, ini yang paling aman
   async exportBackup() {
     try {
       const backupData = {}
@@ -31,32 +30,56 @@ export const backupService = {
     }
   },
 
-  // 2. Auto Backup ke STORAGE (bukan Firestore doc) - HEMAT & GA JEBOL 1MB
-  // Hanya backup master, jangan transaksi harian biar kecil
   async uploadBackupToCloud() {
     if (!navigator.onLine) return
     try {
-      const masterTables = ['products','product_packages','categories','members','services','units','operators','cash_accounts','settings']
+      const allTables = db.tables.map(t => t.name)
       const backupData = {}
-      for (const t of masterTables) {
+      for (const t of allTables) {
         if (db[t]) backupData[t] = await db[t].toArray()
       }
       const jsonString = JSON.stringify(backupData)
       const blob = new Blob([jsonString], { type: 'application/json' })
+      const fileName = `master-${dayjs().format('YYYY-MM-DD-HHmm')}.json`
       
-      // Simpan ke Storage, bukan Firestore doc - limit 5GB, bukan 1MB
-      const fileName = `backups/master-${dayjs().format('YYYY-MM-DD-HHmm')}.json`
-      const storageRef = ref(storage, fileName)
-      await uploadBytes(storageRef, blob)
-      console.log('[Backup] Success to Storage:', fileName)
+      const { error } = await supabase.storage.from(BUCKET_NAME).upload(fileName, blob, {
+        upsert: true,
+        contentType: 'application/json'
+      })
+      if (error) throw error
+      console.log('[Backup] Success to Supabase:', fileName)
       return true
     } catch (error) {
-      console.error('[AutoBackup] Storage upload failed:', error)
+      console.error('[AutoBackup] Supabase upload failed:', error.message)
       throw error
     }
   },
 
-  // 3. Restor dari file lokal (yang paling aman pas develop di HP)
+  async restoreFromCloud() {
+    try {
+      const { data: files, error: listError } = await supabase.storage.from(BUCKET_NAME).list('', {
+        limit: 1,
+        sortBy: { column: 'created_at', order: 'desc' }
+      })
+      if (listError) throw listError
+      if (!files || files.length === 0) throw new Error('Tidak ada backup di cloud')
+      
+      const latestFile = files[0].name
+      const { data, error: dlError } = await supabase.storage.from(BUCKET_NAME).download(latestFile)
+      if (dlError) throw dlError
+      
+      const text = await data.text()
+      const rawParsed = JSON.parse(text)
+      const importedData = rawParsed.database || rawParsed
+      await this.processImportData(importedData)
+      console.log('[Restore] Success from', latestFile)
+      return true
+    } catch (error) {
+      console.error('[Restore] Gagal:', error.message)
+      throw error
+    }
+  },
+
   async importBackup(file) {
     if (!file) return false
     return new Promise((resolve, reject) => {
@@ -77,12 +100,12 @@ export const backupService = {
     })
   },
 
-  // Helper impor - jangan clear transaksi dulu kalo cuma master
+  // FIX PENTING: import sekarang paksa synced=0 biar ke-push ke Supabase
   async processImportData(importedData) {
     const tableNames = db.tables.map(t => t.name)
+    const now = new Date().toISOString()
     await db.transaction('rw', tableNames, async () => {
       for (const table of db.tables) {
-        // Jangan clear semua kalo cuma restore master, tapi untuk full restore ok clear
         if (Object.keys(importedData).includes(table.name)) {
           await table.clear()
         }
@@ -93,13 +116,31 @@ export const backupService = {
           if (Array.isArray(rows) && rows.length > 0) {
             const preparedRows = rows.map(item => ({
               ...item,
-              synced: item.synced ?? 1 // kalo dari backup cloud anggap sudah sync
+              synced: 0,
+              updated_at: now,
+              updatedAt: now
             }))
             await db[tableName].bulkPut(preparedRows)
           }
         }
       }
     })
+  },
+
+  // TOMBOL BARU BUAT HP: paksa semua jadi belum sync tanpa console
+  async markAllAsUnsynced() {
+    const now = new Date().toISOString()
+    let total = 0
+    for (const table of db.tables) {
+      try {
+        const count = await table.toCollection().modify({ synced: 0, updated_at: now, updatedAt: now })
+        if (count) total += count
+      } catch (e) {
+        console.warn('mark unsynced fail', table.name, e.message)
+      }
+    }
+    console.log('[Force] marked', total, 'rows as unsynced')
+    return total
   },
 
   async resetTransactions() {
@@ -129,16 +170,16 @@ export const backupService = {
     await db.transaction('rw', tableNames, async () => {
       const products = await db.products.toArray()
       for (const p of products) {
-        await db.products.update(p.id, { name: (p.name || '').toUpperCase().trim(), code: (p.code || '').toUpperCase().trim(), category: (p.category || 'UMUM').toUpperCase().trim(), unit: (p.unit || '').toUpperCase().trim(), purchasePackName: (p.purchasePackName || '').toUpperCase().trim(), updatedAt: now, synced: 0 })
+        await db.products.update(p.id, { name: (p.name || '').toUpperCase().trim(), code: (p.code || '').toUpperCase().trim(), category: (p.category || 'UMUM').toUpperCase().trim(), unit: (p.unit || '').toUpperCase().trim(), purchasePackName: (p.purchasePackName || '').toUpperCase().trim(), updatedAt: now, updated_at: now, synced: 0 })
       }
       const categories = await db.categories.toArray()
-      for (const c of categories) { await db.categories.update(c.id, { name: (c.name || '').toUpperCase().trim(), updatedAt: now, synced: 0 }) }
+      for (const c of categories) { await db.categories.update(c.id, { name: (c.name || '').toUpperCase().trim(), updatedAt: now, updated_at: now, synced: 0 }) }
       const units = await db.units.toArray()
-      for (const u of units) { await db.units.update(u.id, { name: (u.name || '').toUpperCase().trim(), updatedAt: now, synced: 0 }) }
+      for (const u of units) { await db.units.update(u.id, { name: (u.name || '').toUpperCase().trim(), updatedAt: now, updated_at: now, synced: 0 }) }
       const packages = await db.product_packages.toArray()
-      for (const pkg of packages) { await db.product_packages.update(pkg.id, { name: (pkg.name || '').toUpperCase().trim(), updatedAt: now, synced: 0 }) }
+      for (const pkg of packages) { await db.product_packages.update(pkg.id, { name: (pkg.name || '').toUpperCase().trim(), updatedAt: now, updated_at: now, synced: 0 }) }
       const members = await db.members.toArray()
-      for (const m of members) { await db.members.update(m.id, { name: (m.name || '').toUpperCase().trim(), address: (m.address || '').toUpperCase().trim(), updatedAt: now, synced: 0 }) }
+      for (const m of members) { await db.members.update(m.id, { name: (m.name || '').toUpperCase().trim(), address: (m.address || '').toUpperCase().trim(), updatedAt: now, updated_at: now, synced: 0 }) }
     })
   }
 }

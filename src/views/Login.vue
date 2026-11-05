@@ -9,11 +9,12 @@
       </div>
       <h1 class="font-black text-xl tracking-tight">Sinar Pagi POS</h1>
       <p class="text-xs text-zinc-400">Pilih akun operator untuk memulai shift</p>
+      <p v-if="operatorStore.operators.length===0" class="text-[11px] text-amber-400 font-bold">Belum ada operator - bikin default dulu</p>
     </div>
 
     <!-- Pilihan Operator -->
     <div class="space-y-3">
-      <div>
+      <div v-if="operatorStore.operators.length>0">
         <label class="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1.5 block">Pilih Operator</label>
         <select
           v-model="selectedOperatorId"
@@ -50,13 +51,26 @@
 
     <!-- Button Submit -->
     <button
-      v-if="!showNumpad"
+      v-if="!showNumpad && operatorStore.operators.length>0"
       @click="handleLogin"
       :disabled="!selectedOperatorId || loading"
       class="w-full py-4 bg-white hover:bg-zinc-100 disabled:bg-zinc-700 disabled:text-zinc-500 text-zinc-900 font-black text-xs rounded-2xl transition active:scale-95 shadow-lg mt-2"
     >
       {{ loading ? 'VERIFIKASI...' : 'MASUK SHIFT' }}
     </button>
+
+    <!-- ALTERNATIF LOGIN - kalo operator kosong -->
+    <div v-if="operatorStore.operators.length===0" class="space-y-2">
+      <button
+        @click="handleCreateDefault"
+        :disabled="loading"
+        class="w-full py-4 bg-amber-500 hover:bg-amber-400 text-zinc-900 font-black text-xs rounded-2xl transition active:scale-95 shadow-lg"
+      >
+        {{ loading ? 'Membuat...' : 'BUAT OPERATOR DEFAULT (ADMIN / PIN 1234)' }}
+      </button>
+      <p class="text-[10px] text-zinc-500 text-center leading-relaxed">Klik tombol di atas untuk bikin akun ADMIN sementara biar bisa login, nanti bisa dihapus atau ganti PIN di menu Operators</p>
+    </div>
+
   </div>
 </div>
 </template>
@@ -84,6 +98,24 @@ const loadOperators = async () => {
   await operatorStore.loadOperators()
   if (operatorStore.operators.length > 0) {
     selectedOperatorId.value = operatorStore.operators[0].id
+  }
+}
+
+const handleCreateDefault = async () => {
+  loading.value = true
+  try {
+    const op = await operatorStore.createDefaultOperator()
+    selectedOperatorId.value = op.id
+    pin.value = '1234'
+    toast.success('Operator ADMIN dibuat! PIN: 1234')
+    // auto login
+    await operatorStore.login(selectedOperatorId.value, pin.value)
+    toast.success(`Selamat bertugas, ${operatorStore.operatorName}!`)
+    router.push('/kasir')
+  } catch (e) {
+    toast.error(e.message)
+  } finally {
+    loading.value = false
   }
 }
 

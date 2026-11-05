@@ -40,8 +40,7 @@
 
 <script setup>
 import { ref, onMounted } from 'vue'
-import { doc, getDoc, setDoc } from 'firebase/firestore'
-import { firestore } from '../services/firebase.js'
+import { supabase } from '../services/supabase.js'
 
 const CLOUD_NAME = import.meta.env.VITE_CLOUDINARY_CLOUD_NAME || 'vezqidog'
 const UPLOAD_PRESET = import.meta.env.VITE_CLOUDINARY_PRESET || 'sinarpagi-products'
@@ -54,9 +53,15 @@ const form = ref({ merchantName: 'WARUNG SINAR PAGI', nmid: '' })
 
 onMounted(async () => {
   try {
-    const snap = await getDoc(doc(firestore, 'settings', 'qris'))
-    if(snap.exists()) {
-      currentQris.value = snap.data()
+    const { data, error } = await supabase.from('settings').select('*').eq('id', 'qris').single()
+    if (error && error.code !== 'PGRST116') throw error
+    if (data) {
+      // support both qrisUrl/qris_url
+      currentQris.value = {
+        qrisUrl: data.qrisUrl || data.qris_url,
+        merchantName: data.merchantName || data.merchant_name,
+        nmid: data.nmid
+      }
       form.value.merchantName = currentQris.value.merchantName || 'WARUNG SINAR PAGI'
       form.value.nmid = currentQris.value.nmid || ''
     }
@@ -89,12 +94,17 @@ const upload = async () => {
     if(!res.ok) throw new Error(await res.text())
     const data = await res.json()
     
-    await setDoc(doc(firestore, 'settings', 'qris'), {
+    const { error } = await supabase.from('settings').upsert({
+      id: 'qris',
       qrisUrl: data.secure_url,
+      qris_url: data.secure_url,
       merchantName: form.value.merchantName.toUpperCase(),
+      merchant_name: form.value.merchantName.toUpperCase(),
       nmid: form.value.nmid,
+      updated_at: new Date().toISOString(),
       updatedAt: new Date().toISOString()
-    })
+    }, { onConflict: 'id' })
+    if (error) throw error
     
     alert('QRIS berhasil diupdate met!')
     file.value = null

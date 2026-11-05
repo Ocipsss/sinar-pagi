@@ -1,54 +1,62 @@
-// src/services/authService.js
-import { auth } from './firebase.js'
-import { signInAnonymously, onAuthStateChanged, signOut } from 'firebase/auth'
+// src/services/authService.js - VERSI SUPABASE AUTH
+// Ganti Firebase anonymous auth jadi Supabase Auth
 
-/**
- * Autentikasi otomatis level perangkat (device auth)
- * Memastikan aplikasi terhubung ke akun Firebase agar diizinkan oleh Rules Firestore
- */
-export const initDeviceAuth = () => {
-  return new Promise((resolve) => {
-    onAuthStateChanged(auth, async (user) => {
-      if (user) {
-        console.log('[AuthService] Perangkat terautentikasi Firebase:', user.email || user.uid)
-        resolve(user)
-      } else {
-        // FIX: hapus baca VITE_FIREBASE_DEVICE_EMAIL/PASSWORD dari bundle - hemat & aman
-        // const email = import.meta.env.VITE_FIREBASE_DEVICE_EMAIL - REMOVED FOR SECURITY
+import { supabase } from './supabase.js'
 
-        // if (email && password) { - REMOVED FOR SECURITY, ganti anonymous auth
-          try {
-            const creds = await signInAnonymously(auth)
-            console.log('[AuthService] Login perangkat Firebase berhasil:', creds.user.uid)
-            resolve(creds.user)
-          } catch (err) {
-            console.warn('[AuthService] Gagal login perangkat Firebase (mungkin offline):', err.message)
-            resolve(null)
-          }
-        // } else { - REMOVED
-        //   console.warn('[AuthService] VITE_FIREBASE_DEVICE_EMAIL atau VITE_FIREBASE_DEVICE_PASSWORD belum diatur di .env')
-        //   resolve(null)
-        // }
-      }
-    })
-  })
-}
-
-/**
- * Mendapatkan user Firebase yang sedang aktif
- */
-export const getCurrentFirebaseUser = () => {
-  return auth.currentUser
-}
-
-/**
- * Logout dari akun Firebase (jika diperlukan)
- */
-export const logoutFirebaseDevice = async () => {
+export const initDeviceAuth = async () => {
   try {
-    await signOut(auth)
-    console.log('[AuthService] Perangkat berhasil logout dari Firebase')
+    const { data: { session } } = await supabase.auth.getSession()
+    if (session) {
+      console.log('[AuthService] Supabase session aktif:', session.user.email || session.user.id)
+      return session.user
+    }
+    // Kalo gak ada session, coba login anon? Supabase gak ada anon default, jadi return null
+    // Nanti login operator pake supabase.auth.signInWithPassword di Login.vue
+    console.log('[AuthService] Belum ada session Supabase, perlu login operator')
+    return null
   } catch (err) {
-    console.error('[AuthService] Gagal logout Firebase:', err.message)
+    console.warn('[AuthService] Gagal cek session:', err.message)
+    return null
   }
 }
+
+export const signInOperator = async (email, password) => {
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+  if (error) throw error
+  console.log('[AuthService] Login operator sukses:', data.user.email)
+  return data.user
+}
+
+export const signUpOperator = async (email, password, operatorData) => {
+  const { data, error } = await supabase.auth.signUp({ email, password })
+  if (error) throw error
+  // simpen ke table operators dengan auth_id
+  if (data.user) {
+    await supabase.from('operators').insert({
+      id: operatorData.id || crypto.randomUUID(),
+      auth_id: data.user.id,
+      name: operatorData.name,
+      role: operatorData.role || 'KASIR',
+      pin: operatorData.pin || '',
+      updated_at: new Date().toISOString(),
+      synced: 1
+    })
+  }
+  return data.user
+}
+
+export const getCurrentUser = async () => {
+  const { data: { user } } = await supabase.auth.getUser()
+  return user
+}
+
+export const logout = async () => {
+  const { error } = await supabase.auth.signOut()
+  if (error) console.error('[AuthService] Logout gagal:', error.message)
+  else console.log('[AuthService] Logout sukses')
+}
+
+// backward compat biar file lama gak error
+export const getCurrentFirebaseUser = getCurrentUser
+export const logoutFirebaseDevice = logout
+export const initDeviceAuthAlias = initDeviceAuth

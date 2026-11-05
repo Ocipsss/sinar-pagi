@@ -1,4 +1,4 @@
-// src/composables/useSettings.js
+// src/composables/useSettings.js - VERSI SUPABASE + forceResync buat HP
 import { ref } from 'vue'
 import { settingsRepo } from '../db/repositories/settingsRepository.js'
 import { backupService } from '../services/backupService.js'
@@ -57,7 +57,7 @@ export function useSettings() {
 
     try {
       await backupService.importBackup(file)
-      toast.success('Data berhasil dipulihkan dari file backup!')
+      toast.success('Data berhasil dipulihkan dari file backup! Siap push ke Supabase')
       setTimeout(() => window.location.reload(), 800)
     } catch (err) {
       toast.error(`File backup tidak valid: ${err.message}`)
@@ -73,7 +73,7 @@ export function useSettings() {
     loading.value = true
     try {
       await backupService.uploadBackupToCloud()
-      toast.success('Berhasil mencadangkan data terbaru ke Cloud Firestore!')
+      toast.success('Berhasil mencadangkan data terbaru ke Supabase Cloud (sinarPagiBucket)!')
     } catch (e) {
       toast.error(`Gagal cadangkan ke cloud: ${e.message}`)
     } finally {
@@ -82,17 +82,31 @@ export function useSettings() {
   }
 
   const restoreFromCloud = async () => {
-    if (!confirm('PERINGATAN: Restor dari Cloud akan menimpa data lokal saat ini dengan cadangan terbaru dari Firebase Firestore. Lanjutkan?')) {
+    if (!confirm('PERINGATAN: Restor dari Cloud akan menimpa data lokal saat ini dengan cadangan terbaru dari Supabase Storage (sinarPagiBucket). Lanjutkan?')) {
       return
     }
 
     loading.value = true
     try {
       await backupService.restoreFromCloud()
-      toast.success('Data berhasil dipulihkan dari Firebase Cloud!')
+      toast.success('Data berhasil dipulihkan dari Supabase Cloud!')
       setTimeout(() => window.location.reload(), 800)
     } catch (err) {
       toast.error(`Gagal restor dari Cloud: ${err.message}`)
+    } finally {
+      loading.value = false
+    }
+  }
+
+  const forceResyncAll = async () => {
+    if (!confirm('Paksa tandai SEMUA data jadi belum sync? Nanti tombol Push bakal jadi 498+ dan bisa di-push ke Supabase. Lanjutkan?')) return
+    loading.value = true
+    try {
+      const total = await backupService.markAllAsUnsynced()
+      toast.success(`Berhasil! ${total} data ditandai belum sync. Sekarang klik Push!`)
+      setTimeout(() => window.location.reload(), 800)
+    } catch (e) {
+      toast.error(`Gagal: ${e.message}`)
     } finally {
       loading.value = false
     }
@@ -151,6 +165,7 @@ export function useSettings() {
     importBackup,
     backupToCloud,
     restoreFromCloud,
+    forceResyncAll,
     resetTransactionsData,
     convertDataToUppercase
   }
