@@ -1,0 +1,64 @@
+Berikut adalah rencana kerja (action plan) bertahap untuk merapikan database JSON milik Warung Sinar Pagi agar bersih, konsisten, dan siap di-push ke Supabase tanpa error.
+Roadmap Sanitasi & Migrasi Database
+[Tahap 1: Backup & Setup] ➔ [Tahap 2: Script Sanitasi Local] ➔ [Tahap 3: Validasi Schema] ➔ [Tahap 4: Import Supabase]
+
+Tahap 1: Safety & Backup Data
+ * Backup JSON Original: Amankan file products.json dan categories.json versi mentah saat ini ke folder backup (misal: backup-db-raw.json).
+ * Siapkan Environment Script: Buat script runner sederhana (misal menggunakan Node.js di environment lokal/PRoot Alpine kamu) untuk memproses sanitasi file JSON secara komparatif.
+
+ 
+Tahap 2: Eksekusi Script Clean Up (Node.js)
+Jalankan script transformasi untuk membereskan 5 masalah utama:
+1. Standarisasi Naming & Merge Field Duplikat
+ * pack_price: Ambil nilai terbesar dari packPrice atau pack_price. Hapus key legacy packPrice.
+ * pack_qty: Satukan packQty ke pack_qty (terpisah dengan pack_size yang menandakan isi per dus dari supplier).
+ * stock: Konsolidasikan qty dan stock menjadi satu field stock (pastikan bernilai minimal 0, hilangkan nilai minus akibat kesalahan input).
+2. Sanitasi Barcode (code)
+ * Cek field code. Jika berisi "00000000000", "0000000000", "0000011111", atau teks non-numerik seperti (90)MD..., ubah nilainya menjadi null. Ini mencegah bentrok Unique Constraint di Supabase.
+3. Normalisasi Primary Key (id)
+ * Ubah seluruh id produk dan kategori menggunakan format UUID v4 yang seragam agar sesuai dengan standar uuid_generate_v4() PostgreSQL.
+4. Perbaikan Data Harga Invalid & Margin Minus
+ * Filter produk dengan price_sell <= 0 atau price_sell < price_modal (seperti OISHI POPCORN atau produk dummy Rp 1 - Rp 2).
+ * Buat daftar flag/log untuk item yang butuh koreksi harga manual sebelum dimasukkan ke database produksi.
+5. Cleaning Kategori & Hapus Duplikat
+ * Hapus kategori dummy seperti BELUM KELAR.
+ * Pindahkan produk di kategori UMUM ke kategori spesifiknya (MIE, SNACK, ES CEKEK).
+ * Merge item terduplikasi (seperti Indomie Goreng atau Mini Astor yang dibuat 2x).
+
+ 
+Tahap 3: DDL SQL / Skema Tabel Supabase
+Buat skema tabel PostgreSQL di Supabase yang sudah mengadopsi standar snake_case dan tipe data yang tepat.
+-- 1. Tabel Kategori
+CREATE TABLE categories (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    name VARCHAR(100) NOT NULL UNIQUE,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+-- 2. Tabel Produk
+CREATE TABLE products (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    category_id UUID REFERENCES categories(id) ON DELETE SET NULL,
+    code VARCHAR(50) UNIQUE, -- Barcode scanner (bisa null)
+    name VARCHAR(255) NOT NULL,
+    price_modal NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    price_sell NUMERIC(12, 2) NOT NULL DEFAULT 0,
+    pack_price NUMERIC(12, 2) DEFAULT 0, -- Harga Paket eceran
+    pack_qty INT DEFAULT 0,              -- Min beli untuk Harga Paket
+    pack_size INT DEFAULT 1,             -- Isi per dus/karton supplier
+    stock INT DEFAULT 0,
+    unit VARCHAR(20) DEFAULT 'pcs',
+    created_at TIMESTAMPTZ DEFAULT NOW(),
+    updated_at TIMESTAMPTZ DEFAULT NOW(),
+    
+    -- Validasi integritas harga
+    CONSTRAINT chk_prices CHECK (price_sell >= 0 AND price_modal >= 0)
+);
+
+
+Tahap 4: Import Data ke Supabase & Sync Dexie.js
+ * Import via Supabase Dashboard / Script CLI: Insert file JSON hasil sanitasi (cleaned_products.json) ke Supabase.
+ * Update Store / Service Layer Front-End:
+   * Sesuaikan Dexie.js schema di PWA Sinar Pagi agar menggunakan struktur field snake_case (pack_price, pack_qty, pack_size).
+   * Pastikan mapper transaksi kasir di Vue 3 membaca pack_price dan pack_qty untuk logika perhitungan Harga Paket.
+Mau saya buatkan script Node.js pembersih JSON-nya sekarang agar bisa langsung kamu jalankan di environment dev kamu?

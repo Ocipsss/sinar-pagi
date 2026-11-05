@@ -10,7 +10,7 @@
       <Store class="w-5 h-5 text-zinc-900" />
       <span class="font-black text-sm text-zinc-900">Identitas Toko & Struk Nota</span>
     </div>
-    <form @submit.prevent="saveSettings" class="space-y-3">
+    <form @submit.prevent="handleSaveSettings" class="space-y-3">
       <div>
         <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Nama Toko / Warung *</label>
         <input v-model="form.storeName" required placeholder="Contoh: SINAR PAGI" class="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 uppercase" />
@@ -143,10 +143,22 @@ const handlePush = async () => { await syncRealtime.pushLocalToCloud() }
 const handlePull = async () => { await pullDeltaFromCloud() }
 const handlePullAll = async () => { await pullAllFromCloud() }
 
+const handleSaveSettings = async () => {
+  await saveSettings()
+  if (navigator.onLine) {
+    syncRealtime.pushLocalToCloud().catch(err => console.warn('[Settings] Push settings fail:', err.message))
+  }
+}
+
 let unsyncedSubscription = null
 
-onMounted(() => {
-  loadSettings()
+onMounted(async () => {
+  await loadSettings()
+  
+  if (navigator.onLine) {
+    syncRealtime.pushLocalToCloud().catch(err => console.warn('[Settings] Auto push on mount fail:', err.message))
+  }
+
   window.addEventListener('online', updateOnlineState)
   window.addEventListener('offline', updateOnlineState)
   checkForCloudUpdates()

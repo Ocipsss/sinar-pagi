@@ -144,9 +144,9 @@ function toSupabaseRowFull(item, tableName){
   if(out.stock!==undefined && out.qty===undefined) out.qty = out.stock
   if(out.qty!==undefined && out.stock===undefined) out.stock = out.qty
   
-  // updated_at
+  // updated_at & pembersihan updatedAt camelCase
   out.updated_at = out.updatedAt || out.updated_at || new Date().toISOString()
-  out.updatedAt = out.updated_at
+  delete out.updatedAt
 
   return sanitizeForPostgres(out)
 }

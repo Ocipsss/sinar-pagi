@@ -23,18 +23,20 @@ export const operatorRepo = {
   getAll: async () => {
     const table = db.operators || db.table('operators')
     const list = await table.toArray()
-    // Hanya tampilkan data yang belum di-soft-delete
-    return list.filter(item => !item.deleted)
+    // Mengamankan pengecekan deleted (boolean, number, atau undefined)
+    return list.filter(item => item.deleted !== true && item.deleted !== 1 && item.deleted !== 'true')
   },
 
   getById: async (id) => {
     const table = db.operators || db.table('operators')
     const item = await table.get(id)
-    return item && !item.deleted ? item : null
+    const isDeleted = item && (item.deleted === true || item.deleted === 1 || item.deleted === 'true')
+    return item && !isDeleted ? item : null
   },
 
   create: async (data) => {
-    const id = crypto.randomUUID()
+    // Gunakan data.id jika ada (seperti op-admin), jika tidak ada baru buat randomUUID
+    const id = data.id || crypto.randomUUID()
     const now = dayjs().toISOString()
     const hashedPin = data.pin ? await hashPin(data.pin) : ''
     const item = { 
@@ -47,7 +49,7 @@ export const operatorRepo = {
       synced: 0 
     }
     const table = db.operators || db.table('operators')
-    await table.add(item)
+    await table.put(item)
     return id
   },
 

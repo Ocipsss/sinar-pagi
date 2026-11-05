@@ -9,7 +9,9 @@
       </div>
       <h1 class="font-black text-xl tracking-tight">Sinar Pagi POS</h1>
       <p class="text-xs text-zinc-400">Pilih akun operator untuk memulai shift</p>
-      <p v-if="operatorStore.operators.length===0" class="text-[11px] text-amber-400 font-bold">Belum ada operator - bikin default dulu</p>
+      <p v-if="!loading && operatorStore.operators.length===0" class="text-[11px] text-amber-400 font-bold">
+        Belum ada operator - buat default dulu
+      </p>
     </div>
 
     <!-- Pilihan Operator -->
@@ -29,7 +31,7 @@
       </div>
 
       <!-- Input PIN dengan Numpad Custom -->
-      <div v-if="activeSelectedOperator?.pin">
+      <div v-if="activeSelectedOperator">
         <label class="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1.5 block">PIN Otorisasi</label>
         <input
           :value="'•'.repeat(pin.length)"
@@ -51,7 +53,7 @@
 
     <!-- Button Submit -->
     <button
-      v-if="!showNumpad && operatorStore.operators.length>0"
+      v-if="operatorStore.operators.length>0"
       @click="handleLogin"
       :disabled="!selectedOperatorId || loading"
       class="w-full py-4 bg-white hover:bg-zinc-100 disabled:bg-zinc-700 disabled:text-zinc-500 text-zinc-900 font-black text-xs rounded-2xl transition active:scale-95 shadow-lg mt-2"
@@ -59,8 +61,8 @@
       {{ loading ? 'VERIFIKASI...' : 'MASUK SHIFT' }}
     </button>
 
-    <!-- ALTERNATIF LOGIN - kalo operator kosong -->
-    <div v-if="operatorStore.operators.length===0" class="space-y-2">
+    <!-- ALTERNATIF LOGIN - Kalo Operator Kosong -->
+    <div v-if="!loading && operatorStore.operators.length===0" class="space-y-2">
       <button
         @click="handleCreateDefault"
         :disabled="loading"
@@ -68,7 +70,9 @@
       >
         {{ loading ? 'Membuat...' : 'BUAT OPERATOR DEFAULT (ADMIN / PIN 1234)' }}
       </button>
-      <p class="text-[10px] text-zinc-500 text-center leading-relaxed">Klik tombol di atas untuk bikin akun ADMIN sementara biar bisa login, nanti bisa dihapus atau ganti PIN di menu Operators</p>
+      <p class="text-[10px] text-zinc-500 text-center leading-relaxed">
+        Klik tombol di atas untuk membuat akun ADMIN sementara agar dapat login. Data dapat disesuaikan di menu Setting.
+      </p>
     </div>
 
   </div>
@@ -79,6 +83,8 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useOperatorStore } from '../stores/operatorStore.js'
+import { syncService } from '../services/syncService.js'
+import { supabase } from '../services/supabase.js'
 import { toast } from 'vue-sonner'
 import Numpad from '../components/Numpad.vue'
 
@@ -94,23 +100,54 @@ const activeSelectedOperator = computed(() => {
   return operatorStore.operators.find(o => o.id === selectedOperatorId.value)
 })
 
+const ensureSupabaseSession = async () => {
+  try {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session && navigator.onLine) {
+      await supabase.auth.signInAnonymously()
+    }
+  } catch (err) {
+    console.warn('[Auth] Anonymous session check warning:', err.message)
+  }
+}
+
 const loadOperators = async () => {
-  await operatorStore.loadOperators()
-  if (operatorStore.operators.length > 0) {
-    selectedOperatorId.value = operatorStore.operators[0].id
+  loading.value = true
+  try {
+    await operatorStore.loadOperators()
+    
+    // Jika lokal masih kosong dan online, coba narik dari cloud
+    if (operatorStore.operators.length === 0 && navigator.onLine) {
+      await syncService.pullAllFromCloud()
+      await operatorStore.loadOperators()
+    }
+
+    if (operatorStore.operators.length > 0) {
+      selectedOperatorId.value = operatorStore.operators[0].id
+    }
+  } catch (err) {
+    console.error('[Login] Load operator error:', err.message)
+  } finally {
+    loading.value = false
   }
 }
 
 const handleCreateDefault = async () => {
   loading.value = true
   try {
+    await ensureSupabaseSession()
     const op = await operatorStore.createDefaultOperator()
     selectedOperatorId.value = op.id
     pin.value = '1234'
     toast.success('Operator ADMIN dibuat! PIN: 1234')
-    // auto login
+    
     await operatorStore.login(selectedOperatorId.value, pin.value)
-    toast.success(`Selamat bertugas, ${operatorStore.operatorName}!`)
+    
+    if (navigator.onLine) {
+      syncService.pushLocalToCloud().catch(err => console.warn('[Sync] Auto-push login fail:', err.message))
+    }
+
+    toast.success(`Selamat bertugas, ${operatorStore.operatorName || 'Admin'}!`)
     router.push('/kasir')
   } catch (e) {
     toast.error(e.message)
@@ -123,8 +160,14 @@ const handleLogin = async () => {
   if (!selectedOperatorId.value) return
   loading.value = true
   try {
+    await ensureSupabaseSession()
     await operatorStore.login(selectedOperatorId.value, pin.value)
-    toast.success(`Selamat bertugas, ${operatorStore.operatorName}!`)
+
+    if (navigator.onLine) {
+      syncService.pushLocalToCloud().catch(err => console.warn('[Sync] Auto-push login fail:', err.message))
+    }
+
+    toast.success(`Selamat bertugas, ${operatorStore.operatorName || 'Operator'}!`)
     router.push('/kasir')
   } catch (err) {
     toast.error(err.message)
@@ -134,5 +177,8 @@ const handleLogin = async () => {
   }
 }
 
-onMounted(loadOperators)
+onMounted(async () => {
+  await ensureSupabaseSession()
+  await loadOperators()
+})
 </script>

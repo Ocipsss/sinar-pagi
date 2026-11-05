@@ -1,5 +1,7 @@
 import { defineStore } from 'pinia'
 import { operatorRepo } from '../db/repositories/operatorRepository.js'
+import { syncService } from '../services/syncService.js'
+import { db } from '../db/index.js'
 
 async function hashPin(pin) {
   if (!pin) return ''
@@ -18,80 +20,99 @@ async function hashPin(pin) {
 
 export const useOperatorStore = defineStore('operator', {
   state: () => ({
-    activeOperator: null,
-    operators: []
+    operators: [],
+    currentOperator: JSON.parse(localStorage.getItem('current_operator') || 'null'),
+    loading: false
   }),
 
   getters: {
-    isLoggedIn: (state) => !!state.activeOperator,
-    operatorName: (state) => state.activeOperator?.name || 'Kasir',
-    operatorRole: (state) => state.activeOperator?.role || 'Kasir'
+    isLoggedIn: (state) => !!state.currentOperator,
+    operatorName: (state) => state.currentOperator?.name || 'Kasir',
+    operatorRole: (state) => state.currentOperator?.role || 'kasir',
+    isAdmin: (state) => state.currentOperator?.role?.toLowerCase() === 'admin'
   },
 
   actions: {
     async loadOperators() {
-      let list = await operatorRepo.getAll()
-      // ALTERNATIF LOGIN: kalo kosong, bikin default operator biar bisa login dulu
-      if (!list || list.length === 0) {
-        console.log('[OperatorStore] Kosong, bikin default ADMIN')
-        try {
-          await operatorRepo.create({
-            name: 'ADMIN',
-            role: 'OWNER',
-            pin: '1234'
-          })
+      this.loading = true
+      try {
+        let list = await operatorRepo.getAll()
+
+        // Jika lokal kosong dan online, coba tarik dulu dari cloud
+        if (list.length === 0 && navigator.onLine) {
+          await syncService.pullAllFromCloud()
           list = await operatorRepo.getAll()
-        } catch (e) {
-          console.warn('[OperatorStore] Gagal bikin default', e)
         }
+
+        // Hapus duplikat nama di memori jika ada sisa data lama
+        const uniqueOperators = []
+        const seenNames = new Set()
+        for (const op of list) {
+          if (!seenNames.has(op.name)) {
+            seenNames.add(op.name)
+            uniqueOperators.push(op)
+          }
+        }
+
+        this.operators = uniqueOperators
+      } catch (err) {
+        console.error('[OperatorStore] Load fail:', err.message)
+      } finally {
+        this.loading = false
       }
-      this.operators = list
-      return this.operators
     },
 
     async createDefaultOperator() {
-      await operatorRepo.create({
-        name: 'ADMIN',
-        role: 'OWNER',
-        pin: '1234'
-      })
+      const fixedId = 'op-admin'
+      const hashedPin = await hashPin('1234')
+      const now = new Date().toISOString()
+      
+      const adminObj = {
+        id: fixedId,
+        name: 'ADMIN (OWNER)',
+        role: 'admin',
+        pin: hashedPin,
+        deleted: false,
+        updatedAt: now,
+        synced: 0
+      }
+
+      // Gunakan put agar menimpa record ID op-admin yang ada (tidak membuat ID baru)
+      const table = db.operators || db.table('operators')
+      await table.put(adminObj)
       await this.loadOperators()
-      return this.operators[0]
+      return adminObj
     },
 
-    async login(operatorId, pinInput) {
-      if (this.operators.length === 0) {
-        await this.loadOperators()
-      }
+    async login(operatorId, inputPin) {
+      const table = db.operators || db.table('operators')
+      const op = await table.get(operatorId)
       
-      const target = this.operators.find(o => o.id === operatorId)
-
-      if (!target) {
-        throw new Error('Operator tidak ditemukan.')
+      if (!op || op.deleted) {
+        throw new Error('Operator tidak ditemukan!')
       }
 
-      if (target.pin) {
-        const hashedInput = await hashPin(pinInput)
-        const targetIsHashed = /^[a-f0-9]{64}$/i.test(target.pin)
-        const isValid = targetIsHashed ? target.pin.toLowerCase() === hashedInput : target.pin === pinInput
-        if (!isValid) {
-          throw new Error('PIN yang Anda masukkan salah.')
+      if (op.pin) {
+        const hashedInput = await hashPin(inputPin)
+        if (hashedInput !== op.pin && inputPin !== op.pin) {
+          throw new Error('PIN Otorisasi Salah!')
         }
       }
 
-      this.activeOperator = {
-        id: target.id,
-        name: target.name,
-        role: target.role
+      const sessionObj = {
+        id: op.id,
+        name: op.name,
+        role: op.role
       }
 
-      return this.activeOperator
+      this.currentOperator = sessionObj
+      localStorage.setItem('current_operator', JSON.stringify(sessionObj))
+      return sessionObj
     },
 
     logout() {
-      this.activeOperator = null
+      this.currentOperator = null
+      localStorage.removeItem('current_operator')
     }
-  },
-
-  persist: true
+  }
 })
