@@ -2067,10 +2067,10 @@ export function useReports() {
     loading.value = true
     try {
       const data = await reportService.getReportData()
-      rawTransactions.value = data.rawTransactions
-      rawTransactionItems.value = data.rawTransactionItems
-      rawDigitalTransactions.value = data.rawDigitalTransactions
-      productsMap.value = data.productsMap
+      rawTransactions.value = data.rawTransactions || []
+      rawTransactionItems.value = data.rawTransactionItems || []
+      rawDigitalTransactions.value = data.rawDigitalTransactions || []
+      productsMap.value = data.productsMap || new Map()
     } catch (err) {
       toast.error(`Gagal memuat data laporan: ${err.message}`)
     } finally {
@@ -2078,10 +2078,14 @@ export function useReports() {
     }
   }
 
+  // 1. FILTER TRANSAKSI BARANG: Tanggal + ABAIKAN STATUS VOID
   const filteredTransactions = computed(() => {
     const now = dayjs()
     return rawTransactions.value.filter(t => {
       if (!t.date) return false
+      // Abaikan jika status void atau CANCELLED
+      if (t.status === 'void' || t.status === 'CANCELLED') return false
+
       const d = dayjs(t.date)
       if (selectedPeriod.value === 'today') return d.isSame(now, 'day')
       if (selectedPeriod.value === 'week') return d.isAfter(now.subtract(7, 'day'))
@@ -2090,10 +2094,14 @@ export function useReports() {
     })
   })
 
+  // 2. FILTER TRANSAKSI DIGITAL: Tanggal + ABAIKAN STATUS CANCELLED
   const filteredDigitalTransactions = computed(() => {
     const now = dayjs()
     return rawDigitalTransactions.value.filter(d => {
       if (!d.date) return false
+      // Abaikan jika status CANCELLED
+      if (d.status === 'CANCELLED') return false
+
       const date = dayjs(d.date)
       if (selectedPeriod.value === 'today') return date.isSame(now, 'day')
       if (selectedPeriod.value === 'week') return date.isAfter(now.subtract(7, 'day'))
@@ -2124,9 +2132,9 @@ export function useReports() {
   const totalProfit = computed(() => profitBarang.value + profitDigital.value)
   const totalTrxCount = computed(() => countBarang.value + countDigital.value)
 
-  const omzetCash = computed(() => filteredTransactions.value.filter(t => t.paymentMethod === 'CASH').reduce((s, t) => s + t.total, 0))
-  const omzetQRIS = computed(() => filteredTransactions.value.filter(t => t.paymentMethod === 'QRIS').reduce((s, t) => s + t.total, 0))
-  const omzetTempo = computed(() => filteredTransactions.value.filter(t => t.paymentMethod === 'TEMPO').reduce((s, t) => s + t.total, 0))
+  const omzetCash = computed(() => filteredTransactions.value.filter(t => t.paymentMethod === 'CASH' || t.paymentMethod === 'TUNAI').reduce((s, t) => s + (t.total || 0), 0))
+  const omzetQRIS = computed(() => filteredTransactions.value.filter(t => t.paymentMethod === 'QRIS').reduce((s, t) => s + (t.total || 0), 0))
+  const omzetTempo = computed(() => filteredTransactions.value.filter(t => t.paymentMethod === 'TEMPO').reduce((s, t) => s + (t.total || 0), 0))
 
   const handleExportToExcel = () => {
     try {
@@ -2195,7 +2203,7 @@ export function useSalesHistory() {
   const transactions = ref([])
   const totalPiutang = ref(0)
   const searchQuery = ref('')
-  const selectedFilter = ref('TODAY') // Default langsung ke 'Hari Ini'
+  const selectedFilter = ref('TODAY')
   const selectedTransaction = ref(null)
   const loading = ref(false)
 
@@ -2245,12 +2253,12 @@ export function useSalesHistory() {
     const q = searchQuery.value.toLowerCase().trim()
 
     return transactions.value.filter(t => {
-      // 1. Filter Pencarian Teks (Cari ID, Member, Provider, atau Nama Produk)
+      // 1. Filter Pencarian Teks
       const matchQuery = !q || 
         (t.memberName || '').toLowerCase().includes(q) || 
         (t.provider || '').toLowerCase().includes(q) || 
         (t.id || '').toLowerCase().includes(q) ||
-        t.items?.some(item => (item.productName || '').toLowerCase().includes(q))
+        t.items?.some(item => (item.productName || item.name || '').toLowerCase().includes(q))
 
       // 2. Filter Kategori / Tanggal Hari Ini
       let matchFilter = true
@@ -2274,6 +2282,7 @@ export function useSalesHistory() {
     })
   })
 
+  // Total omzet otomatis mengabaikan transaksi VOID
   const totalOmzet = computed(() => {
     return filteredTransactions.value
       .filter(t => t.status !== 'void' && t.status !== 'CANCELLED')
@@ -4674,47 +4683,85 @@ export const cloudinaryService = {
 import { productRepo } from '../db/repositories/productRepository.js'
 import { transactionRepo } from '../db/repositories/transactionRepository.js'
 import { memberRepo } from '../db/repositories/memberRepository.js'
+import { productsDigitalService } from './productsDigitalService.js'
 import { getBarangTipis } from '../utils/calculator/product.js'
 import dayjs from 'dayjs'
 
 export const dashboardService = {
   async getDashboardData() {
     try {
-      const [products, transactions, members] = await Promise.all([
+      const [products, transactions, members, allItems, digitalTrxs] = await Promise.all([
         productRepo.getAll().catch(() => []),
         transactionRepo.getAll().catch(() => []),
-        memberRepo.getAll().catch(() => [])
+        memberRepo.getAll().catch(() => []),
+        transactionRepo.getAllItems().catch(() => []),
+        productsDigitalService.getAll().catch(() => [])
       ])
 
       const tipis = getBarangTipis(products || [])
       const startToday = dayjs().startOf('day').toISOString()
-      const trxToday = (transactions || []).filter(t => t && t.date >= startToday)
+      
+      // Filter hanya transaksi sah (bukan VOID) hari ini
+      const validTrxToday = (transactions || []).filter(t => 
+        t && t.date >= startToday && t.status !== 'void' && t.status !== 'CANCELLED'
+      )
 
+      // Hitung Profit Penjualan Barang Hari Ini
+      const productMap = new Map((products || []).map(p => [p.id, p]))
+      const validTrxIdsToday = new Set(validTrxToday.map(t => t.id))
+      const todayItems = (allItems || []).filter(i => validTrxIdsToday.has(i.transactionId))
+      
+      const profitBarangHariIni = todayItems.reduce((sum, item) => {
+        const prod = productMap.get(item.productId)
+        const modal = prod?.price_modal || 0
+        const profitPcs = (item.price || 0) - modal
+        return sum + (Math.max(0, profitPcs) * (item.qty || 1))
+      }, 0)
+
+      // Hitung Transaksi Digital Hari Ini
+      const todayDigital = (digitalTrxs || []).filter(d => d && d.date >= startToday && d.status !== 'CANCELLED')
+      const profitDigitalHariIni = todayDigital.reduce((sum, d) => sum + (d.profit || d.adminFee || 0), 0)
+
+      // Total Omzet & Profit
+      const omzetBarangHariIni = validTrxToday.reduce((s, t) => s + (Number(t.total) || 0), 0)
+      const totalOmzetHariIni = omzetBarangHariIni + profitDigitalHariIni
+      const totalProfitHariIni = profitBarangHariIni + profitDigitalHariIni
+
+      // Ranking Produk Terlaris Hari Ini
+      const itemQtyMap = new Map()
+      todayItems.forEach(item => {
+        const name = item.name || item.productName || 'Barang'
+        itemQtyMap.set(name, (itemQtyMap.get(name) || 0) + (item.qty || 1))
+      })
+      const topProducts = Array.from(itemQtyMap.entries())
+        .map(([name, qty]) => ({ name, qty }))
+        .sort((a, b) => b.qty - a.qty)
+        .slice(0, 5)
+
+      // Chart 7 Hari
       const days = Array.from({ length: 7 }, (_, i) => dayjs().subtract(6 - i, 'day'))
       const chartRaw = days.map(d => {
         const start = d.startOf('day').toISOString()
         const end = d.endOf('day').toISOString()
         const total = (transactions || [])
-          .filter(t => t && t.date >= start && t.date <= end)
+          .filter(t => t && t.date >= start && t.date <= end && t.status !== 'void')
           .reduce((s, t) => s + (Number(t.total) || 0), 0)
         return { label: d.format('DD MMM'), value: total, date: d }
       })
 
-      // PERBAIKAN: Hitung total piutang langsung dari kolom `debt` milik member
       const totalPiutang = (members || []).reduce((sum, m) => sum + (Number(m.debt) || 0), 0)
       const memberBerutang = (members || []).filter(m => (Number(m.debt) || 0) > 0).length
 
       return {
         products: products || [],
         tipis: tipis || [],
-        trxToday: trxToday || [],
-        transactions: transactions || [],
-        members: members || [],
+        topProducts,
         stats: {
           totalProducts: (products || []).length,
           lowStock: (tipis || []).length,
-          trxHariIni: trxToday.length,
-          omzetHariIni: trxToday.reduce((s, t) => s + (Number(t.total) || 0), 0),
+          totalTrxHariIni: validTrxToday.length + todayDigital.length,
+          omzetHariIni: totalOmzetHariIni,
+          profitHariIni: totalProfitHariIni,
           totalPiutang,
           memberBerutang
         },
@@ -4723,8 +4770,8 @@ export const dashboardService = {
     } catch (err) {
       console.error('Error dashboardService:', err)
       return {
-        products: [], tipis: [], trxToday: [], transactions: [], members: [],
-        stats: { totalProducts: 0, lowStock: 0, trxHariIni: 0, omzetHariIni: 0, totalPiutang: 0, memberBerutang: 0 },
+        products: [], tipis: [], topProducts: [],
+        stats: { totalProducts: 0, lowStock: 0, totalTrxHariIni: 0, omzetHariIni: 0, profitHariIni: 0, totalPiutang: 0, memberBerutang: 0 },
         chartRaw: []
       }
     }
@@ -4779,7 +4826,6 @@ export const expenseService = {
 }
 
 ===== src/services/kasirService.js =====
-// src/services/kasirService.js
 import { db } from '../db/index.js'
 import dayjs from 'dayjs'
 import { financeRepo } from '../db/repositories/financeRepository.js'
@@ -4800,10 +4846,10 @@ export const kasirService = {
     let totalProfit = 0
     const stockWarnings = []
 
-    // FIX ATOMIC: bungkus semua operasi DB dalam 1 Dexie transaction biar hemat kuota & gak corrupt
+    // Atomic Dexie Transaction
     await db.transaction('rw', db.transactions, db.transaction_items, db.products, db.members, db.cash_accounts, db.cash_mutations, async () => {
       // 1. Simpan header transaksi
-      await db.transactions.add({
+      const trxHeader = {
         id, 
         date: now, 
         total, 
@@ -4818,7 +4864,8 @@ export const kasirService = {
         dueDate: isTempo ? dayjs().add(7, 'day').toISOString() : null,
         updatedAt: now, 
         synced: 0
-      })
+      }
+      await db.transactions.add(trxHeader)
 
       // 2. Pencatatan mutasi kas/bank
       if (paymentMethod === 'CASH') {
@@ -4841,7 +4888,7 @@ export const kasirService = {
         })
       }
 
-      // 3. Olah item transaksi & pemotongan stok (OPSI B: Boleh Minus)
+      // 3. Olah item transaksi & pemotongan stok
       for (const c of cart) {
         const modal = c.price_modal || 0
         const itemProfit = (c.price_sell - modal) * c.cartQty
@@ -4868,7 +4915,6 @@ export const kasirService = {
           const currentQty = product.qty || 0
           const newQty = currentQty - qtyDipotong
 
-          // GUARD OPSI B: Catat peringatan jika stok menjadi minus (< 0)
           if (newQty < 0) {
             stockWarnings.push(`${product.name} (Sisa Stok: ${newQty})`)
           }
@@ -4912,6 +4958,7 @@ export const kasirService = {
     return { products, members }
   }
 }
+
 ===== src/services/memberService.js =====
 import { memberRepo } from '../db/repositories/memberRepository.js'
 import { financeRepo } from '../db/repositories/financeRepository.js'
@@ -5351,44 +5398,74 @@ export const reportService = {
       db.products.toArray()
     ])
 
+    // Memisahkan transaksi valid dengan transaksi VOID
+    const validTransactions = trxs.filter(t => t.status !== 'void' && t.status !== 'CANCELLED')
+    const voidTransactions = trxs.filter(t => t.status === 'void' || t.status === 'CANCELLED')
+    const validDigitalTransactions = digitals.filter(d => d.status !== 'CANCELLED')
+
     return {
-      rawTransactions: trxs,
+      rawTransactions: trxs, // Seluruh data untuk rekam audit jika diperlukan
+      validTransactions,     // Hanya transaksi sah untuk kalkulasi Omzet & Profit
+      voidTransactions,      // Rekap pembatalan nota
       rawTransactionItems: items,
       rawDigitalTransactions: digitals,
+      validDigitalTransactions,
       productsMap: new Map(prods.map(p => [p.id, p]))
     }
   },
 
   exportToExcel(filteredTransactions, filteredDigitalTransactions, selectedPeriod) {
-    const dataToExport = []
+    const validDataToExport = []
+    const voidDataToExport = []
 
-    // Data Transaksi Kasir
+    // 1. Data Transaksi Kasir Sah (Abaikan VOID dari Omzet Utama)
     filteredTransactions.forEach(t => {
-      dataToExport.push({
+      const isVoid = t.status === 'void' || t.status === 'CANCELLED'
+      
+      const row = {
         Tanggal: dayjs(t.date).format('YYYY-MM-DD HH:mm'),
         Tipe: 'Penjualan Barang',
         'ID Nota': t.id.slice(0, 8),
         'Metode Bayar': t.paymentMethod,
-        'Total Omzet (Rp)': t.total,
-        'Status Bayar': t.status
-      })
+        'Total Omzet (Rp)': isVoid ? 0 : t.total,
+        'Status Bayar': isVoid ? 'VOID / Dibatalkan' : t.status
+      }
+
+      if (isVoid) {
+        voidDataToExport.push({ ...row, 'Nominal Dibatalkan (Rp)': t.total })
+      } else {
+        validDataToExport.push(row)
+      }
     })
 
-    // Data Transaksi Digital
+    // 2. Data Transaksi Digital Sah
     filteredDigitalTransactions.forEach(d => {
-      dataToExport.push({
+      const isCancelled = d.status === 'CANCELLED'
+      const row = {
         Tanggal: dayjs(d.date).format('YYYY-MM-DD HH:mm'),
         Tipe: `Digital (${d.provider || 'Topup/Tarik'})`,
         'ID Nota': d.id.slice(0, 8),
         'Metode Bayar': d.adminPaymentMethod === 'cash' ? 'Tunai' : 'Potong Saldo',
-        'Total Omzet (Rp)': d.nominal + (d.adminFee || 0),
-        'Status Bayar': 'Lunas'
-      })
+        'Total Omzet (Rp)': isCancelled ? 0 : (d.nominal + (d.adminFee || 0)),
+        'Status Bayar': isCancelled ? 'CANCELLED' : 'Lunas'
+      }
+
+      if (!isCancelled) {
+        validDataToExport.push(row)
+      }
     })
 
-    const worksheet = XLSX.utils.json_to_sheet(dataToExport)
     const workbook = XLSX.utils.book_new()
-    XLSX.utils.book_append_sheet(workbook, worksheet, 'Laporan Penjualan')
+
+    // Sheet 1: Penjualan Sah (Omzet Bersih)
+    const worksheetValid = XLSX.utils.json_to_sheet(validDataToExport)
+    XLSX.utils.book_append_sheet(workbook, worksheetValid, 'Laporan Penjualan')
+
+    // Sheet 2: Audit Pembatalan (Jika ada nota VOID)
+    if (voidDataToExport.length > 0) {
+      const worksheetVoid = XLSX.utils.json_to_sheet(voidDataToExport)
+      XLSX.utils.book_append_sheet(workbook, worksheetVoid, 'Audit VOID')
+    }
 
     const fileName = `Laporan_SinarPagi_${selectedPeriod}_${dayjs().format('YYYYMMDD')}.xlsx`
     XLSX.writeFile(workbook, fileName)
@@ -5481,255 +5558,282 @@ export const salesHistoryService = {
     }
   },
 
-  // FUNGSI EDIT TRANSAKSI BARANG
+  // FUNGSI EDIT TRANSAKSI BARANG (ATOMIC TRANSACTION)
   async updateTransaction(originalTrx, updatedItems, newPaymentData = {}) {
     const now = dayjs().toISOString()
-    const oldItems = await transactionRepo.getItemsByTransactionId(originalTrx.id)
 
-    // Ambil data header transaksi lama secara aman dari repository atau Dexie langsung
-    const existingTrxHeader = (await transactionRepo.getById(originalTrx.id)) || (await db.transactions.get(originalTrx.id)) || originalTrx
+    return await db.transaction('rw', [db.transactions, db.transaction_items, db.products, db.members, db.cash_accounts, db.cash_mutations], async () => {
+      const oldItems = await transactionRepo.getItemsByTransactionId(originalTrx.id)
+      const existingTrxHeader = (await transactionRepo.getById(originalTrx.id)) || (await db.transactions.get(originalTrx.id)) || originalTrx
 
-    // Tentukan metode bayar & member baru dari payload
-    const newPaymentMethod = newPaymentData.paymentMethod || existingTrxHeader.paymentMethod || 'CASH'
-    const newMemberId = newPaymentData.memberId !== undefined ? newPaymentData.memberId : (existingTrxHeader.memberId || null)
+      const newPaymentMethod = newPaymentData.paymentMethod || existingTrxHeader.paymentMethod || 'CASH'
+      const newMemberId = newPaymentData.memberId !== undefined ? newPaymentData.memberId : (existingTrxHeader.memberId || null)
 
-    // 1. Peta stok lama vs stok baru untuk menghitung selisih kuantitas
-    const oldQtyMap = new Map()
-    oldItems.forEach(i => {
-      if (i.productId) oldQtyMap.set(i.productId, (oldQtyMap.get(i.productId) || 0) + (i.qty || 0))
-    })
+      // 1. Peta kuantitas lama vs baru untuk penyesuaian stok
+      const oldQtyMap = new Map()
+      oldItems.forEach(i => {
+        if (i.productId) oldQtyMap.set(i.productId, (oldQtyMap.get(i.productId) || 0) + (i.qty || 0))
+      })
 
-    const newQtyMap = new Map()
-    let newTotal = 0
+      const newQtyMap = new Map()
+      let newTotal = 0
 
-    updatedItems.forEach(i => {
-      const subtotal = (Number(i.price) || 0) * (Number(i.qty) || 0)
-      newTotal += subtotal
-      if (i.productId) {
-        newQtyMap.set(i.productId, (newQtyMap.get(i.productId) || 0) + (Number(i.qty) || 0))
+      updatedItems.forEach(i => {
+        const subtotal = (Number(i.price) || 0) * (Number(i.qty) || 0)
+        newTotal += subtotal
+        if (i.productId) {
+          newQtyMap.set(i.productId, (newQtyMap.get(i.productId) || 0) + (Number(i.qty) || 0))
+        }
+      })
+
+      // 2. Adjust stok produk berdasarkan selisih (Delta)
+      const allProductIds = new Set([...oldQtyMap.keys(), ...newQtyMap.keys()])
+      for (const prodId of allProductIds) {
+        const oldQty = oldQtyMap.get(prodId) || 0
+        const newQty = newQtyMap.get(prodId) || 0
+        const delta = oldQty - newQty // Positif = stok kembali, Negatif = stok berkurang
+
+        if (delta !== 0) {
+          const prod = await productRepo.getById(prodId)
+          if (prod) {
+            await productRepo.update(prodId, {
+              qty: (prod.qty || 0) + delta,
+              updatedAt: now,
+              synced: 0
+            })
+          }
+        }
       }
-    })
 
-    // 2. Adjust stok produk berdasarkan selisih (Delta)
-    const allProductIds = new Set([...oldQtyMap.keys(), ...newQtyMap.keys()])
-    for (const prodId of allProductIds) {
-      const oldQty = oldQtyMap.get(prodId) || 0
-      const newQty = newQtyMap.get(prodId) || 0
-      const delta = oldQty - newQty // Positif = stok kembali, Negatif = stok berkurang
+      // 3. Re-write item transaksi
+      const existingItemIds = oldItems.map(i => i.id)
+      if (existingItemIds.length > 0) {
+        await db.transaction_items.bulkDelete(existingItemIds)
+      }
 
-      if (delta !== 0) {
-        const prod = await productRepo.getById(prodId)
-        if (prod) {
-          await productRepo.update(prodId, {
-            qty: (prod.qty || 0) + delta
+      const itemsToInsert = updatedItems.map(i => ({
+        id: crypto.randomUUID(),
+        transactionId: originalTrx.id,
+        productId: i.productId || null,
+        serviceId: i.serviceId || null,
+        name: i.productName || i.name || 'Barang',
+        qty: Number(i.qty) || 1,
+        price: Number(i.price) || 0,
+        subtotal: (Number(i.price) || 0) * (Number(i.qty) || 0),
+        updatedAt: now,
+        synced: 0
+      }))
+      await db.transaction_items.bulkPut(itemsToInsert)
+
+      // 4. Rekonsiliasi Mutasi Keuangan
+      const oldAccId = existingTrxHeader.paymentMethod === 'QRIS' ? 'acc_bank' : existingTrxHeader.paymentMethod === 'CASH' ? 'acc_cash' : null
+      const newAccId = newPaymentMethod === 'QRIS' ? 'acc_bank' : newPaymentMethod === 'CASH' ? 'acc_cash' : null
+
+      if (oldAccId && (existingTrxHeader.total || 0) > 0) {
+        await financeRepo.addMutation({
+          accountId: oldAccId,
+          type: 'OUT',
+          amount: existingTrxHeader.total,
+          category: 'Koreksi Transaksi',
+          note: `Koreksi Edit Nota #${originalTrx.id.slice(0, 8)}`,
+          refId: originalTrx.id
+        })
+      }
+
+      if (newAccId && newTotal > 0) {
+        await financeRepo.addMutation({
+          accountId: newAccId,
+          type: 'IN',
+          amount: newTotal,
+          category: 'Penjualan Kasir',
+          note: `Update Nota #${originalTrx.id.slice(0, 8)}`,
+          refId: originalTrx.id
+        })
+      }
+
+      // 5. Rekonsiliasi Member (Spending & Piutang)
+      if (existingTrxHeader.memberId) {
+        const oldMember = await memberRepo.getById(existingTrxHeader.memberId)
+        if (oldMember) {
+          const debtRollback = existingTrxHeader.paymentMethod === 'TEMPO' ? (existingTrxHeader.total || 0) : 0
+          await memberRepo.update(existingTrxHeader.memberId, {
+            debt: Math.max(0, (oldMember.debt || 0) - debtRollback),
+            total_spending: Math.max(0, (oldMember.total_spending || 0) - (existingTrxHeader.total || 0)),
+            updatedAt: now,
+            synced: 0
           })
         }
       }
-    }
 
-    // 3. Re-write item transaksi di database
-    const existingItemIds = oldItems.map(i => i.id)
-    if (existingItemIds.length > 0) {
-      await db.transaction_items.bulkDelete(existingItemIds)
-    }
-
-    const itemsToInsert = updatedItems.map(i => ({
-      id: crypto.randomUUID(),
-      transactionId: originalTrx.id,
-      productId: i.productId || null,
-      serviceId: i.serviceId || null,
-      name: i.productName || i.name || 'Barang',
-      qty: Number(i.qty) || 1,
-      price: Number(i.price) || 0,
-      subtotal: (Number(i.price) || 0) * (Number(i.qty) || 0),
-      updatedAt: now,
-      synced: 0
-    }))
-    await db.transaction_items.bulkPut(itemsToInsert)
-
-    // 4. Rekonsiliasi Mutasi Keuangan & Arus Kas
-    const oldAccId = existingTrxHeader.paymentMethod === 'QRIS' ? 'acc_bank' : existingTrxHeader.paymentMethod === 'CASH' ? 'acc_cash' : null
-    const newAccId = newPaymentMethod === 'QRIS' ? 'acc_bank' : newPaymentMethod === 'CASH' ? 'acc_cash' : null
-
-    // Batalkan dampak kas transaksi lama
-    if (oldAccId && (existingTrxHeader.total || 0) > 0) {
-      await financeRepo.addMutation({
-        accountId: oldAccId,
-        type: 'OUT',
-        amount: existingTrxHeader.total,
-        category: 'Koreksi Transaksi',
-        note: `Koreksi Edit Nota #${originalTrx.id.slice(0, 8)}`,
-        refId: originalTrx.id
-      })
-    }
-
-    // Masukkan arus kas transaksi baru
-    if (newAccId && newTotal > 0) {
-      await financeRepo.addMutation({
-        accountId: newAccId,
-        type: 'IN',
-        amount: newTotal,
-        category: 'Penjualan Kasir',
-        note: `Update Nota #${originalTrx.id.slice(0, 8)}`,
-        refId: originalTrx.id
-      })
-    }
-
-    // 5. Rekonsiliasi Piutang & Total Spending Member
-    if (existingTrxHeader.memberId) {
-      const oldMember = await memberRepo.getById(existingTrxHeader.memberId)
-      if (oldMember) {
-        const debtRollback = existingTrxHeader.paymentMethod === 'TEMPO' ? (existingTrxHeader.total || 0) : 0
-        await memberRepo.update(existingTrxHeader.memberId, {
-          debt: Math.max(0, (oldMember.debt || 0) - debtRollback),
-          total_spending: Math.max(0, (oldMember.total_spending || 0) - (existingTrxHeader.total || 0))
-        })
+      if (newMemberId) {
+        const newMember = await memberRepo.getById(newMemberId)
+        if (newMember) {
+          const addedDebt = newPaymentMethod === 'TEMPO' ? newTotal : 0
+          await memberRepo.update(newMemberId, {
+            debt: (newMember.debt || 0) + addedDebt,
+            total_spending: (newMember.total_spending || 0) + newTotal,
+            updatedAt: now,
+            synced: 0
+          })
+        }
       }
-    }
 
-    if (newMemberId) {
-      const newMember = await memberRepo.getById(newMemberId)
-      if (newMember) {
-        const addedDebt = newPaymentMethod === 'TEMPO' ? newTotal : 0
-        await memberRepo.update(newMemberId, {
-          debt: (newMember.debt || 0) + addedDebt,
-          total_spending: (newMember.total_spending || 0) + newTotal
-        })
-      }
-    }
+      // 6. Update header transaksi
+      const newAmountPaid = newPaymentMethod === 'TEMPO' ? 0 : (newPaymentData.amountPaid !== undefined ? newPaymentData.amountPaid : newTotal)
+      const newRemaining = newPaymentMethod === 'TEMPO' ? newTotal : 0
 
-    // 6. Update header transaksi
-    const newAmountPaid = newPaymentMethod === 'TEMPO' ? 0 : (newPaymentData.amountPaid !== undefined ? newPaymentData.amountPaid : newTotal)
-    const newRemaining = newPaymentMethod === 'TEMPO' ? newTotal : 0
+      await db.transactions.update(originalTrx.id, {
+        total: newTotal,
+        paymentMethod: newPaymentMethod,
+        memberId: newMemberId,
+        amountPaid: newAmountPaid,
+        paidAmount: newAmountPaid,
+        remaining: newRemaining,
+        updatedAt: now,
+        synced: 0
+      })
 
-    await db.transactions.update(originalTrx.id, {
-      total: newTotal,
-      paymentMethod: newPaymentMethod,
-      memberId: newMemberId,
-      amountPaid: newAmountPaid,
-      paidAmount: newAmountPaid,
-      remaining: newRemaining,
-      updatedAt: now,
-      synced: 0
+      return { id: originalTrx.id, total: newTotal }
     })
-
-    return { id: originalTrx.id, total: newTotal }
   },
 
+  // FUNGSI PEMBATALAN TRANSAKSI / VOID (ATOMIC TRANSACTION)
   async voidTransaction(transaction) {
     const now = dayjs().toISOString()
 
     if (transaction.trxType === 'BARANG') {
       if (transaction.status === 'void') throw new Error('Transaksi ini sudah dibatalkan.')
 
-      const items = await transactionRepo.getItemsByTransactionId(transaction.id)
-      for (const item of items) {
-        if (item.productId) {
-          const product = await productRepo.getById(item.productId)
-          if (product) {
-            await productRepo.update(item.productId, {
-              qty: (product.qty || 0) + (item.qty || 0)
+      await db.transaction('rw', [db.transactions, db.transaction_items, db.products, db.members, db.cash_accounts, db.cash_mutations], async () => {
+        const items = await transactionRepo.getItemsByTransactionId(transaction.id)
+
+        let totalProfitRetur = 0
+
+        // 1. Kembalikan Stok Barang secara presisi (Memperhitungkan modal & qty)
+        for (const item of items) {
+          if (item.productId) {
+            const product = await productRepo.getById(item.productId)
+            if (product) {
+              const modal = product.price_modal || 0
+              const profitItem = (item.price - modal) * (item.qty || 1)
+              totalProfitRetur += Math.max(0, profitItem)
+
+              await productRepo.update(item.productId, {
+                qty: (product.qty || 0) + (item.qty || 0),
+                updatedAt: now,
+                synced: 0
+              })
+            }
+          }
+        }
+
+        // 2. Koreksi Mutasi Kas / Bank
+        if (transaction.paymentMethod === 'CASH' && transaction.total > 0) {
+          await financeRepo.addMutation({
+            accountId: 'acc_cash',
+            type: 'OUT',
+            amount: transaction.total,
+            category: 'Pembatalan Transaksi',
+            note: `Void Transaksi Kasir #${transaction.id.slice(0, 8)}`,
+            refId: transaction.id
+          })
+        } else if (transaction.paymentMethod === 'QRIS' && transaction.total > 0) {
+          await financeRepo.addMutation({
+            accountId: 'acc_bank',
+            type: 'OUT',
+            amount: transaction.total,
+            category: 'Pembatalan Transaksi',
+            note: `Void Transaksi QRIS #${transaction.id.slice(0, 8)}`,
+            refId: transaction.id
+          })
+        }
+
+        // 3. Koreksi Data Member (Total Spending, Debt, & Poin Poin)
+        if (transaction.memberId) {
+          const member = await memberRepo.getById(transaction.memberId)
+          if (member) {
+            const pointsToDeduct = Math.floor(totalProfitRetur * 0.01)
+            const newPoints = Math.max(0, (member.points || 0) - pointsToDeduct)
+            const newSpending = Math.max(0, (member.total_spending || 0) - transaction.total)
+            const newDebt = transaction.paymentMethod === 'TEMPO' 
+              ? Math.max(0, (member.debt || 0) - (transaction.remaining || transaction.total))
+              : (member.debt || 0)
+
+            await memberRepo.update(transaction.memberId, {
+              points: newPoints,
+              total_spending: newSpending,
+              debt: newDebt,
+              updatedAt: now,
+              synced: 0
             })
           }
         }
-      }
 
-      if (transaction.paymentMethod === 'CASH' && transaction.total > 0) {
-        await financeRepo.addMutation({
-          accountId: 'acc_cash',
-          type: 'OUT',
-          amount: transaction.total,
-          category: 'Pembatalan Transaksi',
-          note: `Void Transaksi Kasir #${transaction.id.slice(0, 8)}`,
-          refId: transaction.id
+        // 4. Update status transaksi menjadi VOID
+        await db.transactions.update(transaction.id, {
+          status: 'void',
+          updatedAt: now,
+          synced: 0
         })
-      } else if (transaction.paymentMethod === 'QRIS' && transaction.total > 0) {
-        await financeRepo.addMutation({
-          accountId: 'acc_bank',
-          type: 'OUT',
-          amount: transaction.total,
-          category: 'Pembatalan Transaksi',
-          note: `Void Transaksi QRIS #${transaction.id.slice(0, 8)}`,
-          refId: transaction.id
-        })
-      }
-
-      if (transaction.memberId) {
-        const member = await memberRepo.getById(transaction.memberId)
-        if (member) {
-          const newSpending = Math.max(0, (member.total_spending || 0) - transaction.total)
-          const newDebt = transaction.paymentMethod === 'TEMPO' 
-            ? Math.max(0, (member.debt || 0) - (transaction.remaining || transaction.total))
-            : (member.debt || 0)
-
-          await memberRepo.update(transaction.memberId, {
-            total_spending: newSpending,
-            debt: newDebt
-          })
-        }
-      }
-
-      await db.transactions.update(transaction.id, {
-        status: 'void',
-        updatedAt: now,
-        synced: 0
       })
 
     } else if (transaction.trxType === 'DIGITAL') {
       if (transaction.status === 'CANCELLED') throw new Error('Transaksi digital sudah dibatalkan.')
 
-      const isTopup = transaction.digitalType === 'topup'
-      const isCashAdmin = transaction.adminPaymentMethod === 'cash'
+      await db.transaction('rw', [db.digital_transactions, db.cash_accounts, db.cash_mutations], async () => {
+        const isTopup = transaction.digitalType === 'topup'
+        const isCashAdmin = transaction.adminPaymentMethod === 'cash'
 
-      if (isTopup) {
-        const cashOut = transaction.nominal + (isCashAdmin ? transaction.adminFee : 0)
-        if (cashOut > 0) {
+        if (isTopup) {
+          const cashOut = transaction.nominal + (isCashAdmin ? transaction.adminFee : 0)
+          if (cashOut > 0) {
+            await financeRepo.addMutation({
+              accountId: 'acc_cash',
+              type: 'OUT',
+              amount: cashOut,
+              category: 'Pembatalan Transaksi Digital',
+              note: `Void Top Up ${transaction.provider}`,
+              refId: transaction.id
+            })
+          }
+          const bankIn = isCashAdmin ? transaction.nominal : Math.max(0, transaction.nominal - transaction.adminFee)
           await financeRepo.addMutation({
-            accountId: 'acc_cash',
-            type: 'OUT',
-            amount: cashOut,
-            category: 'Pembatalan Transaksi Digital',
-            note: `Void Top Up ${transaction.provider}`,
-            refId: transaction.id
-          })
-        }
-        const bankIn = isCashAdmin ? transaction.nominal : Math.max(0, transaction.nominal - transaction.adminFee)
-        await financeRepo.addMutation({
-          accountId: 'acc_bank',
-          type: 'IN',
-          amount: bankIn,
-          category: 'Pembatalan Transaksi Digital',
-          note: `Pengembalian Modal Top Up ${transaction.provider}`,
-          refId: transaction.id
-        })
-      } else {
-        const cashIn = transaction.nominal - (isCashAdmin ? transaction.adminFee : 0)
-        if (cashIn > 0) {
-          await financeRepo.addMutation({
-            accountId: 'acc_cash',
+            accountId: 'acc_bank',
             type: 'IN',
-            amount: cashIn,
+            amount: bankIn,
             category: 'Pembatalan Transaksi Digital',
-            note: `Void Tarik Tunai ${transaction.provider}`,
+            note: `Pengembalian Modal Top Up ${transaction.provider}`,
+            refId: transaction.id
+          })
+        } else {
+          const cashIn = transaction.nominal - (isCashAdmin ? transaction.adminFee : 0)
+          if (cashIn > 0) {
+            await financeRepo.addMutation({
+              accountId: 'acc_cash',
+              type: 'IN',
+              amount: cashIn,
+              category: 'Pembatalan Transaksi Digital',
+              note: `Void Tarik Tunai ${transaction.provider}`,
+              refId: transaction.id
+            })
+          }
+          const bankOut = isCashAdmin ? transaction.nominal : transaction.nominal + transaction.adminFee
+          await financeRepo.addMutation({
+            accountId: 'acc_bank',
+            type: 'OUT',
+            amount: bankOut,
+            category: 'Pembatalan Transaksi Digital',
+            note: `Penarikan Saldo Tarik Tunai ${transaction.provider}`,
             refId: transaction.id
           })
         }
-        const bankOut = isCashAdmin ? transaction.nominal : transaction.nominal + transaction.adminFee
-        await financeRepo.addMutation({
-          accountId: 'acc_bank',
-          type: 'OUT',
-          amount: bankOut,
-          category: 'Pembatalan Transaksi Digital',
-          note: `Penarikan Saldo Tarik Tunai ${transaction.provider}`,
-          refId: transaction.id
-        })
-      }
 
-      await db.digital_transactions.update(transaction.id, {
-        status: 'CANCELLED',
-        profit: 0,
-        updatedAt: now,
-        synced: 0
+        await db.digital_transactions.update(transaction.id, {
+          status: 'CANCELLED',
+          profit: 0,
+          updatedAt: now,
+          synced: 0
+        })
       })
     }
   }
@@ -6205,68 +6309,6 @@ export const syncRealtime = {
 
 export const syncService = syncRealtime
 export default syncRealtime
-
-===== src/services/db/seeder.js =====
-import { db } from './index'; // sesuaikan dengan instansiasi Dexie Anda
-
-/**
- * Memasukkan data ter-sanitasi ke dalam IndexedDB menggunakan Dexie bulkAdd / bulkPut
- * @param {Object} sanitizedData Data JSON yang sudah melalui proses sanitize.js
- */
-export async function seedInitialData(sanitizedData) {
-  if (!sanitizedData) {
-    throw new Error('Data sanitasi tidak ditemukan atau kosong.');
-  }
-
-  console.log('🔄 Memulai proses impor data ke IndexedDB...');
-
-  try {
-    await db.transaction('rw', [
-      db.categories,
-      db.products,
-      db.product_packages,
-      db.members,
-      db.transactions,
-      db.transaction_items
-    ], async () => {
-      // 1. Impor Kategori
-      if (Array.isArray(sanitizedData.categories) && sanitizedData.categories.length > 0) {
-        await db.categories.bulkPut(sanitizedData.categories);
-      }
-
-      // 2. Impor Produk
-      if (Array.isArray(sanitizedData.products) && sanitizedData.products.length > 0) {
-        await db.products.bulkPut(sanitizedData.products);
-      }
-
-      // 3. Impor Paket Produk (Harga Paket)
-      if (Array.isArray(sanitizedData.product_packages) && sanitizedData.product_packages.length > 0) {
-        await db.product_packages.bulkPut(sanitizedData.product_packages);
-      }
-
-      // 4. Impor Member
-      if (Array.isArray(sanitizedData.members) && sanitizedData.members.length > 0) {
-        await db.members.bulkPut(sanitizedData.members);
-      }
-
-      // 5. Impor Transaksi
-      if (Array.isArray(sanitizedData.transactions) && sanitizedData.transactions.length > 0) {
-        await db.transactions.bulkPut(sanitizedData.transactions);
-      }
-
-      // 6. Impor Detail Item Transaksi
-      if (Array.isArray(sanitizedData.transaction_items) && sanitizedData.transaction_items.length > 0) {
-        await db.transaction_items.bulkPut(sanitizedData.transaction_items);
-      }
-    });
-
-    console.log('✅ Impor data ke IndexedDB berhasil diselesaikan!');
-    return { success: true, message: 'Data berhasil dimuat ke database lokal.' };
-  } catch (error) {
-    console.error('❌ Terjadi kesalahan saat mengimpor data ke IndexedDB:', error);
-    throw error;
-  }
-}
 
 ===== src/stores/kasirStore.js =====
 // src/stores/kasirStore.js
