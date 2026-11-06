@@ -24,10 +24,10 @@ export function useReports() {
     loading.value = true
     try {
       const data = await reportService.getReportData()
-      rawTransactions.value = data.rawTransactions
-      rawTransactionItems.value = data.rawTransactionItems
-      rawDigitalTransactions.value = data.rawDigitalTransactions
-      productsMap.value = data.productsMap
+      rawTransactions.value = data.rawTransactions || []
+      rawTransactionItems.value = data.rawTransactionItems || []
+      rawDigitalTransactions.value = data.rawDigitalTransactions || []
+      productsMap.value = data.productsMap || new Map()
     } catch (err) {
       toast.error(`Gagal memuat data laporan: ${err.message}`)
     } finally {
@@ -35,10 +35,14 @@ export function useReports() {
     }
   }
 
+  // 1. FILTER TRANSAKSI BARANG: Tanggal + ABAIKAN STATUS VOID
   const filteredTransactions = computed(() => {
     const now = dayjs()
     return rawTransactions.value.filter(t => {
       if (!t.date) return false
+      // Abaikan jika status void atau CANCELLED
+      if (t.status === 'void' || t.status === 'CANCELLED') return false
+
       const d = dayjs(t.date)
       if (selectedPeriod.value === 'today') return d.isSame(now, 'day')
       if (selectedPeriod.value === 'week') return d.isAfter(now.subtract(7, 'day'))
@@ -47,10 +51,14 @@ export function useReports() {
     })
   })
 
+  // 2. FILTER TRANSAKSI DIGITAL: Tanggal + ABAIKAN STATUS CANCELLED
   const filteredDigitalTransactions = computed(() => {
     const now = dayjs()
     return rawDigitalTransactions.value.filter(d => {
       if (!d.date) return false
+      // Abaikan jika status CANCELLED
+      if (d.status === 'CANCELLED') return false
+
       const date = dayjs(d.date)
       if (selectedPeriod.value === 'today') return date.isSame(now, 'day')
       if (selectedPeriod.value === 'week') return date.isAfter(now.subtract(7, 'day'))
@@ -81,9 +89,9 @@ export function useReports() {
   const totalProfit = computed(() => profitBarang.value + profitDigital.value)
   const totalTrxCount = computed(() => countBarang.value + countDigital.value)
 
-  const omzetCash = computed(() => filteredTransactions.value.filter(t => t.paymentMethod === 'CASH').reduce((s, t) => s + t.total, 0))
-  const omzetQRIS = computed(() => filteredTransactions.value.filter(t => t.paymentMethod === 'QRIS').reduce((s, t) => s + t.total, 0))
-  const omzetTempo = computed(() => filteredTransactions.value.filter(t => t.paymentMethod === 'TEMPO').reduce((s, t) => s + t.total, 0))
+  const omzetCash = computed(() => filteredTransactions.value.filter(t => t.paymentMethod === 'CASH' || t.paymentMethod === 'TUNAI').reduce((s, t) => s + (t.total || 0), 0))
+  const omzetQRIS = computed(() => filteredTransactions.value.filter(t => t.paymentMethod === 'QRIS').reduce((s, t) => s + (t.total || 0), 0))
+  const omzetTempo = computed(() => filteredTransactions.value.filter(t => t.paymentMethod === 'TEMPO').reduce((s, t) => s + (t.total || 0), 0))
 
   const handleExportToExcel = () => {
     try {

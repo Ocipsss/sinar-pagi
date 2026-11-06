@@ -3395,18 +3395,20 @@ export const operatorRepo = {
   getAll: async () => {
     const table = db.operators || db.table('operators')
     const list = await table.toArray()
-    // Hanya tampilkan data yang belum di-soft-delete
-    return list.filter(item => !item.deleted)
+    // Mengamankan pengecekan deleted (boolean, number, atau undefined)
+    return list.filter(item => item.deleted !== true && item.deleted !== 1 && item.deleted !== 'true')
   },
 
   getById: async (id) => {
     const table = db.operators || db.table('operators')
     const item = await table.get(id)
-    return item && !item.deleted ? item : null
+    const isDeleted = item && (item.deleted === true || item.deleted === 1 || item.deleted === 'true')
+    return item && !isDeleted ? item : null
   },
 
   create: async (data) => {
-    const id = crypto.randomUUID()
+    // Gunakan data.id jika ada (seperti op-admin), jika tidak ada baru buat randomUUID
+    const id = data.id || crypto.randomUUID()
     const now = dayjs().toISOString()
     const hashedPin = data.pin ? await hashPin(data.pin) : ''
     const item = { 
@@ -3419,7 +3421,7 @@ export const operatorRepo = {
       synced: 0 
     }
     const table = db.operators || db.table('operators')
-    await table.add(item)
+    await table.put(item)
     return id
   },
 
@@ -3440,6 +3442,7 @@ export const operatorRepo = {
     await table.update(id, { deleted: true, updatedAt: now, synced: 0 })
   }
 }
+
 ===== src/db/repositories/packageRepository.js =====
 import { db } from '../index.js'
 
@@ -6029,9 +6032,9 @@ function toSupabaseRowFull(item, tableName){
   if(out.stock!==undefined && out.qty===undefined) out.qty = out.stock
   if(out.qty!==undefined && out.stock===undefined) out.stock = out.qty
   
-  // updated_at
+  // updated_at & pembersihan updatedAt camelCase
   out.updated_at = out.updatedAt || out.updated_at || new Date().toISOString()
-  out.updatedAt = out.updated_at
+  delete out.updatedAt
 
   return sanitizeForPostgres(out)
 }
@@ -6203,6 +6206,68 @@ export const syncRealtime = {
 export const syncService = syncRealtime
 export default syncRealtime
 
+===== src/services/db/seeder.js =====
+import { db } from './index'; // sesuaikan dengan instansiasi Dexie Anda
+
+/**
+ * Memasukkan data ter-sanitasi ke dalam IndexedDB menggunakan Dexie bulkAdd / bulkPut
+ * @param {Object} sanitizedData Data JSON yang sudah melalui proses sanitize.js
+ */
+export async function seedInitialData(sanitizedData) {
+  if (!sanitizedData) {
+    throw new Error('Data sanitasi tidak ditemukan atau kosong.');
+  }
+
+  console.log('🔄 Memulai proses impor data ke IndexedDB...');
+
+  try {
+    await db.transaction('rw', [
+      db.categories,
+      db.products,
+      db.product_packages,
+      db.members,
+      db.transactions,
+      db.transaction_items
+    ], async () => {
+      // 1. Impor Kategori
+      if (Array.isArray(sanitizedData.categories) && sanitizedData.categories.length > 0) {
+        await db.categories.bulkPut(sanitizedData.categories);
+      }
+
+      // 2. Impor Produk
+      if (Array.isArray(sanitizedData.products) && sanitizedData.products.length > 0) {
+        await db.products.bulkPut(sanitizedData.products);
+      }
+
+      // 3. Impor Paket Produk (Harga Paket)
+      if (Array.isArray(sanitizedData.product_packages) && sanitizedData.product_packages.length > 0) {
+        await db.product_packages.bulkPut(sanitizedData.product_packages);
+      }
+
+      // 4. Impor Member
+      if (Array.isArray(sanitizedData.members) && sanitizedData.members.length > 0) {
+        await db.members.bulkPut(sanitizedData.members);
+      }
+
+      // 5. Impor Transaksi
+      if (Array.isArray(sanitizedData.transactions) && sanitizedData.transactions.length > 0) {
+        await db.transactions.bulkPut(sanitizedData.transactions);
+      }
+
+      // 6. Impor Detail Item Transaksi
+      if (Array.isArray(sanitizedData.transaction_items) && sanitizedData.transaction_items.length > 0) {
+        await db.transaction_items.bulkPut(sanitizedData.transaction_items);
+      }
+    });
+
+    console.log('✅ Impor data ke IndexedDB berhasil diselesaikan!');
+    return { success: true, message: 'Data berhasil dimuat ke database lokal.' };
+  } catch (error) {
+    console.error('❌ Terjadi kesalahan saat mengimpor data ke IndexedDB:', error);
+    throw error;
+  }
+}
+
 ===== src/stores/kasirStore.js =====
 // src/stores/kasirStore.js
 import { defineStore } from 'pinia'
@@ -6316,6 +6381,8 @@ export const useKasirStore = defineStore('kasir', {
 ===== src/stores/operatorStore.js =====
 import { defineStore } from 'pinia'
 import { operatorRepo } from '../db/repositories/operatorRepository.js'
+import { syncService } from '../services/syncService.js'
+import { db } from '../db/index.js'
 
 async function hashPin(pin) {
   if (!pin) return ''
@@ -6334,82 +6401,101 @@ async function hashPin(pin) {
 
 export const useOperatorStore = defineStore('operator', {
   state: () => ({
-    activeOperator: null,
-    operators: []
+    operators: [],
+    currentOperator: JSON.parse(localStorage.getItem('current_operator') || 'null'),
+    loading: false
   }),
 
   getters: {
-    isLoggedIn: (state) => !!state.activeOperator,
-    operatorName: (state) => state.activeOperator?.name || 'Kasir',
-    operatorRole: (state) => state.activeOperator?.role || 'Kasir'
+    isLoggedIn: (state) => !!state.currentOperator,
+    operatorName: (state) => state.currentOperator?.name || 'Kasir',
+    operatorRole: (state) => state.currentOperator?.role || 'kasir',
+    isAdmin: (state) => state.currentOperator?.role?.toLowerCase() === 'admin'
   },
 
   actions: {
     async loadOperators() {
-      let list = await operatorRepo.getAll()
-      // ALTERNATIF LOGIN: kalo kosong, bikin default operator biar bisa login dulu
-      if (!list || list.length === 0) {
-        console.log('[OperatorStore] Kosong, bikin default ADMIN')
-        try {
-          await operatorRepo.create({
-            name: 'ADMIN',
-            role: 'OWNER',
-            pin: '1234'
-          })
+      this.loading = true
+      try {
+        let list = await operatorRepo.getAll()
+
+        // Jika lokal kosong dan online, coba tarik dulu dari cloud
+        if (list.length === 0 && navigator.onLine) {
+          await syncService.pullAllFromCloud()
           list = await operatorRepo.getAll()
-        } catch (e) {
-          console.warn('[OperatorStore] Gagal bikin default', e)
         }
+
+        // Hapus duplikat nama di memori jika ada sisa data lama
+        const uniqueOperators = []
+        const seenNames = new Set()
+        for (const op of list) {
+          if (!seenNames.has(op.name)) {
+            seenNames.add(op.name)
+            uniqueOperators.push(op)
+          }
+        }
+
+        this.operators = uniqueOperators
+      } catch (err) {
+        console.error('[OperatorStore] Load fail:', err.message)
+      } finally {
+        this.loading = false
       }
-      this.operators = list
-      return this.operators
     },
 
     async createDefaultOperator() {
-      await operatorRepo.create({
-        name: 'ADMIN',
-        role: 'OWNER',
-        pin: '1234'
-      })
+      const fixedId = 'op-admin'
+      const hashedPin = await hashPin('1234')
+      const now = new Date().toISOString()
+      
+      const adminObj = {
+        id: fixedId,
+        name: 'ADMIN (OWNER)',
+        role: 'admin',
+        pin: hashedPin,
+        deleted: false,
+        updatedAt: now,
+        synced: 0
+      }
+
+      // Gunakan put agar menimpa record ID op-admin yang ada (tidak membuat ID baru)
+      const table = db.operators || db.table('operators')
+      await table.put(adminObj)
       await this.loadOperators()
-      return this.operators[0]
+      return adminObj
     },
 
-    async login(operatorId, pinInput) {
-      if (this.operators.length === 0) {
-        await this.loadOperators()
-      }
+    async login(operatorId, inputPin) {
+      const table = db.operators || db.table('operators')
+      const op = await table.get(operatorId)
       
-      const target = this.operators.find(o => o.id === operatorId)
-
-      if (!target) {
-        throw new Error('Operator tidak ditemukan.')
+      if (!op || op.deleted) {
+        throw new Error('Operator tidak ditemukan!')
       }
 
-      if (target.pin) {
-        const hashedInput = await hashPin(pinInput)
-        const targetIsHashed = /^[a-f0-9]{64}$/i.test(target.pin)
-        const isValid = targetIsHashed ? target.pin.toLowerCase() === hashedInput : target.pin === pinInput
-        if (!isValid) {
-          throw new Error('PIN yang Anda masukkan salah.')
+      if (op.pin) {
+        const hashedInput = await hashPin(inputPin)
+        if (hashedInput !== op.pin && inputPin !== op.pin) {
+          throw new Error('PIN Otorisasi Salah!')
         }
       }
 
-      this.activeOperator = {
-        id: target.id,
-        name: target.name,
-        role: target.role
+      const sessionObj = {
+        id: op.id,
+        name: op.name,
+        role: op.role
       }
 
-      return this.activeOperator
+      this.currentOperator = sessionObj
+      localStorage.setItem('current_operator', JSON.stringify(sessionObj))
+      return sessionObj
     },
 
     logout() {
-      this.activeOperator = null
+      this.currentOperator = null
+      localStorage.removeItem('current_operator')
     }
-  },
-
-  persist: true
+  }
 })
 
 ===== src/stores/productStore.js =====
@@ -7874,7 +7960,9 @@ onUnmounted(() => {
       </div>
       <h1 class="font-black text-xl tracking-tight">Sinar Pagi POS</h1>
       <p class="text-xs text-zinc-400">Pilih akun operator untuk memulai shift</p>
-      <p v-if="operatorStore.operators.length===0" class="text-[11px] text-amber-400 font-bold">Belum ada operator - bikin default dulu</p>
+      <p v-if="!loading && operatorStore.operators.length===0" class="text-[11px] text-amber-400 font-bold">
+        Belum ada operator - buat default dulu
+      </p>
     </div>
 
     <!-- Pilihan Operator -->
@@ -7894,7 +7982,7 @@ onUnmounted(() => {
       </div>
 
       <!-- Input PIN dengan Numpad Custom -->
-      <div v-if="activeSelectedOperator?.pin">
+      <div v-if="activeSelectedOperator">
         <label class="text-[10px] font-black text-zinc-400 uppercase tracking-widest mb-1.5 block">PIN Otorisasi</label>
         <input
           :value="'•'.repeat(pin.length)"
@@ -7916,7 +8004,7 @@ onUnmounted(() => {
 
     <!-- Button Submit -->
     <button
-      v-if="!showNumpad && operatorStore.operators.length>0"
+      v-if="operatorStore.operators.length>0"
       @click="handleLogin"
       :disabled="!selectedOperatorId || loading"
       class="w-full py-4 bg-white hover:bg-zinc-100 disabled:bg-zinc-700 disabled:text-zinc-500 text-zinc-900 font-black text-xs rounded-2xl transition active:scale-95 shadow-lg mt-2"
@@ -7924,8 +8012,8 @@ onUnmounted(() => {
       {{ loading ? 'VERIFIKASI...' : 'MASUK SHIFT' }}
     </button>
 
-    <!-- ALTERNATIF LOGIN - kalo operator kosong -->
-    <div v-if="operatorStore.operators.length===0" class="space-y-2">
+    <!-- ALTERNATIF LOGIN - Kalo Operator Kosong -->
+    <div v-if="!loading && operatorStore.operators.length===0" class="space-y-2">
       <button
         @click="handleCreateDefault"
         :disabled="loading"
@@ -7933,7 +8021,9 @@ onUnmounted(() => {
       >
         {{ loading ? 'Membuat...' : 'BUAT OPERATOR DEFAULT (ADMIN / PIN 1234)' }}
       </button>
-      <p class="text-[10px] text-zinc-500 text-center leading-relaxed">Klik tombol di atas untuk bikin akun ADMIN sementara biar bisa login, nanti bisa dihapus atau ganti PIN di menu Operators</p>
+      <p class="text-[10px] text-zinc-500 text-center leading-relaxed">
+        Klik tombol di atas untuk membuat akun ADMIN sementara agar dapat login. Data dapat disesuaikan di menu Setting.
+      </p>
     </div>
 
   </div>
@@ -7944,6 +8034,8 @@ onUnmounted(() => {
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useOperatorStore } from '../stores/operatorStore.js'
+import { syncService } from '../services/syncService.js'
+import { supabase } from '../services/supabase.js'
 import { toast } from 'vue-sonner'
 import Numpad from '../components/Numpad.vue'
 
@@ -7959,23 +8051,54 @@ const activeSelectedOperator = computed(() => {
   return operatorStore.operators.find(o => o.id === selectedOperatorId.value)
 })
 
+const ensureSupabaseSession = async () => {
+  try {
+    const { data: { session } } = await supabase.auth.getSession()
+    if (!session && navigator.onLine) {
+      await supabase.auth.signInAnonymously()
+    }
+  } catch (err) {
+    console.warn('[Auth] Anonymous session check warning:', err.message)
+  }
+}
+
 const loadOperators = async () => {
-  await operatorStore.loadOperators()
-  if (operatorStore.operators.length > 0) {
-    selectedOperatorId.value = operatorStore.operators[0].id
+  loading.value = true
+  try {
+    await operatorStore.loadOperators()
+    
+    // Jika lokal masih kosong dan online, coba narik dari cloud
+    if (operatorStore.operators.length === 0 && navigator.onLine) {
+      await syncService.pullAllFromCloud()
+      await operatorStore.loadOperators()
+    }
+
+    if (operatorStore.operators.length > 0) {
+      selectedOperatorId.value = operatorStore.operators[0].id
+    }
+  } catch (err) {
+    console.error('[Login] Load operator error:', err.message)
+  } finally {
+    loading.value = false
   }
 }
 
 const handleCreateDefault = async () => {
   loading.value = true
   try {
+    await ensureSupabaseSession()
     const op = await operatorStore.createDefaultOperator()
     selectedOperatorId.value = op.id
     pin.value = '1234'
     toast.success('Operator ADMIN dibuat! PIN: 1234')
-    // auto login
+    
     await operatorStore.login(selectedOperatorId.value, pin.value)
-    toast.success(`Selamat bertugas, ${operatorStore.operatorName}!`)
+    
+    if (navigator.onLine) {
+      syncService.pushLocalToCloud().catch(err => console.warn('[Sync] Auto-push login fail:', err.message))
+    }
+
+    toast.success(`Selamat bertugas, ${operatorStore.operatorName || 'Admin'}!`)
     router.push('/kasir')
   } catch (e) {
     toast.error(e.message)
@@ -7988,8 +8111,14 @@ const handleLogin = async () => {
   if (!selectedOperatorId.value) return
   loading.value = true
   try {
+    await ensureSupabaseSession()
     await operatorStore.login(selectedOperatorId.value, pin.value)
-    toast.success(`Selamat bertugas, ${operatorStore.operatorName}!`)
+
+    if (navigator.onLine) {
+      syncService.pushLocalToCloud().catch(err => console.warn('[Sync] Auto-push login fail:', err.message))
+    }
+
+    toast.success(`Selamat bertugas, ${operatorStore.operatorName || 'Operator'}!`)
     router.push('/kasir')
   } catch (err) {
     toast.error(err.message)
@@ -7999,7 +8128,10 @@ const handleLogin = async () => {
   }
 }
 
-onMounted(loadOperators)
+onMounted(async () => {
+  await ensureSupabaseSession()
+  await loadOperators()
+})
 </script>
 
 ===== src/views/Members.vue =====
@@ -9495,7 +9627,7 @@ onActivated(() => loadHistory())
       <Store class="w-5 h-5 text-zinc-900" />
       <span class="font-black text-sm text-zinc-900">Identitas Toko & Struk Nota</span>
     </div>
-    <form @submit.prevent="saveSettings" class="space-y-3">
+    <form @submit.prevent="handleSaveSettings" class="space-y-3">
       <div>
         <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Nama Toko / Warung *</label>
         <input v-model="form.storeName" required placeholder="Contoh: SINAR PAGI" class="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 uppercase" />
@@ -9628,10 +9760,22 @@ const handlePush = async () => { await syncRealtime.pushLocalToCloud() }
 const handlePull = async () => { await pullDeltaFromCloud() }
 const handlePullAll = async () => { await pullAllFromCloud() }
 
+const handleSaveSettings = async () => {
+  await saveSettings()
+  if (navigator.onLine) {
+    syncRealtime.pushLocalToCloud().catch(err => console.warn('[Settings] Push settings fail:', err.message))
+  }
+}
+
 let unsyncedSubscription = null
 
-onMounted(() => {
-  loadSettings()
+onMounted(async () => {
+  await loadSettings()
+  
+  if (navigator.onLine) {
+    syncRealtime.pushLocalToCloud().catch(err => console.warn('[Settings] Auto push on mount fail:', err.message))
+  }
+
   window.addEventListener('online', updateOnlineState)
   window.addEventListener('offline', updateOnlineState)
   checkForCloudUpdates()

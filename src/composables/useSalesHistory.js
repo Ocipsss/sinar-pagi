@@ -10,7 +10,7 @@ export function useSalesHistory() {
   const transactions = ref([])
   const totalPiutang = ref(0)
   const searchQuery = ref('')
-  const selectedFilter = ref('TODAY') // Default langsung ke 'Hari Ini'
+  const selectedFilter = ref('TODAY')
   const selectedTransaction = ref(null)
   const loading = ref(false)
 
@@ -60,12 +60,12 @@ export function useSalesHistory() {
     const q = searchQuery.value.toLowerCase().trim()
 
     return transactions.value.filter(t => {
-      // 1. Filter Pencarian Teks (Cari ID, Member, Provider, atau Nama Produk)
+      // 1. Filter Pencarian Teks
       const matchQuery = !q || 
         (t.memberName || '').toLowerCase().includes(q) || 
         (t.provider || '').toLowerCase().includes(q) || 
         (t.id || '').toLowerCase().includes(q) ||
-        t.items?.some(item => (item.productName || '').toLowerCase().includes(q))
+        t.items?.some(item => (item.productName || item.name || '').toLowerCase().includes(q))
 
       // 2. Filter Kategori / Tanggal Hari Ini
       let matchFilter = true
@@ -89,6 +89,7 @@ export function useSalesHistory() {
     })
   })
 
+  // Total omzet otomatis mengabaikan transaksi VOID
   const totalOmzet = computed(() => {
     return filteredTransactions.value
       .filter(t => t.status !== 'void' && t.status !== 'CANCELLED')

@@ -83,255 +83,282 @@ export const salesHistoryService = {
     }
   },
 
-  // FUNGSI EDIT TRANSAKSI BARANG
+  // FUNGSI EDIT TRANSAKSI BARANG (ATOMIC TRANSACTION)
   async updateTransaction(originalTrx, updatedItems, newPaymentData = {}) {
     const now = dayjs().toISOString()
-    const oldItems = await transactionRepo.getItemsByTransactionId(originalTrx.id)
 
-    // Ambil data header transaksi lama secara aman dari repository atau Dexie langsung
-    const existingTrxHeader = (await transactionRepo.getById(originalTrx.id)) || (await db.transactions.get(originalTrx.id)) || originalTrx
+    return await db.transaction('rw', [db.transactions, db.transaction_items, db.products, db.members, db.cash_accounts, db.cash_mutations], async () => {
+      const oldItems = await transactionRepo.getItemsByTransactionId(originalTrx.id)
+      const existingTrxHeader = (await transactionRepo.getById(originalTrx.id)) || (await db.transactions.get(originalTrx.id)) || originalTrx
 
-    // Tentukan metode bayar & member baru dari payload
-    const newPaymentMethod = newPaymentData.paymentMethod || existingTrxHeader.paymentMethod || 'CASH'
-    const newMemberId = newPaymentData.memberId !== undefined ? newPaymentData.memberId : (existingTrxHeader.memberId || null)
+      const newPaymentMethod = newPaymentData.paymentMethod || existingTrxHeader.paymentMethod || 'CASH'
+      const newMemberId = newPaymentData.memberId !== undefined ? newPaymentData.memberId : (existingTrxHeader.memberId || null)
 
-    // 1. Peta stok lama vs stok baru untuk menghitung selisih kuantitas
-    const oldQtyMap = new Map()
-    oldItems.forEach(i => {
-      if (i.productId) oldQtyMap.set(i.productId, (oldQtyMap.get(i.productId) || 0) + (i.qty || 0))
-    })
+      // 1. Peta kuantitas lama vs baru untuk penyesuaian stok
+      const oldQtyMap = new Map()
+      oldItems.forEach(i => {
+        if (i.productId) oldQtyMap.set(i.productId, (oldQtyMap.get(i.productId) || 0) + (i.qty || 0))
+      })
 
-    const newQtyMap = new Map()
-    let newTotal = 0
+      const newQtyMap = new Map()
+      let newTotal = 0
 
-    updatedItems.forEach(i => {
-      const subtotal = (Number(i.price) || 0) * (Number(i.qty) || 0)
-      newTotal += subtotal
-      if (i.productId) {
-        newQtyMap.set(i.productId, (newQtyMap.get(i.productId) || 0) + (Number(i.qty) || 0))
+      updatedItems.forEach(i => {
+        const subtotal = (Number(i.price) || 0) * (Number(i.qty) || 0)
+        newTotal += subtotal
+        if (i.productId) {
+          newQtyMap.set(i.productId, (newQtyMap.get(i.productId) || 0) + (Number(i.qty) || 0))
+        }
+      })
+
+      // 2. Adjust stok produk berdasarkan selisih (Delta)
+      const allProductIds = new Set([...oldQtyMap.keys(), ...newQtyMap.keys()])
+      for (const prodId of allProductIds) {
+        const oldQty = oldQtyMap.get(prodId) || 0
+        const newQty = newQtyMap.get(prodId) || 0
+        const delta = oldQty - newQty // Positif = stok kembali, Negatif = stok berkurang
+
+        if (delta !== 0) {
+          const prod = await productRepo.getById(prodId)
+          if (prod) {
+            await productRepo.update(prodId, {
+              qty: (prod.qty || 0) + delta,
+              updatedAt: now,
+              synced: 0
+            })
+          }
+        }
       }
-    })
 
-    // 2. Adjust stok produk berdasarkan selisih (Delta)
-    const allProductIds = new Set([...oldQtyMap.keys(), ...newQtyMap.keys()])
-    for (const prodId of allProductIds) {
-      const oldQty = oldQtyMap.get(prodId) || 0
-      const newQty = newQtyMap.get(prodId) || 0
-      const delta = oldQty - newQty // Positif = stok kembali, Negatif = stok berkurang
+      // 3. Re-write item transaksi
+      const existingItemIds = oldItems.map(i => i.id)
+      if (existingItemIds.length > 0) {
+        await db.transaction_items.bulkDelete(existingItemIds)
+      }
 
-      if (delta !== 0) {
-        const prod = await productRepo.getById(prodId)
-        if (prod) {
-          await productRepo.update(prodId, {
-            qty: (prod.qty || 0) + delta
+      const itemsToInsert = updatedItems.map(i => ({
+        id: crypto.randomUUID(),
+        transactionId: originalTrx.id,
+        productId: i.productId || null,
+        serviceId: i.serviceId || null,
+        name: i.productName || i.name || 'Barang',
+        qty: Number(i.qty) || 1,
+        price: Number(i.price) || 0,
+        subtotal: (Number(i.price) || 0) * (Number(i.qty) || 0),
+        updatedAt: now,
+        synced: 0
+      }))
+      await db.transaction_items.bulkPut(itemsToInsert)
+
+      // 4. Rekonsiliasi Mutasi Keuangan
+      const oldAccId = existingTrxHeader.paymentMethod === 'QRIS' ? 'acc_bank' : existingTrxHeader.paymentMethod === 'CASH' ? 'acc_cash' : null
+      const newAccId = newPaymentMethod === 'QRIS' ? 'acc_bank' : newPaymentMethod === 'CASH' ? 'acc_cash' : null
+
+      if (oldAccId && (existingTrxHeader.total || 0) > 0) {
+        await financeRepo.addMutation({
+          accountId: oldAccId,
+          type: 'OUT',
+          amount: existingTrxHeader.total,
+          category: 'Koreksi Transaksi',
+          note: `Koreksi Edit Nota #${originalTrx.id.slice(0, 8)}`,
+          refId: originalTrx.id
+        })
+      }
+
+      if (newAccId && newTotal > 0) {
+        await financeRepo.addMutation({
+          accountId: newAccId,
+          type: 'IN',
+          amount: newTotal,
+          category: 'Penjualan Kasir',
+          note: `Update Nota #${originalTrx.id.slice(0, 8)}`,
+          refId: originalTrx.id
+        })
+      }
+
+      // 5. Rekonsiliasi Member (Spending & Piutang)
+      if (existingTrxHeader.memberId) {
+        const oldMember = await memberRepo.getById(existingTrxHeader.memberId)
+        if (oldMember) {
+          const debtRollback = existingTrxHeader.paymentMethod === 'TEMPO' ? (existingTrxHeader.total || 0) : 0
+          await memberRepo.update(existingTrxHeader.memberId, {
+            debt: Math.max(0, (oldMember.debt || 0) - debtRollback),
+            total_spending: Math.max(0, (oldMember.total_spending || 0) - (existingTrxHeader.total || 0)),
+            updatedAt: now,
+            synced: 0
           })
         }
       }
-    }
 
-    // 3. Re-write item transaksi di database
-    const existingItemIds = oldItems.map(i => i.id)
-    if (existingItemIds.length > 0) {
-      await db.transaction_items.bulkDelete(existingItemIds)
-    }
-
-    const itemsToInsert = updatedItems.map(i => ({
-      id: crypto.randomUUID(),
-      transactionId: originalTrx.id,
-      productId: i.productId || null,
-      serviceId: i.serviceId || null,
-      name: i.productName || i.name || 'Barang',
-      qty: Number(i.qty) || 1,
-      price: Number(i.price) || 0,
-      subtotal: (Number(i.price) || 0) * (Number(i.qty) || 0),
-      updatedAt: now,
-      synced: 0
-    }))
-    await db.transaction_items.bulkPut(itemsToInsert)
-
-    // 4. Rekonsiliasi Mutasi Keuangan & Arus Kas
-    const oldAccId = existingTrxHeader.paymentMethod === 'QRIS' ? 'acc_bank' : existingTrxHeader.paymentMethod === 'CASH' ? 'acc_cash' : null
-    const newAccId = newPaymentMethod === 'QRIS' ? 'acc_bank' : newPaymentMethod === 'CASH' ? 'acc_cash' : null
-
-    // Batalkan dampak kas transaksi lama
-    if (oldAccId && (existingTrxHeader.total || 0) > 0) {
-      await financeRepo.addMutation({
-        accountId: oldAccId,
-        type: 'OUT',
-        amount: existingTrxHeader.total,
-        category: 'Koreksi Transaksi',
-        note: `Koreksi Edit Nota #${originalTrx.id.slice(0, 8)}`,
-        refId: originalTrx.id
-      })
-    }
-
-    // Masukkan arus kas transaksi baru
-    if (newAccId && newTotal > 0) {
-      await financeRepo.addMutation({
-        accountId: newAccId,
-        type: 'IN',
-        amount: newTotal,
-        category: 'Penjualan Kasir',
-        note: `Update Nota #${originalTrx.id.slice(0, 8)}`,
-        refId: originalTrx.id
-      })
-    }
-
-    // 5. Rekonsiliasi Piutang & Total Spending Member
-    if (existingTrxHeader.memberId) {
-      const oldMember = await memberRepo.getById(existingTrxHeader.memberId)
-      if (oldMember) {
-        const debtRollback = existingTrxHeader.paymentMethod === 'TEMPO' ? (existingTrxHeader.total || 0) : 0
-        await memberRepo.update(existingTrxHeader.memberId, {
-          debt: Math.max(0, (oldMember.debt || 0) - debtRollback),
-          total_spending: Math.max(0, (oldMember.total_spending || 0) - (existingTrxHeader.total || 0))
-        })
+      if (newMemberId) {
+        const newMember = await memberRepo.getById(newMemberId)
+        if (newMember) {
+          const addedDebt = newPaymentMethod === 'TEMPO' ? newTotal : 0
+          await memberRepo.update(newMemberId, {
+            debt: (newMember.debt || 0) + addedDebt,
+            total_spending: (newMember.total_spending || 0) + newTotal,
+            updatedAt: now,
+            synced: 0
+          })
+        }
       }
-    }
 
-    if (newMemberId) {
-      const newMember = await memberRepo.getById(newMemberId)
-      if (newMember) {
-        const addedDebt = newPaymentMethod === 'TEMPO' ? newTotal : 0
-        await memberRepo.update(newMemberId, {
-          debt: (newMember.debt || 0) + addedDebt,
-          total_spending: (newMember.total_spending || 0) + newTotal
-        })
-      }
-    }
+      // 6. Update header transaksi
+      const newAmountPaid = newPaymentMethod === 'TEMPO' ? 0 : (newPaymentData.amountPaid !== undefined ? newPaymentData.amountPaid : newTotal)
+      const newRemaining = newPaymentMethod === 'TEMPO' ? newTotal : 0
 
-    // 6. Update header transaksi
-    const newAmountPaid = newPaymentMethod === 'TEMPO' ? 0 : (newPaymentData.amountPaid !== undefined ? newPaymentData.amountPaid : newTotal)
-    const newRemaining = newPaymentMethod === 'TEMPO' ? newTotal : 0
+      await db.transactions.update(originalTrx.id, {
+        total: newTotal,
+        paymentMethod: newPaymentMethod,
+        memberId: newMemberId,
+        amountPaid: newAmountPaid,
+        paidAmount: newAmountPaid,
+        remaining: newRemaining,
+        updatedAt: now,
+        synced: 0
+      })
 
-    await db.transactions.update(originalTrx.id, {
-      total: newTotal,
-      paymentMethod: newPaymentMethod,
-      memberId: newMemberId,
-      amountPaid: newAmountPaid,
-      paidAmount: newAmountPaid,
-      remaining: newRemaining,
-      updatedAt: now,
-      synced: 0
+      return { id: originalTrx.id, total: newTotal }
     })
-
-    return { id: originalTrx.id, total: newTotal }
   },
 
+  // FUNGSI PEMBATALAN TRANSAKSI / VOID (ATOMIC TRANSACTION)
   async voidTransaction(transaction) {
     const now = dayjs().toISOString()
 
     if (transaction.trxType === 'BARANG') {
       if (transaction.status === 'void') throw new Error('Transaksi ini sudah dibatalkan.')
 
-      const items = await transactionRepo.getItemsByTransactionId(transaction.id)
-      for (const item of items) {
-        if (item.productId) {
-          const product = await productRepo.getById(item.productId)
-          if (product) {
-            await productRepo.update(item.productId, {
-              qty: (product.qty || 0) + (item.qty || 0)
+      await db.transaction('rw', [db.transactions, db.transaction_items, db.products, db.members, db.cash_accounts, db.cash_mutations], async () => {
+        const items = await transactionRepo.getItemsByTransactionId(transaction.id)
+
+        let totalProfitRetur = 0
+
+        // 1. Kembalikan Stok Barang secara presisi (Memperhitungkan modal & qty)
+        for (const item of items) {
+          if (item.productId) {
+            const product = await productRepo.getById(item.productId)
+            if (product) {
+              const modal = product.price_modal || 0
+              const profitItem = (item.price - modal) * (item.qty || 1)
+              totalProfitRetur += Math.max(0, profitItem)
+
+              await productRepo.update(item.productId, {
+                qty: (product.qty || 0) + (item.qty || 0),
+                updatedAt: now,
+                synced: 0
+              })
+            }
+          }
+        }
+
+        // 2. Koreksi Mutasi Kas / Bank
+        if (transaction.paymentMethod === 'CASH' && transaction.total > 0) {
+          await financeRepo.addMutation({
+            accountId: 'acc_cash',
+            type: 'OUT',
+            amount: transaction.total,
+            category: 'Pembatalan Transaksi',
+            note: `Void Transaksi Kasir #${transaction.id.slice(0, 8)}`,
+            refId: transaction.id
+          })
+        } else if (transaction.paymentMethod === 'QRIS' && transaction.total > 0) {
+          await financeRepo.addMutation({
+            accountId: 'acc_bank',
+            type: 'OUT',
+            amount: transaction.total,
+            category: 'Pembatalan Transaksi',
+            note: `Void Transaksi QRIS #${transaction.id.slice(0, 8)}`,
+            refId: transaction.id
+          })
+        }
+
+        // 3. Koreksi Data Member (Total Spending, Debt, & Poin Poin)
+        if (transaction.memberId) {
+          const member = await memberRepo.getById(transaction.memberId)
+          if (member) {
+            const pointsToDeduct = Math.floor(totalProfitRetur * 0.01)
+            const newPoints = Math.max(0, (member.points || 0) - pointsToDeduct)
+            const newSpending = Math.max(0, (member.total_spending || 0) - transaction.total)
+            const newDebt = transaction.paymentMethod === 'TEMPO' 
+              ? Math.max(0, (member.debt || 0) - (transaction.remaining || transaction.total))
+              : (member.debt || 0)
+
+            await memberRepo.update(transaction.memberId, {
+              points: newPoints,
+              total_spending: newSpending,
+              debt: newDebt,
+              updatedAt: now,
+              synced: 0
             })
           }
         }
-      }
 
-      if (transaction.paymentMethod === 'CASH' && transaction.total > 0) {
-        await financeRepo.addMutation({
-          accountId: 'acc_cash',
-          type: 'OUT',
-          amount: transaction.total,
-          category: 'Pembatalan Transaksi',
-          note: `Void Transaksi Kasir #${transaction.id.slice(0, 8)}`,
-          refId: transaction.id
+        // 4. Update status transaksi menjadi VOID
+        await db.transactions.update(transaction.id, {
+          status: 'void',
+          updatedAt: now,
+          synced: 0
         })
-      } else if (transaction.paymentMethod === 'QRIS' && transaction.total > 0) {
-        await financeRepo.addMutation({
-          accountId: 'acc_bank',
-          type: 'OUT',
-          amount: transaction.total,
-          category: 'Pembatalan Transaksi',
-          note: `Void Transaksi QRIS #${transaction.id.slice(0, 8)}`,
-          refId: transaction.id
-        })
-      }
-
-      if (transaction.memberId) {
-        const member = await memberRepo.getById(transaction.memberId)
-        if (member) {
-          const newSpending = Math.max(0, (member.total_spending || 0) - transaction.total)
-          const newDebt = transaction.paymentMethod === 'TEMPO' 
-            ? Math.max(0, (member.debt || 0) - (transaction.remaining || transaction.total))
-            : (member.debt || 0)
-
-          await memberRepo.update(transaction.memberId, {
-            total_spending: newSpending,
-            debt: newDebt
-          })
-        }
-      }
-
-      await db.transactions.update(transaction.id, {
-        status: 'void',
-        updatedAt: now,
-        synced: 0
       })
 
     } else if (transaction.trxType === 'DIGITAL') {
       if (transaction.status === 'CANCELLED') throw new Error('Transaksi digital sudah dibatalkan.')
 
-      const isTopup = transaction.digitalType === 'topup'
-      const isCashAdmin = transaction.adminPaymentMethod === 'cash'
+      await db.transaction('rw', [db.digital_transactions, db.cash_accounts, db.cash_mutations], async () => {
+        const isTopup = transaction.digitalType === 'topup'
+        const isCashAdmin = transaction.adminPaymentMethod === 'cash'
 
-      if (isTopup) {
-        const cashOut = transaction.nominal + (isCashAdmin ? transaction.adminFee : 0)
-        if (cashOut > 0) {
+        if (isTopup) {
+          const cashOut = transaction.nominal + (isCashAdmin ? transaction.adminFee : 0)
+          if (cashOut > 0) {
+            await financeRepo.addMutation({
+              accountId: 'acc_cash',
+              type: 'OUT',
+              amount: cashOut,
+              category: 'Pembatalan Transaksi Digital',
+              note: `Void Top Up ${transaction.provider}`,
+              refId: transaction.id
+            })
+          }
+          const bankIn = isCashAdmin ? transaction.nominal : Math.max(0, transaction.nominal - transaction.adminFee)
           await financeRepo.addMutation({
-            accountId: 'acc_cash',
-            type: 'OUT',
-            amount: cashOut,
-            category: 'Pembatalan Transaksi Digital',
-            note: `Void Top Up ${transaction.provider}`,
-            refId: transaction.id
-          })
-        }
-        const bankIn = isCashAdmin ? transaction.nominal : Math.max(0, transaction.nominal - transaction.adminFee)
-        await financeRepo.addMutation({
-          accountId: 'acc_bank',
-          type: 'IN',
-          amount: bankIn,
-          category: 'Pembatalan Transaksi Digital',
-          note: `Pengembalian Modal Top Up ${transaction.provider}`,
-          refId: transaction.id
-        })
-      } else {
-        const cashIn = transaction.nominal - (isCashAdmin ? transaction.adminFee : 0)
-        if (cashIn > 0) {
-          await financeRepo.addMutation({
-            accountId: 'acc_cash',
+            accountId: 'acc_bank',
             type: 'IN',
-            amount: cashIn,
+            amount: bankIn,
             category: 'Pembatalan Transaksi Digital',
-            note: `Void Tarik Tunai ${transaction.provider}`,
+            note: `Pengembalian Modal Top Up ${transaction.provider}`,
+            refId: transaction.id
+          })
+        } else {
+          const cashIn = transaction.nominal - (isCashAdmin ? transaction.adminFee : 0)
+          if (cashIn > 0) {
+            await financeRepo.addMutation({
+              accountId: 'acc_cash',
+              type: 'IN',
+              amount: cashIn,
+              category: 'Pembatalan Transaksi Digital',
+              note: `Void Tarik Tunai ${transaction.provider}`,
+              refId: transaction.id
+            })
+          }
+          const bankOut = isCashAdmin ? transaction.nominal : transaction.nominal + transaction.adminFee
+          await financeRepo.addMutation({
+            accountId: 'acc_bank',
+            type: 'OUT',
+            amount: bankOut,
+            category: 'Pembatalan Transaksi Digital',
+            note: `Penarikan Saldo Tarik Tunai ${transaction.provider}`,
             refId: transaction.id
           })
         }
-        const bankOut = isCashAdmin ? transaction.nominal : transaction.nominal + transaction.adminFee
-        await financeRepo.addMutation({
-          accountId: 'acc_bank',
-          type: 'OUT',
-          amount: bankOut,
-          category: 'Pembatalan Transaksi Digital',
-          note: `Penarikan Saldo Tarik Tunai ${transaction.provider}`,
-          refId: transaction.id
-        })
-      }
 
-      await db.digital_transactions.update(transaction.id, {
-        status: 'CANCELLED',
-        profit: 0,
-        updatedAt: now,
-        synced: 0
+        await db.digital_transactions.update(transaction.id, {
+          status: 'CANCELLED',
+          profit: 0,
+          updatedAt: now,
+          synced: 0
+        })
       })
     }
   }

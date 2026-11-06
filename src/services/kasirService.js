@@ -1,4 +1,3 @@
-// src/services/kasirService.js
 import { db } from '../db/index.js'
 import dayjs from 'dayjs'
 import { financeRepo } from '../db/repositories/financeRepository.js'
@@ -19,10 +18,10 @@ export const kasirService = {
     let totalProfit = 0
     const stockWarnings = []
 
-    // FIX ATOMIC: bungkus semua operasi DB dalam 1 Dexie transaction biar hemat kuota & gak corrupt
+    // Atomic Dexie Transaction
     await db.transaction('rw', db.transactions, db.transaction_items, db.products, db.members, db.cash_accounts, db.cash_mutations, async () => {
       // 1. Simpan header transaksi
-      await db.transactions.add({
+      const trxHeader = {
         id, 
         date: now, 
         total, 
@@ -37,7 +36,8 @@ export const kasirService = {
         dueDate: isTempo ? dayjs().add(7, 'day').toISOString() : null,
         updatedAt: now, 
         synced: 0
-      })
+      }
+      await db.transactions.add(trxHeader)
 
       // 2. Pencatatan mutasi kas/bank
       if (paymentMethod === 'CASH') {
@@ -60,7 +60,7 @@ export const kasirService = {
         })
       }
 
-      // 3. Olah item transaksi & pemotongan stok (OPSI B: Boleh Minus)
+      // 3. Olah item transaksi & pemotongan stok
       for (const c of cart) {
         const modal = c.price_modal || 0
         const itemProfit = (c.price_sell - modal) * c.cartQty
@@ -87,7 +87,6 @@ export const kasirService = {
           const currentQty = product.qty || 0
           const newQty = currentQty - qtyDipotong
 
-          // GUARD OPSI B: Catat peringatan jika stok menjadi minus (< 0)
           if (newQty < 0) {
             stockWarnings.push(`${product.name} (Sisa Stok: ${newQty})`)
           }
