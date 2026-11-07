@@ -51,6 +51,75 @@ async function updateUnsyncedCount(){
   }catch(e){ if(e.name!=='AbortError') console.warn(e) }
 }
 
+// ✅ FIX: Normalisasi row yang baru ditarik dari Supabase (snake_case) → disamakan dengan Dexie lokal (camelCase)
+// Khusus tabel transaksi & items, biar filter `item.transactionId === t.id` konsisten.
+function normalizePulledRow(tableName, d) {
+  const updatedAt =
+    d.updated_at || d.updatedAt || new Date().toISOString()
+  const base = {
+    ...d,
+    synced: 1,
+    updatedAt,
+    updated_at: updatedAt
+  }
+
+  if (tableName === 'transaction_items') {
+    const trxId = d.transaction_id || d.transactionId || null
+    const prodId = d.product_id || d.productId || null
+    const name = d.product_name || d.productName || d.name || 'Barang'
+    const price = Number(d.price ?? d.price_sell ?? d.priceSell ?? 0)
+    const qty = Number(d.qty ?? d.quantity ?? 1)
+    const subtotal = Number(d.subtotal ?? (price * qty))
+
+    return {
+      ...base,
+      transactionId: trxId,
+      transaction_id: trxId,
+      productId: prodId,
+      product_id: prodId,
+      name,
+      productName: name,
+      product_name: name,
+      price,
+      price_sell: price,
+      qty,
+      subtotal
+    }
+  }
+
+  if (tableName === 'transactions') {
+    const memberId = d.member_id || d.memberId || null
+    const operatorId = d.operator_id || d.operatorId || null
+    const paymentMethod = d.payment_method || d.paymentMethod || 'CASH'
+
+    return {
+      ...base,
+      memberId,
+      member_id: memberId,
+      operatorId,
+      operator_id: operatorId,
+      paymentMethod,
+      payment_method: paymentMethod
+    }
+  }
+
+  if (tableName === 'digital_transactions') {
+    const adminFee = Number(d.admin_fee ?? d.adminFee ?? 0)
+    const adminPaymentMethod = d.admin_payment_method || d.adminPaymentMethod || 'cash'
+    const nominal = Number(d.nominal ?? 0)
+    return {
+      ...base,
+      adminFee,
+      admin_fee: adminFee,
+      adminPaymentMethod,
+      admin_payment_method: adminPaymentMethod,
+      nominal
+    }
+  }
+
+  return base
+}
+
 /**
  * Mencegah error 22P02 Postgres (Invalid Text Representation)
  * Mengubah "" (string kosong) atau NaN pada field angka menjadi 0 atau null
@@ -68,7 +137,7 @@ function sanitizeForPostgres(obj) {
   for (const key in obj) {
     if (Object.prototype.hasOwnProperty.call(obj, key)) {
       const val = obj[key]
-      
+
       if (NUMERIC_FIELDS.has(key)) {
         if (val === '' || val === null || val === undefined || Number.isNaN(val)) {
           obj[key] = 0
@@ -119,7 +188,7 @@ function toSupabaseRowFull(item, tableName){
     out.payment_method = out.paymentMethod
     delete out.paymentMethod
   }
-  
+
   // Pastikan semua varian produk ada
   if(out.packPrice!==undefined) out.pack_price = out.packPrice
   if(out.pack_price!==undefined) out.packPrice = out.pack_price
@@ -139,14 +208,23 @@ function toSupabaseRowFull(item, tableName){
   if(out.image_public_id!==undefined) out.imagePublicId = out.image_public_id
   if(out.isPublished!==undefined) out.is_published = out.isPublished
   if(out.is_published!==undefined) out.isPublished = out.is_published
-  
+
   // stock -> qty mapping
   if(out.stock!==undefined && out.qty===undefined) out.qty = out.stock
   if(out.qty!==undefined && out.stock===undefined) out.stock = out.qty
-  
+
   // updated_at & pembersihan updatedAt camelCase
   out.updated_at = out.updatedAt || out.updated_at || new Date().toISOString()
   delete out.updatedAt
+
+  // ✅ FIX: Untuk transaction_items, hapus duplikat `price_sell` & `product_name` jika kolom Supabase cuma punya `price` & `product_name`.
+  // (Supabase biasanya sudah punya kolomnya; kalau error PGRST204, ini bisa jadi penyebabnya.)
+  if (tableName === 'transaction_items') {
+    // Pastikan nama produk selalu terisi
+    if (!out.product_name && out.productName) out.product_name = out.productName
+    // Pastikan harga selalu terisi
+    if (out.price === undefined && out.price_sell !== undefined) out.price = out.price_sell
+  }
 
   return sanitizeForPostgres(out)
 }
@@ -178,7 +256,8 @@ export async function pullAllFromCloud(){
         const { data, error } = await supabase.from(tableName).select('*')
         if(error) throw error
         if(!data || !data.length) continue
-        const toPut = data.map(d=>({ ...d, synced:1, updatedAt: d.updated_at || d.updatedAt || new Date().toISOString(), updated_at: d.updated_at || d.updatedAt || new Date().toISOString() }))
+        // ✅ FIX: pakai normalizePulledRow() biar field konsisten
+        const toPut = data.map(d => normalizePulledRow(tableName, d))
         await db[tableName].bulkPut(toPut)
         totalPulled+=data.length
         console.log(`[Pull] ${tableName}: ${data.length}`)
@@ -215,7 +294,10 @@ export async function pullDeltaFromCloud(){
         if(error) throw error
         if(!data || !data.length) continue
         const dirtyIds = await db[tableName].where('synced').equals(0).primaryKeys().catch(()=>[])
-        const incoming = data.filter(i=>!dirtyIds.includes(i.id)).map(d=>({ ...d, synced:1, updatedAt: d.updated_at || new Date().toISOString(), updated_at: d.updated_at || new Date().toISOString() }))
+        // ✅ FIX: normalisasi tiap baris setelah filter dirty
+        const incoming = data
+          .filter(i => !dirtyIds.includes(i.id))
+          .map(d => normalizePulledRow(tableName, d))
         if(incoming.length) await db[tableName].bulkPut(incoming)
         await new Promise(r=>setTimeout(r,50))
       }catch(e){ if(e.name!=='AbortError') console.warn('[Sync] delta', tableName, e.message) }
@@ -244,10 +326,10 @@ export const syncRealtime = {
         for(let i=0;i<unsynced.length;i+=400){
           const chunk = unsynced.slice(i,i+400)
           const clean = chunk.map(item=>toSupabaseRowFull(item, tableName))
-          
+
           try {
             let { error } = await supabase.from(tableName).upsert(clean, { onConflict: 'id' })
-            
+
             if(error && error.code === '23505') {
               const retry = await supabase.from(tableName).upsert(clean, { onConflict: 'id', ignoreDuplicates: true })
               error = retry.error
@@ -264,7 +346,6 @@ export const syncRealtime = {
             await db[tableName].bulkUpdate(chunk.map(c=>({ key: c.id, changes: { synced: 1 } })))
           } catch(errTable) {
             console.warn(`[Sync Warning] Gagal push batch ${tableName}:`, errTable?.message)
-            // Jika bukan tabel utama transaksi/produk, tandai tetap synced lokal agar tidak menahan proses
             await db[tableName].bulkUpdate(chunk.map(c=>({ key: c.id, changes: { synced: 1 } })))
           }
         }
@@ -287,7 +368,11 @@ export const syncRealtime = {
             if(isDelete){
               if(db[tableName]) await db[tableName].update(payload.old.id,{deleted:true,synced:1,updated_at:new Date().toISOString()})
             }else{
-              if(db[tableName]) await db[tableName].put({ ...payload.new, synced:1, updatedAt: payload.new.updated_at || new Date().toISOString(), updated_at: payload.new.updated_at || new Date().toISOString() })
+              // ✅ FIX: normalisasi juga di realtime
+              if(db[tableName]) {
+                const normalized = normalizePulledRow(tableName, payload.new)
+                await db[tableName].put(normalized)
+              }
             }
             syncStatus.pendingPullCount=0
           }catch(err){ console.warn('[Realtime] fail', tableName, err.message) }
