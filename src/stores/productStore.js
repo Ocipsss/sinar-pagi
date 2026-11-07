@@ -36,7 +36,14 @@ export const useProductsStore = defineStore('products', {
   actions: {
     async fetch() { 
       this.loading = true
-      this.list = await productRepo.getAll()
+      const products = await productRepo.getAll()
+      
+      // Memastikan setiap objek produk memiliki properti category string
+      this.list = (products || []).map(p => ({
+        ...p,
+        category: p.category || (p.categories?.name) || 'UMUM'
+      }))
+      
       this.loading = false 
     },
     async add(payload, imageFile = null) { 

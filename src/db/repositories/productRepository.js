@@ -1,20 +1,52 @@
-
 // src/db/repositories/productRepository.js - FINAL v3 SOFT DELETE + CLOUDINARY OFFLINE-FIRST
 import { db } from '../index.js'
 import dayjs from 'dayjs'
 
 export const productRepo = {
   getAll: async () => {
-    const list = await db.products.toArray()
-    return list.filter(p => !p.deleted)
+    // 1. Ambil data produk & kategori sekaligus dari Dexie lokal (OFFLINE-FIRST)
+    const [products, categories] = await Promise.all([
+      db.products.toArray(),
+      db.categories.toArray()
+    ])
+
+    // 2. Buat Map pencarian cepat ID Kategori -> Nama Kategori
+    const categoryMap = new Map(categories.map(c => [c.id, c.name]))
+
+    // 3. Filter produk aktif dan tempelkan nama kategori ke properti 'category'
+    return products
+      .filter(p => !p.deleted)
+      .map(p => ({
+        ...p,
+        category: p.category || categoryMap.get(p.category_id || p.categoryId) || 'UMUM'
+      }))
   },
   getById: async (id) => {
     const item = await db.products.get(id)
-    return item && !item.deleted ? item : null
+    if (!item || item.deleted) return null
+
+    // Tempelkan nama kategori jika ada
+    if (item.category_id || item.categoryId) {
+      const cat = await db.categories.get(item.category_id || item.categoryId)
+      return {
+        ...item,
+        category: item.category || cat?.name || 'UMUM'
+      }
+    }
+    return { ...item, category: item.category || 'UMUM' }
   },
   getByCode: async (code) => {
     const item = await db.products.where('code').equals(code).first()
-    return item && !item.deleted ? item : null
+    if (!item || item.deleted) return null
+
+    if (item.category_id || item.categoryId) {
+      const cat = await db.categories.get(item.category_id || item.categoryId)
+      return {
+        ...item,
+        category: item.category || cat?.name || 'UMUM'
+      }
+    }
+    return { ...item, category: item.category || 'UMUM' }
   },
   create: async (data, imageFile = null) => {
     const id = crypto.randomUUID()

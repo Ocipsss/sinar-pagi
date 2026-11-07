@@ -17,7 +17,7 @@ function sanitizeNumber(num, defaultValue = 0, allowNegative = false) {
 }
 
 function sanitizeBackupData() {
-  console.log('🔄 Memulai sanitasi data (File: backup.json | Root: rootData.database | Purge Deleted Data | Full snake_case)...');
+  console.log('🔄 Memulai sanitasi data (Fix Mapping Kategori & 16 Tabel)...');
 
   if (!fs.existsSync(INPUT_FILE)) {
     console.error(`❌ File input tidak ditemukan: ${INPUT_FILE}`);
@@ -27,65 +27,93 @@ function sanitizeBackupData() {
   try {
     const rawData = fs.readFileSync(INPUT_FILE, 'utf-8');
     const rootData = JSON.parse(rawData);
-    // Membaca root wrapper sesuai script referensi
-    const dbData = rootData.database || rootData;
+    const dbData = rootData.database || rootData.data || rootData;
     const nowIso = new Date().toISOString();
 
     const rawProducts = Array.isArray(dbData.products) ? dbData.products : [];
 
-    // 1. KATEGORI (`categories`)
-    const categoryMap = new Map();
-    let catCounter = 1;
+    // 1. KATEGORI (`categories`) - Dual Map (ID & Nama)
+    const categoryNameMap = new Map();
+    const categoryIdMap = new Map();
 
+    // A. Muat kategori resmi dari array dbData.categories (Pertahankan ID/UUID asli)
     if (Array.isArray(dbData.categories)) {
       dbData.categories
         .filter((cat) => !cat.deleted)
         .forEach((cat) => {
           const catName = sanitizeString(cat.name, '').toUpperCase();
+          const catId = sanitizeString(cat.id) || crypto.randomUUID();
           if (catName) {
-            const id = sanitizeString(cat.id, `CAT-${String(catCounter++).padStart(3, '0')}`);
-            categoryMap.set(catName, {
-              id,
+            const catObj = {
+              id: catId,
               name: catName,
               deleted: false,
               created_at: cat.created_at || cat.createdAt || nowIso,
               updated_at: cat.updated_at || cat.updatedAt || nowIso
-            });
+            };
+            categoryNameMap.set(catName, catObj);
+            categoryIdMap.set(catId, catObj);
           }
         });
     }
 
+    // B. Pindai produk, daftarkan nama kategori baru dari prod.category jika belum ada di categories
     rawProducts
       .filter((prod) => !prod.deleted)
       .forEach((prod) => {
-        const catName = sanitizeString(prod.category, 'UMUM').toUpperCase();
-        if (!categoryMap.has(catName)) {
-          const id = `CAT-${String(catCounter++).padStart(3, '0')}`;
-          categoryMap.set(catName, {
-            id,
+        let rawCat = prod.category || prod.category_name || prod.categoryName;
+        const prodCatId = prod.category_id || prod.categoryId;
+
+        if (prodCatId && categoryIdMap.has(prodCatId)) {
+          rawCat = categoryIdMap.get(prodCatId).name;
+        }
+
+        const catName = sanitizeString(rawCat, 'UMUM').toUpperCase();
+        if (!categoryNameMap.has(catName)) {
+          const newId = crypto.randomUUID();
+          const catObj = {
+            id: newId,
             name: catName,
             deleted: false,
             created_at: nowIso,
             updated_at: nowIso
-          });
+          };
+          categoryNameMap.set(catName, catObj);
+          categoryIdMap.set(newId, catObj);
         }
       });
 
-    const sanitizedCategories = Array.from(categoryMap.values());
+    const sanitizedCategories = Array.from(categoryNameMap.values());
 
     // 2. PRODUK (`products`)
     const sanitizedProducts = rawProducts
       .filter((prod) => !prod.deleted)
       .map((prod) => {
-        const catName = sanitizeString(prod.category, 'UMUM').toUpperCase();
-        const catObj = categoryMap.get(catName);
+        let catObj = null;
+
+        // Step 1: Cek via string prod.category ("MINUMAN SACHET", dsb)
+        const rawCatName = sanitizeString(prod.category || prod.category_name || prod.categoryName);
+        if (rawCatName) {
+          catObj = categoryNameMap.get(rawCatName.toUpperCase());
+        }
+
+        // Step 2: Fallback via category_id/categoryId
+        if (!catObj) {
+          const rawCatId = prod.category_id || prod.categoryId;
+          if (rawCatId) catObj = categoryIdMap.get(rawCatId);
+        }
+
         const cleanStock = sanitizeNumber(prod.stock || prod.qty, 0, false);
         const modalPrice = sanitizeNumber(prod.price_modal || prod.modalPrice || prod.price_buy, 0);
         const sellPrice = sanitizeNumber(prod.price_sell || prod.sellPrice || prod.price, 0);
 
+        // Ambil Nama Kategori Asli (misal: "MINUMAN SACHET")
+        const categoryName = catObj ? catObj.name : (rawCatName ? rawCatName.toUpperCase() : 'UMUM');
+
         return {
           id: sanitizeString(prod.id) || crypto.randomUUID(),
-          category_id: catObj ? catObj.id : null,
+          category_id: catObj ? catObj.id : null, // UUID untuk Foreign Key Supabase
+          category: categoryName,                 // String Nama Kategori untuk Aplikasi
           code: sanitizeString(prod.code || prod.barcode, ''),
           barcode: sanitizeString(prod.barcode || prod.code, ''),
           name: sanitizeString(prod.name, 'Tanpa Nama'),
@@ -387,7 +415,7 @@ function sanitizeBackupData() {
       }))
       .filter((st) => st.id);
 
-    // HASIL FINAL JSON MEMILIKI 16 TABEL LENGKAP
+    // HASIL FINAL JSON DENGAN 16 TABEL LENGKAP
     const sanitizedData = {
       app: sanitizeString(rootData.app || dbData.app, 'Sinar Pagi POS'),
       version: sanitizeString(rootData.version || dbData.version, '1.0.0'),
