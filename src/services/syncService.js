@@ -226,6 +226,8 @@ export async function pullDeltaFromCloud(){
 }
 
 export const syncRealtime = {
+  pullAllFromCloud,
+  pullDeltaFromCloud,
   toggleAutoSync(enabled){
     syncStatus.isAutoSyncEnabled=enabled
     localStorage.setItem('auto_sync_enabled', enabled?'true':'false')

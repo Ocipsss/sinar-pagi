@@ -1,3 +1,4 @@
+// src/stores/operatorStore.js - FINAL CLEAN
 import { defineStore } from 'pinia'
 import { operatorRepo } from '../db/repositories/operatorRepository.js'
 import { syncService } from '../services/syncService.js'
@@ -38,9 +39,15 @@ export const useOperatorStore = defineStore('operator', {
       try {
         let list = await operatorRepo.getAll()
 
-        // Jika lokal kosong dan online, coba tarik dulu dari cloud
+        // Jika lokal kosong dan online, coba tarik dulu dari cloud (dengan safe-check fungsi sync)
         if (list.length === 0 && navigator.onLine) {
-          await syncService.pullAllFromCloud()
+          if (typeof syncService.pullAllFromCloud === 'function') {
+            await syncService.pullAllFromCloud()
+          } else if (typeof syncService.syncFromCloud === 'function') {
+            await syncService.syncFromCloud()
+          } else if (typeof syncService.pull === 'function') {
+            await syncService.pull()
+          }
           list = await operatorRepo.getAll()
         }
 
@@ -77,7 +84,7 @@ export const useOperatorStore = defineStore('operator', {
         synced: 0
       }
 
-      // Gunakan put agar menimpa record ID op-admin yang ada (tidak membuat ID baru)
+      // Gunakan put agar menimpa record ID op-admin yang ada
       const table = db.operators || db.table('operators')
       await table.put(adminObj)
       await this.loadOperators()
