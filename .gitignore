@@ -1,4 +1,6 @@
-# Logs
+# -----------------------------------------------------------------------------
+# LOGS & TEMPORARY FILES
+# -----------------------------------------------------------------------------
 logs
 *.log
 npm-debug.log*
@@ -7,18 +9,36 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
+# -----------------------------------------------------------------------------
+# DEPENDENCIES & BUILD OUTPUT
+# -----------------------------------------------------------------------------
+node_modules/
+dist/
+dist-ssr/
 *.local
+
+# -----------------------------------------------------------------------------
+# ENVIRONMENT VARIABLES & SECRETS (SANGAT IMPORTANT)
+# -----------------------------------------------------------------------------
 .env
 .env.*
 !.env.example
 
-# Editor directories and files
+# -----------------------------------------------------------------------------
+# DATABASE BACKUP & SANITIZATION SCRIPTS (FILE SENSITIF DATA WARUNG)
+# -----------------------------------------------------------------------------
+backup*.json
+scripts/*.json
+!scripts/package.json
+src.txt
+sanitize1.js
+
+# -----------------------------------------------------------------------------
+# EDITOR DIRECTORIES & SYSTEM FILES
+# -----------------------------------------------------------------------------
 .vscode/*
 !.vscode/extensions.json
-.idea
+.idea/
 .DS_Store
 *.suo
 *.ntvs*
