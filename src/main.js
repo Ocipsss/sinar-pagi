@@ -8,6 +8,10 @@ import App from './App.vue'
 import { router } from './router/index.js'
 import { syncRealtime as syncService } from './services/syncService.js'
 import { initDeviceAuth } from './services/authService.js'
+import { db } from './db/index.js'
+
+// Debug helper (dev only) — bisa diakses via window.db di Console
+if (import.meta.env.DEV) window.db = db
 
 // di main.js paling atas, di bawah import
 window.addEventListener('unhandledrejection', (e) => {

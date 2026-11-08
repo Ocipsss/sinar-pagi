@@ -12,16 +12,27 @@ export const receiptService = {
       throw new Error('Browser ini belum mendukung Web Bluetooth. Gunakan Chrome di Android.')
     }
 
-    const { printerCharacteristic, isConnected, connectPrinter } = usePrinter()
+    // ✅ FIX: usePrinter() mengembalikan ref (state global module-level).
+    // Jangan destructure .value langsung tanpa guard, dan panggil connectPrinter() bila belum nyambung.
+    const printer = usePrinter()
 
-    let targetChar = printerCharacteristic.value
+    // Baca characteristic yang sudah tersimpan (bisa null)
+    let targetChar = printer.printerCharacteristic?.value || null
 
-    if (!isConnected.value || !targetChar) {
-      targetChar = await connectPrinter()
+    // Kalau belum connect / belum ada char, minta user untuk connect
+    if (!printer.isConnected?.value || !targetChar) {
+      targetChar = await printer.connectPrinter()
     }
 
     if (!targetChar) {
       throw new Error('Printer Bluetooth tidak terhubung.')
+    }
+
+    // ✅ FIX: pastikan characteristic punya method write sebelum dipakai
+    const canWrite =
+      targetChar.properties?.writeWithoutResponse || targetChar.properties?.write
+    if (!canWrite) {
+      throw new Error('Karakteristik printer tidak mendukung write. Coba printer lain.')
     }
 
     const settings = await settingsRepo.getSettings()
@@ -124,16 +135,20 @@ export const receiptService = {
       .cut()
       .encode()
 
-    // Kirim chunk data via Bluetooth
+    // ✅ FIX: bungkus pengiriman chunk agar error Bluetooth tidak jadi stack trace mentah
     const chunkSize = 20
-    for (let i = 0; i < fullData.length; i += chunkSize) {
-      const chunk = fullData.slice(i, i + chunkSize)
-      if (targetChar.properties?.writeWithoutResponse) {
-        await targetChar.writeValueWithoutResponse(chunk)
-      } else if (targetChar.properties?.write) {
-        await targetChar.writeValue(chunk)
+    try {
+      for (let i = 0; i < fullData.length; i += chunkSize) {
+        const chunk = fullData.slice(i, i + chunkSize)
+        if (targetChar.properties?.writeWithoutResponse) {
+          await targetChar.writeValueWithoutResponse(chunk)
+        } else {
+          await targetChar.writeValue(chunk)
+        }
+        await new Promise(resolve => setTimeout(resolve, 30))
       }
-      await new Promise(resolve => setTimeout(resolve, 30))
+    } catch (err) {
+      throw new Error(`Gagal kirim data ke printer: ${err.message}`)
     }
   },
 

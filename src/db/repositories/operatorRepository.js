@@ -1,23 +1,8 @@
 // src/db/repositories/operatorRepository.js
 import { db } from '../index.js'
 import dayjs from 'dayjs'
-
-async function hashPin(pin) {
-  if (!pin) return ''
-  const str = String(pin)
-  // kalo udah 64 char hex (udah ke-hash) jangan di-hash lagi biar gak double
-  if (/^[a-f0-9]{64}$/i.test(str)) return str.toLowerCase()
-  try {
-    const encoder = new TextEncoder()
-    const data = encoder.encode(str)
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data)
-    const hashArray = Array.from(new Uint8Array(hashBuffer))
-    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
-  } catch {
-    // fallback kalo crypto.subtle gak ada di webview jadul, jangan crash
-    return str
-  }
-}
+// ✅ FIX (3.9): pakai hashPin dari satu sumber
+import { hashPin } from '../../utils/crypto.js'
 
 export const operatorRepo = {
   getAll: async () => {

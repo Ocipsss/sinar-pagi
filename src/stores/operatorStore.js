@@ -1,22 +1,9 @@
 import { defineStore } from 'pinia'
 import { operatorRepo } from '../db/repositories/operatorRepository.js'
-import { syncService } from '../services/syncService.js'
+import { syncService, pullAllFromCloud } from '../services/syncService.js'
 import { db } from '../db/index.js'
-
-async function hashPin(pin) {
-  if (!pin) return ''
-  const str = String(pin)
-  if (/^[a-f0-9]{64}$/i.test(str)) return str.toLowerCase()
-  try {
-    const encoder = new TextEncoder()
-    const data = encoder.encode(str)
-    const hashBuffer = await crypto.subtle.digest('SHA-256', data)
-    const hashArray = Array.from(new Uint8Array(hashBuffer))
-    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('')
-  } catch {
-    return str
-  }
-}
+// ✅ FIX (3.9): pakai hashPin dari satu sumber (utils/crypto.js)
+import { hashPin } from '../utils/crypto.js'
 
 export const useOperatorStore = defineStore('operator', {
   state: () => ({
@@ -40,7 +27,8 @@ export const useOperatorStore = defineStore('operator', {
 
         // Jika lokal kosong dan online, coba tarik dulu dari cloud
         if (list.length === 0 && navigator.onLine) {
-          await syncService.pullAllFromCloud()
+          // ✅ FIX: pullAllFromCloud adalah named export, bukan method syncService
+          await pullAllFromCloud()
           list = await operatorRepo.getAll()
         }
 

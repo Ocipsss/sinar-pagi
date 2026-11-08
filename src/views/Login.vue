@@ -83,7 +83,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useOperatorStore } from '../stores/operatorStore.js'
-import { syncService } from '../services/syncService.js'
+import { syncService, pullAllFromCloud } from '../services/syncService.js'
 import { supabase } from '../services/supabase.js'
 import { toast } from 'vue-sonner'
 import Numpad from '../components/Numpad.vue'
@@ -100,14 +100,17 @@ const activeSelectedOperator = computed(() => {
   return operatorStore.operators.find(o => o.id === selectedOperatorId.value)
 })
 
+// ✅ FIX (3.3): Supabase tidak punya signInAnonymously. Cukup cek session yang ada.
+// Kalau tidak ada session, aplikasi tetap jalan (RLS Supabase harus mengizinkan anon role
+// untuk tabel yang memang publik seperti products/categories).
 const ensureSupabaseSession = async () => {
   try {
     const { data: { session } } = await supabase.auth.getSession()
-    if (!session && navigator.onLine) {
-      await supabase.auth.signInAnonymously()
+    if (!session) {
+      console.log('[Auth] Belum ada session Supabase, lanjut mode lokal/anon.')
     }
   } catch (err) {
-    console.warn('[Auth] Anonymous session check warning:', err.message)
+    console.warn('[Auth] Cek session gagal:', err.message)
   }
 }
 
@@ -118,7 +121,8 @@ const loadOperators = async () => {
     
     // Jika lokal masih kosong dan online, coba narik dari cloud
     if (operatorStore.operators.length === 0 && navigator.onLine) {
-      await syncService.pullAllFromCloud()
+      // ✅ FIX: pullAllFromCloud adalah named export, bukan method syncService
+      await pullAllFromCloud()
       await operatorStore.loadOperators()
     }
 
