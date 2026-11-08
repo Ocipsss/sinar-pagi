@@ -411,11 +411,10 @@ const onCheckout = async () => {
     const currentMethodSnapshot = store.paymentMethod
     const currentPaidSnapshot = store.bayarNominal
 
-    const currentOperatorName = operatorStore.operatorName || (
-      typeof operatorStore.activeOperator === 'object' && operatorStore.activeOperator !== null 
-        ? (operatorStore.activeOperator.name || 'Admin')
-        : (operatorStore.activeOperator || 'Admin')
-    )
+    // ✅ FIX (3.18): Ambil nama operator langsung dari getter store.
+    // Getter operatorName sudah menjamin string (fallback 'Kasir'),
+    // jadi fallback berlapis lama ke `activeOperator` (yang tidak ada) dihapus.
+    const currentOperatorName = operatorStore.operatorName
 
     const res = await checkout()
     

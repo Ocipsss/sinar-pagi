@@ -70,22 +70,57 @@ export function useReports() {
   const omzetBarang = computed(() => filteredTransactions.value.reduce((s, t) => s + (t.total || 0), 0))
   const countBarang = computed(() => filteredTransactions.value.length)
 
+  // ✅ FIX (3.11): profit dihitung apa adanya (bisa negatif kalau jual rugi)
+  // Tidak lagi di-clamp 0, supaya laporan tidak menyembunyikan kerugian.
   const profitBarang = computed(() => {
     const validTrxIds = new Set(filteredTransactions.value.map(t => t.id))
     const items = rawTransactionItems.value.filter(i => validTrxIds.has(i.transactionId))
     
     return items.reduce((sum, item) => {
       const prod = productsMap.value.get(item.productId)
-      const modal = prod?.price_modal || 0
-      const profitPerPcs = (item.price || 0) - modal
-      return sum + (Math.max(0, profitPerPcs) * (item.qty || 1))
+      const modal = Number(prod?.price_modal || 0)
+      const price = Number(item.price || 0)
+      const qty = Number(item.qty || 1)
+      const profitPerPcs = price - modal
+      // Biarkan negatif kalau rugi
+      return sum + (profitPerPcs * qty)
+    }, 0)
+  })
+
+  // ✅ BARU: khusus kerugian (untuk audit, opsional ditampilkan di UI)
+  // Hanya menjumlahkan item yang profit per pcs-nya negatif.
+  const profitRugiBarang = computed(() => {
+    const validTrxIds = new Set(filteredTransactions.value.map(t => t.id))
+    const items = rawTransactionItems.value.filter(i => validTrxIds.has(i.transactionId))
+    
+    return items.reduce((sum, item) => {
+      const prod = productsMap.value.get(item.productId)
+      const modal = Number(prod?.price_modal || 0)
+      const price = Number(item.price || 0)
+      const qty = Number(item.qty || 1)
+      const profitPerPcs = price - modal
+      // Ambil hanya yang rugi (negatif)
+      return sum + (profitPerPcs < 0 ? (profitPerPcs * qty) : 0)
     }, 0)
   })
 
   const profitDigital = computed(() => filteredDigitalTransactions.value.reduce((s, d) => s + (d.profit || d.adminFee || 0), 0))
   const countDigital = computed(() => filteredDigitalTransactions.value.length)
 
-  const totalOmzet = computed(() => omzetBarang.value + profitDigital.value)
+  // ✅ FIX (3.12): pisahkan omzet digital (nilai transaksi) dari profit digital (admin fee)
+  // Sebelumnya totalOmzet = omzetBarang + profitDigital (salah, campur omzet vs laba).
+  // Sekarang: totalOmzet = omzetBarang + omzetDigital.
+  const omzetDigital = computed(() => {
+    return filteredDigitalTransactions.value.reduce((s, d) => {
+      const nominal = Number(d.nominal || 0)
+      const adminFee = Number(d.adminFee || 0)
+      const totalReceived = Number(d.totalReceived || 0)
+      // Prioritas: totalReceived (kalau ada), kalau tidak nominal + adminFee
+      return s + (totalReceived > 0 ? totalReceived : (nominal + adminFee))
+    }, 0)
+  })
+
+  const totalOmzet = computed(() => omzetBarang.value + omzetDigital.value)
   const totalProfit = computed(() => profitBarang.value + profitDigital.value)
   const totalTrxCount = computed(() => countBarang.value + countDigital.value)
 
@@ -116,9 +151,12 @@ export function useReports() {
     totalProfit,
     totalTrxCount,
     profitBarang,
+    profitRugiBarang,   // ✅ baru
     countBarang,
     profitDigital,
     countDigital,
+    omzetBarang,        // ✅ baru (dipisah dari totalOmzet)
+    omzetDigital,       // ✅ baru
     omzetCash,
     omzetQRIS,
     omzetTempo,
