@@ -323,4 +323,16 @@ Sebelum commit perubahan yang menyentuh alur uang atau sync, tes minimal:
 
 ---
 
-*Terakhir diperbarui: sesi perbaikan bug P0 #1, #2 (activeOperator, amountPaid/change).*
+*
+## Keep-Alive Strategy
+
+Semua halaman **di-cache** oleh `<keep-alive>` agar state form/pencarian
+tetap utuh saat user pindah halaman dan kembali.
+
+Konsekuensi:
+- `ProductForm.vue` **tidak boleh** reset form di `onActivated`.
+  Reset hanya terjadi setelah submit sukses atau user klik "Batal".
+- `Kasir.vue` load data via `watch(route.path)` (bukan hanya `onMounted`)
+  agar data produk tetap fresh, sementara cart tetap dipertahankan.
+- Halaman yang **tidak** ingin di-cache harus punya `defineOptions({ name: '...' })`
+  dan ditambahkan ke `exclude` di `MainLayout.vue`.
