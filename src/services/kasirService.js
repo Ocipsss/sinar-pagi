@@ -3,17 +3,43 @@ import dayjs from 'dayjs'
 import { financeRepo } from '../db/repositories/financeRepository.js'
 
 export const kasirService = {
-  async checkout({ cart, member, paymentMethod, operator }) {
+  async checkout({ cart, member, paymentMethod, operator, amountPaid, change }) {
     const now = dayjs().toISOString()
     const id = crypto.randomUUID()
-    const total = cart.reduce((s, c) => s + (c.price_sell * c.cartQty), 0)
+
+    // GUARD 2: Validasi keranjang tidak boleh kosong (dicek dulu sebelum hitung)
+    if (!cart || cart.length === 0) throw new Error('Keranjang belanja masih kosong!')
+
+    const total = Math.round(cart.reduce((s, c) => s + (Number(c.price_sell) * Number(c.cartQty)), 0))
     const isTempo = paymentMethod === 'TEMPO'
+    const isCash = paymentMethod === 'CASH'
+    const isQris = paymentMethod === 'QRIS'
 
     // GUARD 1: Validasi metode TEMPO wajib memilih member
     if (isTempo && !member) throw new Error('Member wajib dipilih untuk metode pembayaran TEMPO!')
-    
-    // GUARD 2: Validasi keranjang tidak boleh kosong
-    if (!cart || cart.length === 0) throw new Error('Keranjang belanja masih kosong!')
+
+    // ✅ FIX P0: Normalisasi amountPaid & change dari caller
+    // - TEMPO: 0 (belum bayar)
+    // - QRIS: pas total (uang elektronik)
+    // - CASH: nominal uang diterima user (bisa >= total), change = kembalian
+    let finalAmountPaid
+    let finalChange
+
+    if (isTempo) {
+      finalAmountPaid = 0
+      finalChange = 0
+    } else if (isQris) {
+      finalAmountPaid = total
+      finalChange = 0
+    } else {
+      // CASH
+      const paid = Number(amountPaid)
+      finalAmountPaid = Number.isFinite(paid) && paid > 0 ? Math.round(paid) : total
+      finalChange = Math.max(0, finalAmountPaid - total)
+    }
+
+    // Uang yang benar-benar masuk laci (untuk CASH) = total (setelah dikurangi kembalian)
+    const cashIn = isCash ? Math.max(0, finalAmountPaid - finalChange) : 0
 
     let totalProfit = 0
     const stockWarnings = []
@@ -29,8 +55,10 @@ export const kasirService = {
         operatorId: operator?.id || null,
         operatorName: operator?.name || 'Kasir',
         paymentMethod, 
-        amountPaid: isTempo ? 0 : total, 
-        paidAmount: isTempo ? 0 : total,
+        amountPaid: finalAmountPaid,
+        paidAmount: finalAmountPaid,
+        change: finalChange,
+        changeAmount: finalChange,
         remaining: isTempo ? total : 0, 
         status: isTempo ? 'unpaid' : 'paid',
         dueDate: isTempo ? dayjs().add(7, 'day').toISOString() : null,
@@ -40,30 +68,38 @@ export const kasirService = {
       await db.transactions.add(trxHeader)
 
       // 2. Pencatatan mutasi kas/bank
-      if (paymentMethod === 'CASH') {
-        await financeRepo.addMutation({
-          accountId: 'acc_cash',
-          type: 'IN',
-          amount: total,
-          category: 'Penjualan Toko',
-          note: `Transaksi Kasir (${operator?.name || 'Kasir'}) #${id.slice(0, 8)}`,
-          refId: id
-        })
-      } else if (paymentMethod === 'QRIS') {
-        await financeRepo.addMutation({
-          accountId: 'acc_bank',
-          type: 'IN',
-          amount: total,
-          category: 'Penjualan Toko',
-          note: `Transaksi QRIS (${operator?.name || 'Kasir'}) #${id.slice(0, 8)}`,
-          refId: id
-        })
+      if (isCash) {
+        // ✅ FIX: catat uang yang benar-benar masuk laci (= total setelah kembalian)
+        if (cashIn > 0) {
+          await financeRepo.addMutation({
+            accountId: 'acc_cash',
+            type: 'IN',
+            amount: cashIn,
+            category: 'Penjualan Toko',
+            note: `Transaksi Kasir (${operator?.name || 'Kasir'}) #${id.slice(0, 8)}`,
+            refId: id
+          })
+        }
+      } else if (isQris) {
+        if (total > 0) {
+          await financeRepo.addMutation({
+            accountId: 'acc_bank',
+            type: 'IN',
+            amount: total,
+            category: 'Penjualan Toko',
+            note: `Transaksi QRIS (${operator?.name || 'Kasir'}) #${id.slice(0, 8)}`,
+            refId: id
+          })
+        }
       }
+      // TEMPO: tidak ada mutasi kas sampai member bayar utang
 
       // 3. Olah item transaksi & pemotongan stok
       for (const c of cart) {
-        const modal = c.price_modal || 0
-        const itemProfit = (c.price_sell - modal) * c.cartQty
+        const modal = Number(c.price_modal) || 0
+        const priceSell = Number(c.price_sell) || 0
+        const qty = Number(c.cartQty) || 0
+        const itemProfit = (priceSell - modal) * qty
         totalProfit += Math.max(0, itemProfit)
 
         // Simpan item transaksi
@@ -73,9 +109,9 @@ export const kasirService = {
           productId: c.id,
           serviceId: c.isServed ? 'SERVICE_SEDUH' : null, 
           name: c.name, 
-          qty: c.cartQty, 
-          price: c.price_sell,
-          subtotal: c.price_sell * c.cartQty, 
+          qty, 
+          price: priceSell,
+          subtotal: priceSell * qty, 
           updatedAt: now, 
           synced: 0
         })
@@ -83,8 +119,8 @@ export const kasirService = {
         // Cek ketersediaan produk di database
         const product = await db.products.get(c.id)
         if (product) {
-          const qtyDipotong = c.packageInfo ? (c.packageInfo.qty_pcs * c.cartQty) : c.cartQty
-          const currentQty = product.qty || 0
+          const qtyDipotong = c.packageInfo ? ((Number(c.packageInfo.qty_pcs) || 1) * qty) : qty
+          const currentQty = Number(product.qty) || 0
           const newQty = currentQty - qtyDipotong
 
           if (newQty < 0) {

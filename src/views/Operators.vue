@@ -38,17 +38,23 @@
       >
         <div class="flex items-center gap-3">
           <div class="w-10 h-10 bg-zinc-900 text-white rounded-xl flex items-center justify-center font-black text-sm shrink-0">
-            {{ op.name.charAt(0).toUpperCase() }}
+            {{ (op.name || '?').charAt(0).toUpperCase() }}
           </div>
           <div>
             <div class="font-bold text-sm text-zinc-900 flex items-center gap-2">
-              <span>{{ op.name }}</span>
+              <span>{{ op.name || '(Tanpa Nama)' }}</span>
               <span class="px-2 py-0.5 bg-zinc-100 text-zinc-700 rounded-md text-[9px] font-black uppercase">
-                {{ op.role }}
+                {{ op.role || 'Kasir' }}
               </span>
             </div>
-            <div class="text-[11px] text-zinc-400 mt-0.5">
-              PIN: {{ op.pin ? '••••' : 'Tanpa PIN' }}
+            <!-- ✅ FIX P1 #5 (UX): status PIN lebih jelas -->
+            <div class="text-[11px] mt-0.5">
+              <span v-if="op.pin" class="inline-flex items-center gap-1 text-emerald-600 font-bold">
+                <span class="w-1.5 h-1.5 bg-emerald-500 rounded-full"></span> PIN aktif
+              </span>
+              <span v-else class="inline-flex items-center gap-1 text-zinc-400 font-bold">
+                <span class="w-1.5 h-1.5 bg-zinc-300 rounded-full"></span> Tanpa PIN
+              </span>
             </div>
           </div>
         </div>
@@ -65,7 +71,11 @@
     </div>
 
     <!-- Modal Form (Tambah / Edit Operator) -->
-    <div v-if="showModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+    <div 
+      v-if="showModal" 
+      class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4"
+      @keydown.esc="showModal = false"
+    >
       <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl animate-in slide-in-from-bottom duration-200">
         <div class="flex justify-between items-center mb-4">
           <h2 class="font-black text-base">{{ editingId ? 'Edit Operator' : 'Tambah Operator Baru' }}</h2>
@@ -89,8 +99,28 @@
           </div>
 
           <div>
-            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">PIN Otorisasi (Opsional)</label>
-            <input v-model="form.pin" type="password" maxlength="6" placeholder="Misal: 1234" class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold" />
+            <!-- ✅ FIX P1 #5 (UX): label dinamis -->
+            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">
+              {{ editingId ? 'PIN Otorisasi (Kosongkan jika tidak ganti)' : 'PIN Otorisasi (Opsional, 4–6 digit)' }}
+            </label>
+            <input 
+              v-model="form.pin" 
+              type="password" 
+              inputmode="numeric" 
+              pattern="[0-9]*" 
+              maxlength="6" 
+              autocomplete="new-password"
+              :placeholder="editingId ? 'Kosongkan jika tidak ingin ganti PIN' : 'Misal: 1234 (4–6 digit)'" 
+              @input="form.pin = String(form.pin || '').replace(/\D/g, '').slice(0, 6)"
+              class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold tracking-widest" 
+            />
+            <!-- ✅ FIX P1 #5 (UX): hint mode edit -->
+            <p v-if="editingId" class="text-[10px] text-zinc-400 mt-1 leading-relaxed">
+              Isi hanya kalau ingin <b>mengganti</b> PIN. Kosongkan = PIN lama tetap dipakai.
+            </p>
+            <p v-else class="text-[10px] text-zinc-400 mt-1 leading-relaxed">
+              Kosongkan kalau operator ini boleh masuk tanpa PIN.
+            </p>
           </div>
 
           <div class="flex gap-2 pt-2">

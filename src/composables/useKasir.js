@@ -135,9 +135,46 @@ export function useKasir() {
     q.value = ''
   }
 
+  // ✅ FIX P0: Ambil operator aktif dari currentOperator (bukan activeOperator yang tidak ada)
+  const getActiveOperator = () => {
+    const op = operatorStore.currentOperator
+    if (!op) {
+      // Fallback aman: jangan sampai undefined masuk ke service
+      return { id: null, name: operatorStore.operatorName || 'Kasir' }
+    }
+    return { id: op.id || null, name: op.name || 'Kasir' }
+  }
+
   const checkout = async () => {
-    if (store.paymentMethod === 'TEMPO' && !store.selectedMember) throw new Error('Pilih member untuk TEMPO')
-    if (store.paymentMethod === 'CASH' && store.bayarNominal < total.value) throw new Error('Nominal kurang')
+    // ✅ GUARD: keranjang tidak boleh kosong
+    if (!store.cart || store.cart.length === 0) {
+      throw new Error('Keranjang belanja masih kosong!')
+    }
+
+    if (store.paymentMethod === 'TEMPO' && !store.selectedMember) {
+      throw new Error('Pilih member untuk TEMPO')
+    }
+    if (store.paymentMethod === 'CASH' && store.bayarNominal < total.value) {
+      throw new Error('Nominal kurang')
+    }
+
+    // ✅ FIX P0: Hitung amountPaid & change yang benar (bukan selalu = total)
+    // - TEMPO: 0 (belum bayar)
+    // - QRIS: pas total (uang elektronik)
+    // - CASH: nominal uang diterima user (bisa lebih → kembalian)
+    const finalAmountPaid =
+      store.paymentMethod === 'TEMPO'
+        ? 0
+        : store.paymentMethod === 'QRIS'
+          ? total.value
+          : (Number(store.bayarNominal) || 0)
+
+    const finalChange =
+      store.paymentMethod === 'CASH'
+        ? Math.max(0, finalAmountPaid - total.value)
+        : 0
+
+    const activeOperator = getActiveOperator()
 
     if (store.editingTransactionId) {
       const originalTrx = {
@@ -156,7 +193,8 @@ export function useKasir() {
       const newPaymentData = {
         paymentMethod: store.paymentMethod,
         memberId: store.selectedMember?.id || null,
-        amountPaid: store.paymentMethod === 'TEMPO' ? 0 : store.paymentMethod === 'QRIS' ? total.value : store.bayarNominal
+        amountPaid: finalAmountPaid,
+        change: finalChange
       }
       const res = await salesHistoryService.updateTransaction(originalTrx, updatedItems, newPaymentData)
       store.clearCart()
@@ -167,8 +205,9 @@ export function useKasir() {
       cart: store.cart,
       member: store.selectedMember,
       paymentMethod: store.paymentMethod,
-      operator: operatorStore.activeOperator,
-      amountPaid: store.paymentMethod === 'TEMPO' ? 0 : store.paymentMethod === 'QRIS' ? total.value : store.bayarNominal
+      operator: activeOperator,
+      amountPaid: finalAmountPaid,
+      change: finalChange
     })
     store.clearCart()
     return res

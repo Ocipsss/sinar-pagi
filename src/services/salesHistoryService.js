@@ -60,6 +60,11 @@ export const salesHistoryService = {
         }
       })
 
+      // ✅ FIX: normalisasi field pembayaran (camel + snake) biar ReceiptModal & UI aman
+      const amountPaid = Number(t.amountPaid ?? t.amount_paid ?? t.paidAmount ?? t.paid_amount ?? 0)
+      const change = Number(t.change ?? t.change_amount ?? 0)
+      const remaining = Number(t.remaining ?? 0)
+
       return {
         ...t,
         trxType: 'BARANG',
@@ -67,6 +72,14 @@ export const salesHistoryService = {
         memberName: t.memberId
           ? (memberMap.get(t.memberId) || 'Member Tidak Ditemukan')
           : 'Umum / Non-Member',
+        // ✅ FIX: pastikan field pembayaran konsisten (camel + snake)
+        amountPaid,
+        amount_paid: amountPaid,
+        paidAmount: amountPaid,
+        paid_amount: amountPaid,
+        change,
+        change_amount: change,
+        remaining,
         items
       }
     })
@@ -97,6 +110,11 @@ export const salesHistoryService = {
         status: d.status || 'SUCCESS',
         paymentMethod: isCashAdmin ? 'CASH' : 'DIGITAL_SALDO',
         memberName: `Digital: ${d.provider}`,
+        // ✅ Digital tidak punya amountPaid/change, kasih default eksplisit
+        amountPaid: 0,
+        paidAmount: 0,
+        change: 0,
+        remaining: 0,
         items: [
           {
             id: d.id,
@@ -142,6 +160,10 @@ export const salesHistoryService = {
             ? newPaymentData.memberId
             : (existingTrxHeader.memberId || null)
 
+        const isTempo = newPaymentMethod === 'TEMPO'
+        const isCash = newPaymentMethod === 'CASH'
+        const isQris = newPaymentMethod === 'QRIS'
+
         // 1. Peta kuantitas lama vs baru untuk penyesuaian stok
         const oldQtyMap = new Map()
         oldItems.forEach(i => {
@@ -158,6 +180,7 @@ export const salesHistoryService = {
             newQtyMap.set(i.productId, (newQtyMap.get(i.productId) || 0) + (Number(i.qty) || 0))
           }
         })
+        newTotal = Math.round(newTotal)
 
         // 2. Adjust stok produk berdasarkan selisih (Delta)
         const allProductIds = new Set([...oldQtyMap.keys(), ...newQtyMap.keys()])
@@ -211,16 +234,43 @@ export const salesHistoryService = {
         })
         await db.transaction_items.bulkPut(itemsToInsert)
 
-        // 4. Rekonsiliasi Mutasi Keuangan
+        // 4. ✅ FIX P0: Hitung amountPaid & change baru (konsisten dgn kasirService.checkout)
+        // - TEMPO: 0 (belum bayar), change 0
+        // - QRIS : pas newTotal, change 0
+        // - CASH : amountPaid dari caller (kalau ada), change = amountPaid - newTotal
+        let newAmountPaid
+        let newChange
+
+        if (isTempo) {
+          newAmountPaid = 0
+          newChange = 0
+        } else if (isQris) {
+          newAmountPaid = newTotal
+          newChange = 0
+        } else {
+          // CASH
+          const paidInput = Number(newPaymentData.amountPaid)
+          newAmountPaid = Number.isFinite(paidInput) && paidInput > 0
+            ? Math.round(paidInput)
+            : newTotal // fallback: uang pas
+          newChange = Math.max(0, newAmountPaid - newTotal)
+        }
+
+        const newRemaining = isTempo ? newTotal : 0
+
+        // Uang yang benar-benar masuk laci (untuk mutasi kas)
+        const newCashIn = isCash ? Math.max(0, newAmountPaid - newChange) : 0
+
+        // 5. Rekonsiliasi Mutasi Keuangan
         const oldAccId =
           existingTrxHeader.paymentMethod === 'QRIS'
             ? 'acc_bank'
             : existingTrxHeader.paymentMethod === 'CASH'
               ? 'acc_cash'
               : null
-        const newAccId =
-          newPaymentMethod === 'QRIS' ? 'acc_bank' : newPaymentMethod === 'CASH' ? 'acc_cash' : null
+        const newAccId = isQris ? 'acc_bank' : isCash ? 'acc_cash' : null
 
+        // 5a. Reverse mutasi lama (kalau ada)
         if (oldAccId && (existingTrxHeader.total || 0) > 0) {
           await financeRepo.addMutation({
             accountId: oldAccId,
@@ -232,18 +282,22 @@ export const salesHistoryService = {
           })
         }
 
-        if (newAccId && newTotal > 0) {
-          await financeRepo.addMutation({
-            accountId: newAccId,
-            type: 'IN',
-            amount: newTotal,
-            category: 'Penjualan Kasir',
-            note: `Update Nota #${originalTrx.id.slice(0, 8)}`,
-            refId: originalTrx.id
-          })
+        // 5b. Catat mutasi baru (pakai newCashIn untuk CASH, bukan newTotal mentah)
+        if (newAccId) {
+          const newMutationAmount = isCash ? newCashIn : newTotal
+          if (newMutationAmount > 0) {
+            await financeRepo.addMutation({
+              accountId: newAccId,
+              type: 'IN',
+              amount: newMutationAmount,
+              category: 'Penjualan Kasir',
+              note: `Update Nota #${originalTrx.id.slice(0, 8)}`,
+              refId: originalTrx.id
+            })
+          }
         }
 
-        // 5. Rekonsiliasi Member (Spending & Piutang)
+        // 6. Rekonsiliasi Member (Spending & Piutang)
         if (existingTrxHeader.memberId) {
           const oldMember = await memberRepo.getById(existingTrxHeader.memberId)
           if (oldMember) {
@@ -261,7 +315,7 @@ export const salesHistoryService = {
         if (newMemberId) {
           const newMember = await memberRepo.getById(newMemberId)
           if (newMember) {
-            const addedDebt = newPaymentMethod === 'TEMPO' ? newTotal : 0
+            const addedDebt = isTempo ? newTotal : 0
             await memberRepo.update(newMemberId, {
               debt: (newMember.debt || 0) + addedDebt,
               total_spending: (newMember.total_spending || 0) + newTotal,
@@ -271,19 +325,15 @@ export const salesHistoryService = {
           }
         }
 
-        // 6. Update header transaksi
-        const newAmountPaid =
-          newPaymentMethod === 'TEMPO'
-            ? 0
-            : (newPaymentData.amountPaid !== undefined ? newPaymentData.amountPaid : newTotal)
-        const newRemaining = newPaymentMethod === 'TEMPO' ? newTotal : 0
-
+        // 7. Update header transaksi
         await db.transactions.update(originalTrx.id, {
           total: newTotal,
           paymentMethod: newPaymentMethod,
           memberId: newMemberId,
           amountPaid: newAmountPaid,
           paidAmount: newAmountPaid,
+          change: newChange,
+          changeAmount: newChange,
           remaining: newRemaining,
           updatedAt: now,
           synced: 0
