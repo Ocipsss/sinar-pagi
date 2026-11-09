@@ -1,6 +1,8 @@
 import { db } from '../db/index.js'
 import dayjs from 'dayjs'
 import { financeRepo } from '../db/repositories/financeRepository.js'
+import { productRepo } from '../db/repositories/productRepository.js'
+import { memberRepo } from '../db/repositories/memberRepository.js'
 
 export const kasirService = {
   async checkout({ cart, member, paymentMethod, operator, amountPaid, change }) {
@@ -159,9 +161,11 @@ export const kasirService = {
   },
 
   async getInitialData() {
+    // ✅ FIX: pakai repository (sudah filter `deleted`) agar produk/member
+    // yang sudah dihapus TIDAK muncul di Kasir.
     const [products, members] = await Promise.all([
-      db.products.toArray(),
-      db.members.toArray()
+      productRepo.getAll(),
+      memberRepo.getAll()
     ])
     return { products, members }
   }

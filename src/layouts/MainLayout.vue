@@ -1,6 +1,5 @@
 <template>
 <div class="min-h-screen bg-zinc-900 overflow-hidden relative font-sans">
-  <!-- SIDEBAR OFF-CANVAS (Khusus Mobile HP < md) -->
   <aside 
     :class="[
       'fixed top-0 left-0 h-full w-[280px] z-[60] transition-transform duration-300 ease-in-out will-change-transform md:hidden', 
@@ -15,27 +14,20 @@
     />
   </aside>
 
-  <!-- OVERLAY SENTUH MOBILE -->
   <div 
     v-if="isOpen" 
     @click="isOpen = false" 
     class="fixed inset-0 z-[55] bg-black/40 backdrop-blur-xs cursor-pointer md:hidden"
   ></div>
 
-  <!-- OVERLAY TRANSPARAN UNTUK MENUTUP DOCK TABLET / DESKTOP -->
   <div 
     v-if="activeDropdown" 
     @click="activeDropdown = null" 
     class="hidden md:block fixed inset-0 z-30 cursor-default"
   ></div>
 
-  <!-- MAIN CONTAINER Halaman Utama -->
   <div class="min-h-screen bg-zinc-50 flex flex-col overflow-hidden h-screen transition-all">
-
-    <!-- HEADER STICKY -->
     <header class="shrink-0 h-[64px] md:h-18 w-full bg-white/80 backdrop-blur-xl border-b border-zinc-200/60 px-4 md:px-6 flex justify-between items-center z-40 sticky top-0 relative">
-      
-      <!-- KIRI: BURGER MENU (MOBILE) & LOGO BRAND -->
       <div class="flex items-center gap-3">
         <button 
           @click="isOpen = !isOpen" 
@@ -59,10 +51,7 @@
         </div>
       </div>
 
-      <!-- TENGAH (TABLET & DESKTOP): DASHBOARD + DROPDOWNS -->
       <div class="hidden md:flex items-center gap-2 bg-zinc-200/50 p-1.5 rounded-full border border-zinc-200/80">
-        
-        <!-- TOMBOL DASHBOARD LANGSUNG (KIRI) -->
         <router-link 
           to="/dashboard"
           :class="[
@@ -76,7 +65,6 @@
           <span>Dashboard</span>
         </router-link>
 
-        <!-- KATEGORI DROPDOWN (TRANSAKSI, KATALOG, KEUANGAN, SETTING) -->
         <button 
           v-for="cat in navCategories" 
           :key="cat.id"
@@ -99,7 +87,6 @@
         </button>
       </div>
 
-      <!-- FLOATING GLASSMORPHISM DOCK MACOS STYLE -->
       <div 
         v-if="activeDropdown"
         class="hidden md:flex absolute top-[calc(100%+12px)] left-1/2 -translate-x-1/2 z-50 bg-zinc-900/90 backdrop-blur-2xl text-white rounded-3xl p-3 shadow-[0_20px_60px_rgba(0,0,0,0.4)] border border-zinc-700/60 animate-in fade-in zoom-in-95 duration-150 items-center gap-2"
@@ -125,9 +112,7 @@
         </button>
       </div>
 
-      <!-- KANAN: STATUS PRINTER, CLOUD SYNC, MEMBER / KASIR -->
       <div class="flex items-center gap-2 md:gap-3">
-        <!-- TOMBOL PRINTER BLUETOOTH -->
         <button 
           @click="toggleConnection" 
           :disabled="isConnecting"
@@ -149,7 +134,6 @@
           ></span>
         </button>
 
-        <!-- INDIKATOR & TOMBOL PUSH MANUAL KE CLOUD -->
         <button 
           @click="manualSync" 
           :disabled="syncStatus.isSyncing"
@@ -181,7 +165,6 @@
           ></span>
         </button>
 
-        <!-- TOMBOL KASIR / MEMBER -->
         <router-link v-if="!isKasirPage" to="/kasir" class="p-2.5 md:p-3 bg-zinc-900 text-white rounded-xl md:rounded-2xl active:scale-95 transition" title="Ke Kasir">
           <Store class="w-5 h-5 md:w-6 md:h-6"/>
         </router-link>
@@ -191,10 +174,12 @@
       </div>
     </header>
 
-    <!-- MAIN ROUTER VIEW -->
     <main class="flex-1 overflow-hidden flex flex-col max-w-full md:max-w-4xl lg:max-w-6xl mx-auto w-full relative transition-all">
       <router-view v-slot="{ Component }">
-        <keep-alive :exclude="['ProductsAdd']">
+        <!-- ✅ FIX: Kasir tidak di-cache (data harus selalu fresh). 
+             State persist-nya sudah di Pinia kasirStore (persist: true),
+             jadi aman untuk re-mount setiap kali dibuka. -->
+        <keep-alive :exclude="['ProductsAdd', 'Kasir']">
           <component :is="Component" :key="$route.fullPath" />
         </keep-alive>
       </router-view>
@@ -226,7 +211,6 @@ const { isConnected, isConnecting, printerDevice, toggleConnection } = usePrinte
 const activePage = computed(() => route.meta.title || 'Barang')
 const isKasirPage = computed(() => route.path.startsWith('/kasir'))
 
-// STRUKTUR NAVIGASI UTAMA
 const navCategories = ref([
   {
     id: 'transaksi',
@@ -277,7 +261,6 @@ const activeCategoryItems = computed(() => {
   return cat ? cat.items : []
 })
 
-// PETA STRUKTUR UNTUK SIDEBAR MOBILE (HP)
 const groups = computed(() => {
   const result = [
     {

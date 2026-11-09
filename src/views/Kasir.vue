@@ -1,9 +1,8 @@
 <!-- src/views/Kasir.vue -->
 <template>
 <div class="flex flex-col md:flex-row flex-1 h-full overflow-hidden p-0 md:p-4 gap-4 font-sans">
-  <!-- KOLOM KIRI (TABLET): Search & Keranjang Belanja -->
+  <!-- KOLOM KIRI -->
   <div class="flex-1 flex flex-col overflow-hidden min-w-0">
-    <!-- Search & Bar Atas -->
     <div class="p-4 md:p-0 md:pb-4 shrink-0">
       <div class="relative flex gap-2">
         <div class="relative flex-1">
@@ -17,7 +16,6 @@
             class="w-full pl-11 pr-12 py-4 bg-white border border-zinc-200 rounded-2xl text-sm font-bold focus:outline-none focus:ring-2 focus:ring-zinc-900 shadow-sm"
           />
           
-          <!-- TOMBOL SCANNER KAMERA KHUSUS HP -->
           <button 
             type="button"
             @click="toggleCamera"
@@ -28,7 +26,6 @@
           </button>
         </div>
 
-        <!-- Tombol Lihat Transaksi Tertunda (Pending) -->
         <button 
           @click="showPendingModal = true" 
           class="relative px-4 bg-amber-500 text-white rounded-2xl font-bold text-xs flex items-center justify-center gap-1.5 shrink-0 active:scale-95 transition"
@@ -41,7 +38,6 @@
         </button>
       </div>
 
-      <!-- CONTAINER KAMERA SCANNER -->
       <div v-show="isScanning" class="mt-3 bg-black rounded-2xl overflow-hidden relative border border-zinc-700 shadow-lg block md:hidden">
         <div id="reader-kasir" class="w-full"></div>
         <button 
@@ -52,7 +48,6 @@
         </button>
       </div>
 
-      <!-- Dropdown Rekomendasi Barang -->
       <div v-if="showSearch && q.length > 0" class="relative">
         <div class="absolute z-30 w-full mt-2 bg-white border border-zinc-100 rounded-2xl shadow-xl max-h-[320px] overflow-auto">
           <div v-if="filteredProducts.length === 0" class="p-4 text-center text-xs text-zinc-400">
@@ -76,18 +71,15 @@
         </div>
       </div>
 
-      <!-- Pilihan Member Aktif -->
       <div v-if="store.selectedMember" class="mt-3 text-[10px] bg-zinc-900 text-white px-2.5 py-1.5 rounded-full font-black w-fit flex items-center gap-2">
         Member: {{ store.selectedMember.name }} 
         <button @click="store.selectedMember=null" class="bg-white/20 rounded-full w-4 h-4 flex items-center justify-center">✕</button>
       </div>
     </div>
 
-    <!-- Area Keranjang Belanja -->
     <div class="flex-1 overflow-auto px-4 pb-4 md:p-0">
       <div class="bg-white border border-zinc-100 rounded-[1.5rem] p-4 h-full flex flex-col">
         
-        <!-- BANNER PERINGATAN MODE EDIT NOTA -->
         <div v-if="store.editingTransactionId" class="mb-3 bg-amber-500 text-zinc-950 p-3 rounded-2xl flex items-center justify-between font-bold text-xs shadow-md shrink-0">
           <div class="flex items-center gap-2 min-w-0">
             <Pencil class="w-4 h-4 shrink-0" />
@@ -139,7 +131,6 @@
     </div>
   </div>
 
-  <!-- KOLOM KANAN (TABLET): Area Pembayaran / Checkout -->
   <div 
     v-if="store.cart.length > 0" 
     class="w-full md:w-[380px] shrink-0 bg-zinc-900 rounded-t-[2rem] md:rounded-[2rem] p-5 pb-7 md:pb-5 shadow-[0_-20px_60px_rgba(0,0,0,0.35)] md:shadow-xl flex flex-col justify-between"
@@ -201,7 +192,6 @@
       </div>
     </div>
 
-    <!-- Tombol Simpan/Bayar -->
     <button 
       v-if="store.paymentMethod==='QRIS' || store.paymentMethod==='TEMPO' || (store.paymentMethod==='CASH' && store.bayarNominal>0)" 
       :disabled="(store.paymentMethod==='CASH' && store.bayarNominal < total) || (store.paymentMethod==='TEMPO' && !store.selectedMember)" 
@@ -330,7 +320,6 @@
   </div>
 </div>
 
-<!-- Modal Struk & Cetak Nota -->
 <ReceiptModal 
   v-if="completedTransaction" 
   :transaction="completedTransaction" 
@@ -342,6 +331,7 @@
 
 <script setup>
 import { ref, onMounted, onUnmounted, onActivated, nextTick, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import { Search, X, ShoppingBag, Clock, PauseCircle, Trash2, ScanLine, Pencil } from 'lucide-vue-next'
 import { useKasir } from '../composables/useKasir.js'
 import { useProductScanner } from '../composables/useProductScanner.js'
@@ -356,7 +346,7 @@ const {
   load, handleSelectProduct, confirmAddToCart, getProductPackages, checkout, processBarcodeScan
 } = useKasir()
 
-// Menggunakan composable scanner dengan container ID "reader-kasir"
+const route = useRoute()
 const { isScanning, start, stop } = useProductScanner('reader-kasir')
 
 const searchInputRef = ref(null)
@@ -410,10 +400,6 @@ const onCheckout = async () => {
     const currentMemberSnapshot = store.selectedMember
     const currentMethodSnapshot = store.paymentMethod
     const currentPaidSnapshot = store.bayarNominal
-
-    // ✅ FIX (3.18): Ambil nama operator langsung dari getter store.
-    // Getter operatorName sudah menjamin string (fallback 'Kasir'),
-    // jadi fallback berlapis lama ke `activeOperator` (yang tidak ada) dihapus.
     const currentOperatorName = operatorStore.operatorName
 
     const res = await checkout()
@@ -461,6 +447,19 @@ watch(showMemberPicker, (isOpen) => {
     })
   }
 })
+
+// ✅ FIX: Pastikan load() jalan saat halaman Kasir aktif lagi.
+// Jaring pengaman: watch route.path. Ini akan terpicu saat Kasir aktif
+// meskipun onActivated/onMounted tidak jalan karena cache keep-alive.
+watch(
+  () => route.path,
+  (newPath) => {
+    if (newPath === '/kasir' || newPath.startsWith('/kasir')) {
+      load()
+    }
+  },
+  { immediate: false }
+)
 
 const openMemberHandler = () => showMemberPicker.value = true
 

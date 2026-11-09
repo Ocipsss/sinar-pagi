@@ -77,10 +77,8 @@ export function useKasir() {
       return ids.length > 0 && ids.includes(product.id)
     })
 
-    // Kalo ada khusus, CUMA khusus yang tampil, umum HILANG
     if (custom.length > 0) return custom
 
-    // Kalo ga ada khusus, baru tampil umum (yang ids nya kosong beneran)
     const pCat = (product.category || '').toLowerCase()
     return servicesList.value.filter(s => {
       const ids = getServiceIds(s)
@@ -89,6 +87,12 @@ export function useKasir() {
   })
 
   const load = async () => {
+    // ✅ FIX: reset dulu supaya data lama TIDAK mungkin tampil kalau fetch gagal/lambat.
+    products.value = []
+    members.value = []
+    packagesList.value = []
+    servicesList.value = []
+
     const [data, packages, services] = await Promise.all([
       kasirService.getInitialData(),
       packageRepository.getAll(),
@@ -96,10 +100,18 @@ export function useKasir() {
     ])
     products.value = data.products
     members.value = data.members
-    // pastiin sort by order biar eceran bisa di atas
     packagesList.value = [...packages].sort((a,b) => (a.order ?? 999) - (b.order ?? 999))
     servicesList.value = services
     if (!store.editingTransactionId) store.bayarNominal = 0
+
+    // ✅ LOG DIAGNOSTIK SEMENTARA — hapus setelah bug terkonfirmasi beres
+    if (import.meta.env.DEV) {
+      const foundDeleted = data.products.filter(p => p.deleted)
+      console.log(
+        `[Kasir.load] Produk aktif dimuat: ${data.products.length}` +
+        (foundDeleted.length ? ` | ⚠️ Masih ada ${foundDeleted.length} produk deleted di data!` : '')
+      )
+    }
   }
 
   const getProductPackages = (productId) => {
@@ -135,18 +147,15 @@ export function useKasir() {
     q.value = ''
   }
 
-  // ✅ FIX P0: Ambil operator aktif dari currentOperator (bukan activeOperator yang tidak ada)
   const getActiveOperator = () => {
     const op = operatorStore.currentOperator
     if (!op) {
-      // Fallback aman: jangan sampai undefined masuk ke service
       return { id: null, name: operatorStore.operatorName || 'Kasir' }
     }
     return { id: op.id || null, name: op.name || 'Kasir' }
   }
 
   const checkout = async () => {
-    // ✅ GUARD: keranjang tidak boleh kosong
     if (!store.cart || store.cart.length === 0) {
       throw new Error('Keranjang belanja masih kosong!')
     }
@@ -158,10 +167,6 @@ export function useKasir() {
       throw new Error('Nominal kurang')
     }
 
-    // ✅ FIX P0: Hitung amountPaid & change yang benar (bukan selalu = total)
-    // - TEMPO: 0 (belum bayar)
-    // - QRIS: pas total (uang elektronik)
-    // - CASH: nominal uang diterima user (bisa lebih → kembalian)
     const finalAmountPaid =
       store.paymentMethod === 'TEMPO'
         ? 0
