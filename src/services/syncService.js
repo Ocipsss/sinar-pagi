@@ -6,7 +6,7 @@ import dayjs from 'dayjs'
 import { cloudinaryService } from './cloudinaryService.js'
 
 // Import dari file pecahan
-import { ALL_TABLES } from './sync/schema.js'
+import { ALL_TABLES, TABLE_PUSH_ORDER } from './sync/schema.js'
 import { buildCategoryCache, toSupabaseRowFull, normalizePulledRow, resolveCategoryNames } from './sync/mappers.js'
 import { 
   checkForCloudUpdates, 
@@ -73,7 +73,11 @@ export const syncRealtime = {
 
       const categoryCache = await buildCategoryCache()
 
-      for(const tableName of ALL_TABLES){
+      // ✅ FIX: iterasi pakai TABLE_PUSH_ORDER (dependensi FK) bukan ALL_TABLES.
+      // Contoh: `categories` dipush dulu, baru `products` (yang punya category_id).
+      // Ini mencegah error "violates foreign key constraint" saat user
+      // membuat kategori + produk baru sekaligus lalu langsung push.
+      for(const tableName of TABLE_PUSH_ORDER){
         if(!db[tableName]) continue
         const unsynced = await db[tableName].where('synced').equals(0).toArray()
         if(!unsynced.length) continue

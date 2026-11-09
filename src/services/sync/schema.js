@@ -1,11 +1,51 @@
 // src/services/sync/schema.js
 import { db } from '../../db'
 
-// ✅ FIX (3.13): ALL_TABLES sekarang otomatis dibaca dari schema Dexie.
-// Filter untuk membuang tabel internal Dexie.
+// ✅ ALL_TABLES: semua tabel Dexie (otomatis, dipakai untuk pull & hitung unsynced)
 export const ALL_TABLES = db.tables
   .map(t => t.name)
   .filter(name => !name.startsWith('_'))
+
+// ✅ Urutan push mengikuti dependensi foreign key di Supabase.
+// Tabel yang direferensikan HARUS dipush lebih dulu.
+// Contoh: `products.category_id` butuh `categories` sudah ada di cloud.
+const EXPLICIT_PUSH_ORDER = [
+  // Master data (tanpa dependensi / dependensi minimal)
+  'categories',
+  'units',
+  'settings',
+  'operators',
+
+  // Master data yang butuh kategori/satuan
+  'products',
+  'product_packages',
+  'services',
+
+  // Entitas yang butuh product/operator
+  'members',
+
+  // Transaksi & turunannya
+  'transactions',
+  'transaction_items',
+  'digital_transactions',
+
+  // Keuangan (butuh transaksi/digital/expenses sebagai referensi)
+  'cash_accounts',
+  'cash_mutations',
+  'expenses',
+  'debt_payments',
+
+  // Lainnya
+  'shopping_list'
+]
+
+// ✅ TABLE_PUSH_ORDER: gabungan urutan eksplisit + tabel yang belum terdaftar
+// (ditaruh di akhir supaya tidak ada tabel yang terlewat saat ada tabel baru
+// ditambahkan di schema Dexie tapi lupa didaftarkan di EXPLICIT_PUSH_ORDER).
+export const TABLE_PUSH_ORDER = [
+  ...EXPLICIT_PUSH_ORDER.filter(t => ALL_TABLES.includes(t)),
+  ...ALL_TABLES.filter(t => !EXPLICIT_PUSH_ORDER.includes(t))
+]
 
 // Whitelist kolom per tabel sesuai schema Supabase.
 // Hanya kolom di whitelist yang akan dikirim ke cloud.
