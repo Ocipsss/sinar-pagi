@@ -330,25 +330,23 @@ export const salesHistoryService = {
             }
           }
 
-          // 2. Koreksi Mutasi Kas / Bank
-          if (transaction.paymentMethod === 'CASH' && transaction.total > 0) {
-            await financeRepo.addMutation({
-              accountId: 'acc_cash',
-              type: 'OUT',
-              amount: transaction.total,
-              category: 'Pembatalan Transaksi',
-              note: `Void Transaksi Kasir #${transaction.id.slice(0, 8)}`,
-              refId: transaction.id
-            })
-          } else if (transaction.paymentMethod === 'QRIS' && transaction.total > 0) {
-            await financeRepo.addMutation({
-              accountId: 'acc_bank',
-              type: 'OUT',
-              amount: transaction.total,
-              category: 'Pembatalan Transaksi',
-              note: `Void Transaksi QRIS #${transaction.id.slice(0, 8)}`,
-              refId: transaction.id
-            })
+          // 2. ✅ FIX: Hapus mutasi kas/bank asli berdasarkan refId, jangan buat mutasi OUT baru.
+          const mutationsTable = db.cash_mutations || db.table('cash_mutations')
+          const accountsTable = db.cash_accounts || db.table('cash_accounts')
+          const relatedMutations = await mutationsTable.where('refId').equals(transaction.id).toArray()
+
+          for (const mut of relatedMutations) {
+            const acc = await accountsTable.get(mut.accountId)
+            if (acc) {
+              // Reverse mutasi: kalau aslinya IN, kurangi saldo. Kalau OUT, tambah saldo.
+              const reverseDelta = mut.type === 'IN' ? -mut.amount : mut.amount
+              await accountsTable.update(mut.accountId, {
+                balance: (acc.balance || 0) + reverseDelta,
+                updatedAt: now,
+                synced: 0
+              })
+            }
+            await mutationsTable.delete(mut.id)
           }
 
           // 3. Koreksi Data Member
@@ -388,55 +386,22 @@ export const salesHistoryService = {
         'rw',
         [db.digital_transactions, db.cash_accounts, db.cash_mutations],
         async () => {
-          const isTopup = transaction.digitalType === 'topup'
-          const isCashAdmin = transaction.adminPaymentMethod === 'cash'
+          // ✅ FIX: Hapus mutasi kas/bank asli berdasarkan refId untuk transaksi digital.
+          const mutationsTable = db.cash_mutations || db.table('cash_mutations')
+          const accountsTable = db.cash_accounts || db.table('cash_accounts')
+          const relatedMutations = await mutationsTable.where('refId').equals(transaction.id).toArray()
 
-          if (isTopup) {
-            const cashOut = transaction.nominal + (isCashAdmin ? transaction.adminFee : 0)
-            if (cashOut > 0) {
-              await financeRepo.addMutation({
-                accountId: 'acc_cash',
-                type: 'OUT',
-                amount: cashOut,
-                category: 'Pembatalan Transaksi Digital',
-                note: `Void Top Up ${transaction.provider}`,
-                refId: transaction.id
+          for (const mut of relatedMutations) {
+            const acc = await accountsTable.get(mut.accountId)
+            if (acc) {
+              const reverseDelta = mut.type === 'IN' ? -mut.amount : mut.amount
+              await accountsTable.update(mut.accountId, {
+                balance: (acc.balance || 0) + reverseDelta,
+                updatedAt: now,
+                synced: 0
               })
             }
-            const bankIn = isCashAdmin
-              ? transaction.nominal
-              : Math.max(0, transaction.nominal - transaction.adminFee)
-            await financeRepo.addMutation({
-              accountId: 'acc_bank',
-              type: 'IN',
-              amount: bankIn,
-              category: 'Pembatalan Transaksi Digital',
-              note: `Pengembalian Modal Top Up ${transaction.provider}`,
-              refId: transaction.id
-            })
-          } else {
-            const cashIn = transaction.nominal - (isCashAdmin ? transaction.adminFee : 0)
-            if (cashIn > 0) {
-              await financeRepo.addMutation({
-                accountId: 'acc_cash',
-                type: 'IN',
-                amount: cashIn,
-                category: 'Pembatalan Transaksi Digital',
-                note: `Void Tarik Tunai ${transaction.provider}`,
-                refId: transaction.id
-              })
-            }
-            const bankOut = isCashAdmin
-              ? transaction.nominal
-              : transaction.nominal + transaction.adminFee
-            await financeRepo.addMutation({
-              accountId: 'acc_bank',
-              type: 'OUT',
-              amount: bankOut,
-              category: 'Pembatalan Transaksi Digital',
-              note: `Penarikan Saldo Tarik Tunai ${transaction.provider}`,
-              refId: transaction.id
-            })
+            await mutationsTable.delete(mut.id)
           }
 
           await db.digital_transactions.update(transaction.id, {

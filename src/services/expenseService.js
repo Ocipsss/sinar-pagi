@@ -1,5 +1,8 @@
+// src/services/expenseService.js
+import { db } from '../db/index.js'
 import { expenseRepository } from '../db/repositories/expenseRepository.js'
 import { financeRepo } from '../db/repositories/financeRepository.js'
+import dayjs from 'dayjs'
 
 export const expenseService = {
   async getAllExpenses() {
@@ -30,16 +33,31 @@ export const expenseService = {
     // 1. Hapus data pengeluaran
     await expenseRepository.delete(expense.id)
 
-    // 2. Pengembalian dana mutasi kas / bank (IN)
-    const accountId = expense.paymentMethod === 'QRIS' ? 'acc_bank' : 'acc_cash'
+    // 2. ✅ FIX: Hapus mutasi kas asli (OUT) berdasarkan refId.
+    // Ini lebih bersih daripada membuat mutasi IN baru (yang bikin riwayat kotor 
+    // dan bikin selisih saat "Hitung Ulang").
+    const mutationsTable = db.cash_mutations || db.table('cash_mutations')
+    const accountsTable = db.cash_accounts || db.table('cash_accounts')
+    const now = dayjs().toISOString()
 
-    await financeRepo.addMutation({
-      accountId,
-      type: 'IN',
-      amount: expense.amount,
-      category: 'Pembatalan Pengeluaran',
-      note: `Batal Pengeluaran ${expense.category}: ${expense.note || ''}`,
-      refId: expense.id
-    })
+    // Cari semua mutasi yang terkait dengan ID pengeluaran ini
+    const relatedMutations = await mutationsTable.where('refId').equals(expense.id).toArray()
+    
+    for (const mut of relatedMutations) {
+      // Kembalikan saldo akun ke posisi semula (reverse mutasi)
+      const acc = await accountsTable.get(mut.accountId)
+      if (acc) {
+        // Jika mutasi aslinya OUT, maka reverse-nya IN (tambah saldo)
+        // Jika mutasi aslinya IN, maka reverse-nya OUT (kurangi saldo)
+        const reverseDelta = mut.type === 'OUT' ? mut.amount : -mut.amount
+        await accountsTable.update(mut.accountId, {
+          balance: (acc.balance || 0) + reverseDelta,
+          updatedAt: now,
+          synced: 0
+        })
+      }
+      // Hapus baris mutasi dari database
+      await mutationsTable.delete(mut.id)
+    }
   }
 }
