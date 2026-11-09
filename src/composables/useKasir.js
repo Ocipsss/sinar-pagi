@@ -61,7 +61,6 @@ export function useKasir() {
     return members.value.filter(m => m.name.toLowerCase().includes(qq) || (m.phone || '').includes(qq)).slice(0, 20)
   })
 
-  // Helper: support lama productId & baru productIds (multi)
   const getServiceIds = (s) => {
     if (s.productIds && Array.isArray(s.productIds) && s.productIds.length) return s.productIds
     if (s.productId) return [s.productId]
@@ -87,7 +86,6 @@ export function useKasir() {
   })
 
   const load = async () => {
-    // ✅ FIX: reset dulu supaya data lama TIDAK mungkin tampil kalau fetch gagal/lambat.
     products.value = []
     members.value = []
     packagesList.value = []
@@ -104,7 +102,6 @@ export function useKasir() {
     servicesList.value = services
     if (!store.editingTransactionId) store.bayarNominal = 0
 
-    // ✅ LOG DIAGNOSTIK SEMENTARA — hapus setelah bug terkonfirmasi beres
     if (import.meta.env.DEV) {
       const foundDeleted = data.products.filter(p => p.deleted)
       console.log(
@@ -120,17 +117,18 @@ export function useKasir() {
       .sort((a,b) => (a.order ?? 999) - (b.order ?? 999))
   }
 
+  // ✅ FIX: Produk apa pun yang punya PAKET atau JASA → muncul modal pilihan.
+  // Tidak lagi dibatasi kategori rokok/permen.
   const handleSelectProduct = (product) => {
     const pCat = (product.category || '').toLowerCase()
-    const isPackageCategory = ['rokok', 'permen'].includes(pCat)
     const hasPackages = getProductPackages(product.id).length > 0
-    
+
     const hasConfiguredServices = servicesList.value.some(s => {
       const ids = getServiceIds(s)
       return ids.includes(product.id) || (ids.length === 0 && (s.category || '').toLowerCase() === pCat)
     })
 
-    if ((isPackageCategory && hasPackages) || (!isPackageCategory && hasConfiguredServices)) {
+    if (hasPackages || hasConfiguredServices) {
       selectedProductForOption.value = product
     } else {
       store.addToCart(product)

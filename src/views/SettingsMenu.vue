@@ -3,7 +3,7 @@
     <!-- Header -->
     <div>
       <h1 class="font-black text-xl text-zinc-900">Pengaturan Menu & Jasa</h1>
-      <p class="text-xs text-zinc-400">Geser paket ⋮⋮ buat atur posisi eceran 1 BTG ke atas/bawah</p>
+      <p class="text-xs text-zinc-400">Kelola tarif jasa dan harga paket per produk</p>
     </div>
 
     <!-- Tab Navigasi -->
@@ -15,14 +15,16 @@
         Tarif Jasa per Kategori
       </button>
       <button 
-        @click="activeTab = 'rokok'" 
-        :class="['flex-1 py-2.5 rounded-xl text-xs font-bold transition', activeTab === 'rokok' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500']"
+        @click="activeTab = 'paket'" 
+        :class="['flex-1 py-2.5 rounded-xl text-xs font-bold transition', activeTab === 'paket' ? 'bg-white text-zinc-900 shadow-sm' : 'text-zinc-500']"
       >
         Harga Paket
       </button>
     </div>
 
-    <!-- TAB 1: TARIF JASA SEDUH / TAMBAHAN -->
+    <!-- ============================================================= -->
+    <!-- TAB 1: TARIF JASA                                            -->
+    <!-- ============================================================= -->
     <div v-if="activeTab === 'seduh'" class="space-y-4">
       <div class="flex justify-between items-center">
         <h2 class="font-black text-sm text-zinc-800">Daftar Tarif Jasa</h2>
@@ -71,8 +73,22 @@
       </div>
     </div>
 
-    <!-- TAB 2: HARGA PAKET (ROKOK & PERMEN) -->
-    <div v-if="activeTab === 'rokok'" class="space-y-4">
+    <!-- ============================================================= -->
+    <!-- TAB 2: HARGA PAKET                                           -->
+    <!-- ============================================================= -->
+    <div v-if="activeTab === 'paket'" class="space-y-4">
+      <!-- Tombol + Paket Baru -->
+      <div class="flex justify-between items-center">
+        <h2 class="font-black text-sm text-zinc-800">Daftar Harga Paket</h2>
+        <button 
+          @click="openNewPackageModal"
+          class="bg-zinc-900 text-white px-3.5 py-2 rounded-xl text-xs font-bold flex items-center gap-1.5 active:scale-95 transition"
+        >
+          <Plus class="w-4 h-4"/> Paket Baru
+        </button>
+      </div>
+
+      <!-- Filter kategori -->
       <div class="flex gap-1.5 overflow-x-auto pb-1 scrollbar-none">
         <button 
           @click="selectedPackageCat = 'ALL'"
@@ -81,10 +97,10 @@
             selectedPackageCat === 'ALL' ? 'bg-zinc-900 text-white shadow-sm' : 'bg-white text-zinc-600 border border-zinc-200'
           ]"
         >
-          Semua ({{ rokokProducts.length }})
+          Semua ({{ packageProducts.length }})
         </button>
         <button 
-          v-for="cat in availablePackageCategories" 
+          v-for="cat in categoriesWithPackages" 
           :key="cat"
           @click="selectedPackageCat = cat"
           :class="[
@@ -92,17 +108,24 @@
             selectedPackageCat === cat ? 'bg-zinc-900 text-white shadow-sm' : 'bg-white text-zinc-600 border border-zinc-200'
           ]"
         >
-          {{ cat }}
+          {{ cat }} ({{ countProductsByCategory(cat) }})
         </button>
       </div>
 
-      <div v-if="filteredRokokProducts.length === 0" class="py-12 text-center text-zinc-400 text-xs bg-white rounded-2xl border border-zinc-100">
-        Belum ada produk dengan kategori ini
+      <!-- Empty State -->
+      <div v-if="filteredPackageProducts.length === 0" class="py-12 text-center text-zinc-400 text-xs bg-white rounded-2xl border border-zinc-100">
+        <div v-if="packageProducts.length === 0">
+          Belum ada produk yang punya paket. Klik "+ Paket Baru" untuk menambahkan.
+        </div>
+        <div v-else>
+          Belum ada produk di kategori ini
+        </div>
       </div>
 
+      <!-- Daftar Produk Berpaket -->
       <div v-else class="space-y-3">
         <div 
-          v-for="p in filteredRokokProducts" 
+          v-for="p in filteredPackageProducts" 
           :key="p.id" 
           class="p-4 bg-white rounded-2xl border border-zinc-100 shadow-sm space-y-3"
         >
@@ -111,31 +134,23 @@
               <div class="font-bold text-sm text-zinc-900 flex items-center gap-2">
                 <span>{{ p.name }}</span>
                 <span class="px-2 py-0.5 bg-zinc-100 text-zinc-600 rounded-md text-[10px] font-black uppercase">
-                  {{ p.category }}
+                  {{ p.category || 'UMUM' }}
                 </span>
               </div>
               <div class="text-[11px] text-zinc-400">Harga Utuh: Rp {{ formatRibuan(p.price_sell) }}</div>
             </div>
-            <div class="flex gap-1">
-              <button 
-                @click="openServiceModal(null, p)" 
-                class="px-3 py-1.5 bg-amber-100 text-amber-800 rounded-xl text-xs font-bold hover:bg-amber-200 active:scale-95 transition"
-              >
-                + Jasa
-              </button>
-              <button 
-                @click="openPackageModal(p)" 
-                class="px-3 py-1.5 bg-zinc-100 text-zinc-800 rounded-xl text-xs font-bold hover:bg-zinc-200 active:scale-95 transition"
-              >
-                + Paket
-              </button>
-            </div>
+            <button 
+              @click="openVariantModal(p)" 
+              class="px-3 py-1.5 bg-zinc-100 text-zinc-800 rounded-xl text-xs font-bold hover:bg-zinc-200 active:scale-95 transition"
+            >
+              + Varian
+            </button>
           </div>
 
           <!-- LIST PAKET DRAG & DROP -->
           <div class="space-y-1.5">
             <div class="text-[10px] font-black text-zinc-400 uppercase tracking-wider flex items-center gap-1">
-              <GripVertical class="w-3 h-3"/> Tekan & geser ⋮⋮ buat atur posisi eceran
+              <GripVertical class="w-3 h-3"/> Tekan & geser untuk atur posisi
             </div>
             <div 
               v-for="(pkg, idx) in getPackagesForProduct(p.id)" 
@@ -165,7 +180,7 @@
               </div>
               <div class="flex items-center gap-1">
                 <span class="font-black text-zinc-900 mr-1">Rp {{ formatRibuan(pkg.price_sell) }}</span>
-                <button @click="openPackageModal(p, pkg)" class="p-1.5 bg-white border border-zinc-200 rounded-lg hover:bg-zinc-100">
+                <button @click="openEditVariantModal(p, pkg)" class="p-1.5 bg-white border border-zinc-200 rounded-lg hover:bg-zinc-100">
                   <Pencil class="w-3.5 h-3.5"/>
                 </button>
                 <button @click="handleDeletePackage(pkg)" class="p-1.5 bg-white border border-zinc-200 rounded-lg text-red-500 hover:bg-red-50">
@@ -173,30 +188,14 @@
                 </button>
               </div>
             </div>
-            <div v-if="getPackagesForProduct(p.id).length === 0" class="text-[11px] text-zinc-400 text-center py-2">Belum ada paket, klik + Paket</div>
           </div>
-
-          <div v-if="getServicesForProduct(p).some(s => getServiceIds(s).length)" class="space-y-1.5 pt-2 border-t border-dashed border-zinc-200">
-            <div class="text-[10px] font-black text-zinc-500 uppercase tracking-wider">Jasa Khusus Produk Ini (override kategori)</div>
-            <div 
-              v-for="js in getServicesForProduct(p).filter(s => getServiceIds(s).length)" 
-              :key="js.id" 
-              class="flex justify-between items-center p-2.5 bg-amber-50 border border-amber-100 rounded-xl text-xs"
-            >
-              <span class="font-bold text-zinc-800">{{ js.name }}</span>
-              <div class="flex items-center gap-1.5">
-                <span class="font-black text-amber-700 mr-1">Rp {{ formatRibuan(js.price) }}</span>
-                <button @click="openServiceModal(js)" class="p-1 text-zinc-600 hover:bg-amber-100 rounded-lg"><Pencil class="w-3.5 h-3.5"/></button>
-                <button @click="handleDeleteService(js)" class="p-1 text-red-500 hover:bg-red-100 rounded-lg"><Trash2 class="w-3.5 h-3.5"/></button>
-              </div>
-            </div>
-          </div>
-
         </div>
       </div>
     </div>
 
-    <!-- Modal Form Jasa -->
+    <!-- ============================================================= -->
+    <!-- MODAL FORM JASA (tetap)                                      -->
+    <!-- ============================================================= -->
     <div v-if="showServiceModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
       <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl space-y-4 max-h-[90vh] overflow-auto">
         <div class="flex justify-between items-center">
@@ -237,7 +236,7 @@
             <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Untuk Kategori Produk *</label>
             <button 
               type="button" 
-              @click="showCategoryPickerModal = true"
+              @click="showServiceCategoryPicker = true"
               class="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-bold uppercase text-left flex justify-between items-center focus:outline-none focus:ring-2 focus:ring-zinc-900"
             >
               <span class="truncate">{{ serviceForm.category || 'PILIH KATEGORI' }}</span>
@@ -275,18 +274,64 @@
       </div>
     </div>
 
-    <!-- Modal Form Paket Eceran -->
+    <!-- ============================================================= -->
+    <!-- MODAL FORM PAKET (Tambah Baru / Edit / Varian)               -->
+    <!-- ============================================================= -->
     <div v-if="showPackageModal" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
-      <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl space-y-4">
+      <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl space-y-4 max-h-[90vh] overflow-auto">
         <div class="flex justify-between items-center">
           <div>
-            <h2 class="font-black text-base">{{ editingPackageId ? 'Edit Paket Eceran' : 'Tambah Paket Eceran' }}</h2>
-            <p class="text-xs text-zinc-400">{{ selectedRokokProduct?.name }}</p>
+            <h2 class="font-black text-base">{{ packageModalTitle }}</h2>
+            <p class="text-xs text-zinc-400">{{ packageModalSubtitle }}</p>
           </div>
-          <button @click="showPackageModal = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
+          <button @click="closePackageModal" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
         </div>
 
         <form @submit.prevent="handleSavePackage" class="space-y-3">
+          <!-- Kategori (readonly kalau mode varian/edit) -->
+          <div>
+            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Kategori Produk *</label>
+            <button 
+              v-if="packageMode === 'new'"
+              type="button" 
+              @click="showPkgCategoryPicker = true"
+              class="w-full px-4 py-3 bg-zinc-50 border border-zinc-200 rounded-xl text-sm font-bold uppercase text-left flex justify-between items-center"
+            >
+              <span class="truncate">{{ packageForm.category || 'PILIH KATEGORI' }}</span>
+              <ChevronDown class="w-4 h-4 text-zinc-400 shrink-0" />
+            </button>
+            <div 
+              v-else
+              class="w-full px-4 py-3 bg-zinc-100 border border-zinc-200 rounded-xl text-sm font-bold uppercase text-zinc-600"
+            >
+              {{ packageForm.category }}
+            </div>
+          </div>
+
+          <!-- Produk (readonly kalau mode varian/edit) -->
+          <div>
+            <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Produk *</label>
+            <button 
+              v-if="packageMode === 'new'"
+              type="button" 
+              :disabled="!packageForm.category"
+              @click="openPkgProductPicker"
+              :class="[
+                'w-full px-4 py-3 bg-amber-50 border border-amber-200 rounded-xl text-sm font-bold uppercase text-left flex justify-between items-center disabled:opacity-50 disabled:cursor-not-allowed',
+              ]"
+            >
+              <span class="truncate">{{ packageForm.productName || (packageForm.category ? 'PILIH PRODUK' : 'PILIH KATEGORI DULU') }}</span>
+              <ChevronDown class="w-4 h-4 text-zinc-400 shrink-0" />
+            </button>
+            <div 
+              v-else
+              class="w-full px-4 py-3 bg-zinc-100 border border-zinc-200 rounded-xl text-sm font-bold uppercase text-zinc-600"
+            >
+              {{ packageForm.productName }}
+            </div>
+          </div>
+
+          <!-- Nama Varian -->
           <div>
             <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Nama Varian *</label>
             <input 
@@ -296,10 +341,14 @@
               class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold uppercase"
             />
           </div>
+
+          <!-- Jumlah Pcs -->
           <div>
             <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Jumlah Pcs/Batang Dipotong *</label>
-            <input v-model.number="packageForm.qty_pcs" type="number" required placeholder="1" class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold"/>
+            <input v-model.number="packageForm.qty_pcs" type="number" required min="1" placeholder="1" class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-sm font-bold"/>
           </div>
+
+          <!-- Harga Jual -->
           <div>
             <label class="text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1 block">Harga Jual Varian (Rp) *</label>
             <input 
@@ -312,22 +361,25 @@
               class="w-full px-4 py-3 bg-zinc-50 border rounded-xl text-lg font-black text-zinc-900"
             />
           </div>
+
           <div class="flex gap-2 pt-2">
-            <button type="button" @click="showPackageModal = false" class="flex-1 py-3 bg-zinc-100 font-bold text-xs rounded-xl">Batal</button>
-            <button type="submit" class="flex-1 py-3 bg-zinc-900 text-white font-bold text-xs rounded-xl shadow-md">
-              {{ editingPackageId ? 'Simpan Perubahan' : 'Simpan Paket' }}
+            <button type="button" @click="closePackageModal" class="flex-1 py-3 bg-zinc-100 font-bold text-xs rounded-xl">Batal</button>
+            <button type="submit" :disabled="!canSubmitPackage" class="flex-1 py-3 bg-zinc-900 text-white font-bold text-xs rounded-xl shadow-md disabled:opacity-50 disabled:cursor-not-allowed">
+              {{ packageMode === 'edit' ? 'Simpan Perubahan' : 'Simpan Paket' }}
             </button>
           </div>
         </form>
       </div>
     </div>
 
-    <!-- Modal Picker Kategori -->
-    <div v-if="showCategoryPickerModal" class="fixed inset-0 z-[100] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+    <!-- ============================================================= -->
+    <!-- MODAL PICKER: Kategori Jasa                                  -->
+    <!-- ============================================================= -->
+    <div v-if="showServiceCategoryPicker" class="fixed inset-0 z-[100] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
       <div class="w-full max-w-sm bg-white rounded-[2rem] p-5 shadow-xl animate-in zoom-in-95 duration-200 max-h-[80vh] flex flex-col">
         <div class="flex justify-between items-center mb-3">
           <h3 class="font-black text-base text-zinc-900">Pilih Kategori Produk</h3>
-          <button type="button" @click="showCategoryPickerModal = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
+          <button type="button" @click="showServiceCategoryPicker = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
         </div>
         <div class="space-y-1.5 overflow-auto flex-1 pr-1">
           <div v-if="categoryOptions.length === 0" class="py-6 text-center text-xs text-zinc-400">Belum ada kategori</div>
@@ -335,7 +387,7 @@
             v-for="cat in categoryOptions" 
             :key="cat.id" 
             type="button"
-            @click="serviceForm.category = cat.name; showCategoryPickerModal = false"
+            @click="serviceForm.category = cat.name; showServiceCategoryPicker = false"
             :class="['w-full p-3 rounded-xl font-bold text-xs text-left uppercase transition', serviceForm.category === cat.name ? 'bg-zinc-900 text-white shadow-md' : 'bg-zinc-50 hover:bg-zinc-100 text-zinc-800']"
           >
             {{ cat.name }}
@@ -344,7 +396,9 @@
       </div>
     </div>
 
-    <!-- Modal Picker Produk MULTI -->
+    <!-- ============================================================= -->
+    <!-- MODAL PICKER: Produk Jasa MULTI                              -->
+    <!-- ============================================================= -->
     <div v-if="showProductPickerModal" class="fixed inset-0 z-[110] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
       <div class="w-full max-w-sm bg-white rounded-[2rem] p-5 shadow-xl max-h-[80vh] flex flex-col">
         <div class="flex justify-between items-center mb-3">
@@ -356,7 +410,7 @@
         </div>
         <div class="space-y-1.5 overflow-auto flex-1 pr-1">
           <button 
-            v-for="prod in productOptions" 
+            v-for="prod in serviceProductOptions" 
             :key="prod.id" 
             type="button"
             @click="toggleProduct(prod.id)"
@@ -376,6 +430,65 @@
       </div>
     </div>
 
+    <!-- ============================================================= -->
+    <!-- MODAL PICKER: Kategori Paket                                 -->
+    <!-- ============================================================= -->
+    <div v-if="showPkgCategoryPicker" class="fixed inset-0 z-[100] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="w-full max-w-sm bg-white rounded-[2rem] p-5 shadow-xl max-h-[80vh] flex flex-col">
+        <div class="flex justify-between items-center mb-3">
+          <h3 class="font-black text-base text-zinc-900">Pilih Kategori Produk</h3>
+          <button type="button" @click="showPkgCategoryPicker = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
+        </div>
+        <div class="space-y-1.5 overflow-auto flex-1 pr-1">
+          <div v-if="categoriesWithoutPackage.length === 0" class="py-6 text-center text-xs text-zinc-400">
+            Semua produk di semua kategori sudah punya paket.
+          </div>
+          <button 
+            v-for="cat in categoriesWithoutPackage" 
+            :key="cat" 
+            type="button"
+            @click="selectPkgCategory(cat)"
+            :class="['w-full p-3 rounded-xl font-bold text-xs text-left uppercase transition', packageForm.category === cat ? 'bg-zinc-900 text-white shadow-md' : 'bg-zinc-50 hover:bg-zinc-100 text-zinc-800']"
+          >
+            {{ cat }}
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- ============================================================= -->
+    <!-- MODAL PICKER: Produk Paket                                   -->
+    <!-- ============================================================= -->
+    <div v-if="showPkgProductPicker" class="fixed inset-0 z-[110] bg-black/40 backdrop-blur-sm flex items-center justify-center p-4">
+      <div class="w-full max-w-sm bg-white rounded-[2rem] p-5 shadow-xl max-h-[80vh] flex flex-col">
+        <div class="flex justify-between items-center mb-3">
+          <h3 class="font-black text-base text-zinc-900">Pilih Produk</h3>
+          <button type="button" @click="showPkgProductPicker = false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
+        </div>
+        <div class="relative mb-3">
+          <input v-model="pkgProductSearch" placeholder="Cari produk..." class="w-full px-4 py-2.5 bg-zinc-50 border border-zinc-200 rounded-xl text-xs font-bold"/>
+        </div>
+        <div class="space-y-1.5 overflow-auto flex-1 pr-1">
+          <div v-if="pkgProductOptions.length === 0" class="py-6 text-center text-xs text-zinc-400">
+            Tidak ada produk di kategori ini
+          </div>
+          <button 
+            v-for="prod in pkgProductOptions" 
+            :key="prod.id" 
+            type="button"
+            @click="selectPkgProduct(prod)"
+            :class="['w-full p-3 rounded-xl font-bold text-xs text-left transition flex justify-between items-center', packageForm.productId === prod.id ? 'bg-zinc-900 text-white shadow-md' : 'bg-zinc-50 hover:bg-zinc-100 text-zinc-800']"
+          >
+            <div class="min-w-0 flex-1">
+              <div class="truncate">{{ prod.name }}</div>
+              <div class="text-[10px] opacity-60 uppercase">{{ prod.category }}</div>
+            </div>
+            <div v-if="packageForm.productId === prod.id" class="ml-2 w-5 h-5 bg-white text-zinc-900 rounded-full flex items-center justify-center text-[10px] font-black shrink-0">✓</div>
+          </button>
+        </div>
+      </div>
+    </div>
+
   </div>
 </template>
 
@@ -384,19 +497,23 @@ import { ref, computed, onMounted, onActivated } from 'vue'
 import { Plus, Pencil, Trash2, X, ChevronDown, GripVertical } from 'lucide-vue-next'
 import { useSettingsMenu } from '../composables/useSettingsMenu.js'
 import { formatRibuan, formatRp, toNumber } from '../utils/formatters/currency.js'
+import { toast } from 'vue-sonner'
 
 const activeTab = ref('seduh')
 const selectedPackageCat = ref('ALL')
 
 const {
   allProducts,
-  rokokProducts,
+  packageProducts,
+  categoriesWithPackages,
+  categoriesWithoutPackage,
   services,
   categoryOptions,
   loadData,
   getPackagesForProduct,
-  getServicesForProduct,
+  getProductsByCategoryWithoutPackage,
   getProductById,
+  getServiceIds,
   savePackage,
   deletePackage,
   reorderPackages,
@@ -404,74 +521,43 @@ const {
   deleteService
 } = useSettingsMenu()
 
+// ============================================================
+// TAB JASA
+// ============================================================
 const sortedServices = computed(() => {
   return [...services.value].sort((a, b) => 
     (a.name || '').localeCompare(b.name || '', 'id', { sensitivity: 'base' })
   )
 })
 
-const availablePackageCategories = computed(() => {
-  const cats = new Set(rokokProducts.value.map(p => (p.category || 'UMUM').toUpperCase()))
-  return Array.from(cats)
-})
-
-const filteredRokokProducts = computed(() => {
-  if (selectedPackageCat.value === 'ALL') return rokokProducts.value
-  return rokokProducts.value.filter(
+const filteredPackageProducts = computed(() => {
+  if (selectedPackageCat.value === 'ALL') return packageProducts.value
+  return packageProducts.value.filter(
     p => (p.category || 'UMUM').toUpperCase() === selectedPackageCat.value
   )
 })
 
-// DRAG & DROP STATE
-const draggedPkg = ref(null)
-const dragOverId = ref(null)
-
-const onDragStart = (pkg) => {
-  draggedPkg.value = pkg
-}
-const onDragOver = (pkg) => {
-  dragOverId.value = pkg.id
-}
-const onDragEnd = () => {
-  draggedPkg.value = null
-  dragOverId.value = null
-}
-const onDrop = async (productId, targetPkg) => {
-  if (!draggedPkg.value || draggedPkg.value.id === targetPkg.id) {
-    onDragEnd()
-    return
-  }
-  const list = getPackagesForProduct(productId)
-  const fromIdx = list.findIndex(p => p.id === draggedPkg.value.id)
-  const toIdx = list.findIndex(p => p.id === targetPkg.id)
-  const newList = [...list]
-  const [moved] = newList.splice(fromIdx, 1)
-  newList.splice(toIdx, 0, moved)
-  await reorderPackages(productId, newList.map(p => p.id))
-  onDragEnd()
+const countProductsByCategory = (cat) => {
+  return packageProducts.value.filter(p => (p.category || 'UMUM').toUpperCase() === cat).length
 }
 
-// Modal State Jasa & Picker
+// ============================================================
+// MODAL JASA
+// ============================================================
 const showServiceModal = ref(false)
-const showCategoryPickerModal = ref(false)
+const showServiceCategoryPicker = ref(false)
 const showProductPickerModal = ref(false)
 const editingServiceId = ref(null)
 const isCustomService = ref(false)
 const productSearch = ref('')
 const serviceForm = ref({ name: '', price: 0, category: 'Mie', productId: null, productIds: [] })
 
-const productOptions = computed(() => {
+const serviceProductOptions = computed(() => {
   const q = productSearch.value.toLowerCase()
   let list = allProducts.value
   if(q) list = list.filter(p => (p.name||'').toLowerCase().includes(q))
   return list.slice(0, 80)
 })
-
-const getServiceIds = (s) => {
-  if (s.productIds && Array.isArray(s.productIds) && s.productIds.length) return s.productIds
-  if (s.productId) return [s.productId]
-  return []
-}
 
 const getProductName = (id) => {
   if(!id) return ''
@@ -530,7 +616,7 @@ const openServiceModal = async (s = null, productOverride = null) => {
 
 const handleSaveService = async () => {
   if(isCustomService.value && (!serviceForm.value.productIds || serviceForm.value.productIds.length === 0)){
-    alert('Pilih produk dulu met, bisa lebih dari 1')
+    toast.error('Pilih produk dulu, bisa lebih dari 1')
     return
   }
   try {
@@ -545,7 +631,7 @@ const handleSaveService = async () => {
     showServiceModal.value = false
   } catch (e) {
     console.error('GAGAL SAVE JASA:', e)
-    alert('Gagal simpan: ' + (e.message || e))
+    toast.error('Gagal simpan: ' + (e.message || e))
   }
 }
 
@@ -555,46 +641,187 @@ const handleDeleteService = async (s) => {
   }
 }
 
-// Modal State Paket Eceran
+// ============================================================
+// MODAL PAKET (BARU / EDIT / VARIAN)
+// ============================================================
 const showPackageModal = ref(false)
-const editingPackageId = ref(null)
-const selectedRokokProduct = ref(null)
-const packageForm = ref({ name: '', qty_pcs: 1, price_sell: 0 })
+const showPkgCategoryPicker = ref(false)
+const showPkgProductPicker = ref(false)
+const pkgProductSearch = ref('')
 
-const openPackageModal = (p, pkg = null) => {
-  selectedRokokProduct.value = p
-  if (pkg) {
-    editingPackageId.value = pkg.id
-    packageForm.value = {
-      name: pkg.name,
-      qty_pcs: pkg.qty_pcs,
-      price_sell: pkg.price_sell
-    }
-  } else {
-    editingPackageId.value = null
-    packageForm.value = { name: '', qty_pcs: 1, price_sell: 0 }
+// mode: 'new' | 'edit' | 'variant'
+// - new    : pilih kategori & produk dari nol (tombol "+ Paket Baru")
+// - variant: produk sudah dipilih, user tinggal isi varian (tombol "+ Varian" per produk)
+// - edit   : edit varian yang sudah ada
+const packageMode = ref('new')
+const editingPackageId = ref(null)
+const packageForm = ref({
+  category: '',
+  productId: null,
+  productName: '',
+  name: '',
+  qty_pcs: 1,
+  price_sell: 0
+})
+
+const packageModalTitle = computed(() => {
+  if (packageMode.value === 'edit') return 'Edit Varian Paket'
+  if (packageMode.value === 'variant') return 'Tambah Varian Paket'
+  return 'Tambah Paket Baru'
+})
+
+const packageModalSubtitle = computed(() => {
+  if (packageMode.value === 'new') return 'Pilih kategori & produk, lalu isi varian paket'
+  if (packageMode.value === 'variant') return packageForm.value.productName
+  return packageForm.value.productName
+})
+
+const canSubmitPackage = computed(() => {
+  if (packageMode.value === 'new' && !packageForm.value.productId) return false
+  return !!packageForm.value.name?.trim()
+})
+
+const pkgProductOptions = computed(() => {
+  if (!packageForm.value.category) return []
+  let list = getProductsByCategoryWithoutPackage(packageForm.value.category)
+  const q = pkgProductSearch.value.toLowerCase().trim()
+  if (q) list = list.filter(p => (p.name || '').toLowerCase().includes(q))
+  return list
+})
+
+const selectPkgCategory = (cat) => {
+  packageForm.value.category = cat
+  packageForm.value.productId = null
+  packageForm.value.productName = ''
+  showPkgCategoryPicker.value = false
+}
+
+const openPkgProductPicker = () => {
+  if (!packageForm.value.category) return
+  pkgProductSearch.value = ''
+  showPkgProductPicker.value = true
+}
+
+const selectPkgProduct = (prod) => {
+  packageForm.value.productId = prod.id
+  packageForm.value.productName = prod.name
+  packageForm.value.category = (prod.category || 'UMUM').toUpperCase()
+  showPkgProductPicker.value = false
+}
+
+const resetPackageForm = () => {
+  packageForm.value = {
+    category: '',
+    productId: null,
+    productName: '',
+    name: '',
+    qty_pcs: 1,
+    price_sell: 0
+  }
+  editingPackageId.value = null
+}
+
+const openNewPackageModal = () => {
+  // Kalau semua produk sudah punya paket, tidak bisa tambah baru
+  if (packageProducts.value.length === allProducts.value.length || categoriesWithoutPackage.value.length === 0) {
+    toast.info('Semua produk sudah punya paket. Tambah varian lewat tombol "+ Varian" di produk masing-masing.')
+    return
+  }
+  packageMode.value = 'new'
+  resetPackageForm()
+  showPackageModal.value = true
+}
+
+const openVariantModal = (product) => {
+  packageMode.value = 'variant'
+  editingPackageId.value = null
+  packageForm.value = {
+    category: (product.category || 'UMUM').toUpperCase(),
+    productId: product.id,
+    productName: product.name,
+    name: '',
+    qty_pcs: 1,
+    price_sell: 0
   }
   showPackageModal.value = true
 }
 
+const openEditVariantModal = (product, pkg) => {
+  packageMode.value = 'edit'
+  editingPackageId.value = pkg.id
+  packageForm.value = {
+    category: (product.category || 'UMUM').toUpperCase(),
+    productId: product.id,
+    productName: product.name,
+    name: pkg.name,
+    qty_pcs: pkg.qty_pcs,
+    price_sell: pkg.price_sell
+  }
+  showPackageModal.value = true
+}
+
+const closePackageModal = () => {
+  showPackageModal.value = false
+  resetPackageForm()
+}
+
 const handleSavePackage = async () => {
-  if (!selectedRokokProduct.value) return
+  if (!packageForm.value.productId) {
+    toast.error('Pilih produk dulu')
+    return
+  }
+  if (!packageForm.value.name?.trim()) {
+    toast.error('Nama varian wajib diisi')
+    return
+  }
+  if (!packageForm.value.qty_pcs || packageForm.value.qty_pcs < 1) {
+    toast.error('Jumlah pcs minimal 1')
+    return
+  }
   await savePackage({
     id: editingPackageId.value || undefined,
-    productId: selectedRokokProduct.value.id,
+    productId: packageForm.value.productId,
     name: (packageForm.value.name || '').toUpperCase().trim(),
-    qty_pcs: packageForm.value.qty_pcs,
-    price_sell: packageForm.value.price_sell
+    qty_pcs: Number(packageForm.value.qty_pcs) || 1,
+    price_sell: Number(packageForm.value.price_sell) || 0
   })
-  showPackageModal.value = false
+  closePackageModal()
 }
 
 const handleDeletePackage = async (pkg) => {
-  if (confirm(`Hapus opsi paket "${pkg.name}"?`)) {
+  if (confirm(`Hapus varian paket "${pkg.name}"?`)) {
     await deletePackage(pkg.id)
   }
 }
 
+// ============================================================
+// DRAG & DROP
+// ============================================================
+const draggedPkg = ref(null)
+const dragOverId = ref(null)
+
+const onDragStart = (pkg) => { draggedPkg.value = pkg }
+const onDragOver = (pkg) => { dragOverId.value = pkg.id }
+const onDragEnd = () => { draggedPkg.value = null; dragOverId.value = null }
+
+const onDrop = async (productId, targetPkg) => {
+  if (!draggedPkg.value || draggedPkg.value.id === targetPkg.id) {
+    onDragEnd()
+    return
+  }
+  const list = getPackagesForProduct(productId)
+  const fromIdx = list.findIndex(p => p.id === draggedPkg.value.id)
+  const toIdx = list.findIndex(p => p.id === targetPkg.id)
+  const newList = [...list]
+  const [moved] = newList.splice(fromIdx, 1)
+  newList.splice(toIdx, 0, moved)
+  await reorderPackages(productId, newList.map(p => p.id))
+  onDragEnd()
+}
+
+// ============================================================
+// LIFECYCLE
+// ============================================================
 onMounted(() => {
   loadData()
 })

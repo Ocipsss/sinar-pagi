@@ -211,7 +211,9 @@
   </div>
 </div>
 
-<!-- Modal Pilihan Varian & Penyajian -->
+<!-- ============================================================= -->
+<!-- MODAL PILIHAN VARIAN & PENYAJIAN (paket + jasa)               -->
+<!-- ============================================================= -->
 <div v-if="selectedProductForOption" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
   <div class="w-full max-w-md bg-white rounded-t-[2rem] sm:rounded-[2rem] p-6 shadow-xl animate-in slide-in-from-bottom duration-200 max-h-[80vh] flex flex-col">
     <div class="flex justify-between items-center mb-4 shrink-0">
@@ -222,20 +224,10 @@
       <button @click="selectedProductForOption = null" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
     </div>
 
-    <div v-if="['rokok', 'permen'].includes((selectedProductForOption.category || '').toLowerCase())" class="space-y-2 overflow-auto flex-1 pr-1">
+    <div class="space-y-2 overflow-auto flex-1 pr-1">
+      <!-- Opsi "Mentah / Kemasan" — HANYA kalau TIDAK punya paket -->
       <button 
-        v-for="pkg in getProductPackages(selectedProductForOption.id)" 
-        :key="pkg.id"
-        @click="confirmAddToCart(selectedProductForOption, { packageInfo: pkg, price_sell: pkg.price_sell, customName: `${pkg.name} ${selectedProductForOption.name}` })"
-        class="w-full p-3.5 bg-zinc-50 border border-zinc-200 rounded-xl font-bold text-sm text-left flex justify-between items-center hover:bg-zinc-100 transition"
-      >
-        <span>{{ pkg.name }}</span>
-        <span class="font-black">Rp {{ formatRibuan(pkg.price_sell) }}</span>
-      </button>
-    </div>
-
-    <div v-else class="space-y-2 overflow-auto flex-1 pr-1">
-      <button 
+        v-if="getProductPackages(selectedProductForOption.id).length === 0"
         @click="confirmAddToCart(selectedProductForOption, { isServed: false, customName: selectedProductForOption.name })"
         class="w-full p-3.5 bg-zinc-50 border border-zinc-200 rounded-xl font-bold text-sm text-left flex justify-between items-center hover:bg-zinc-100 transition"
       >
@@ -246,6 +238,18 @@
         <span class="font-black text-zinc-900">Rp {{ formatRibuan(selectedProductForOption.price_sell) }}</span>
       </button>
 
+      <!-- Opsi Paket -->
+      <button 
+        v-for="pkg in getProductPackages(selectedProductForOption.id)" 
+        :key="pkg.id"
+        @click="confirmAddToCart(selectedProductForOption, { packageInfo: pkg, price_sell: pkg.price_sell, customName: `${pkg.name} ${selectedProductForOption.name}` })"
+        class="w-full p-3.5 bg-zinc-50 border border-zinc-200 rounded-xl font-bold text-sm text-left flex justify-between items-center hover:bg-zinc-100 transition"
+      >
+        <span>{{ pkg.name }}</span>
+        <span class="font-black">Rp {{ formatRibuan(pkg.price_sell) }}</span>
+      </button>
+
+      <!-- Opsi Jasa -->
       <button 
         v-for="s in filteredServicesByCategory" 
         :key="s.id"
@@ -448,9 +452,6 @@ watch(showMemberPicker, (isOpen) => {
   }
 })
 
-// ✅ FIX: Pastikan load() jalan saat halaman Kasir aktif lagi.
-// Jaring pengaman: watch route.path. Ini akan terpicu saat Kasir aktif
-// meskipun onActivated/onMounted tidak jalan karena cache keep-alive.
 watch(
   () => route.path,
   (newPath) => {
