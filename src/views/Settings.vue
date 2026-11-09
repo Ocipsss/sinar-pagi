@@ -62,14 +62,7 @@
       </button>
     </div>
 
-    <!-- TOMBOL BARU KHUSUS HP - GAK PERLU CONSOLE -->
-    <div class="pt-2 border-t border-zinc-50">
-      <p class="text-[10px] text-zinc-500 mb-2 font-bold">Kalo abis Import JSON tapi Belum sync masih 41 (bukan 498):</p>
-      <button type="button" @click="forceResyncAll" :disabled="loading" class="w-full py-3 bg-amber-500 hover:bg-amber-400 text-zinc-900 rounded-xl font-black text-xs flex items-center justify-center gap-2">
-        <RefreshCw class="w-4 h-4" />
-        <span>Paksa Tandai Semua Belum Sync (Fix 41 jadi 498)</span>
-      </button>
-    </div>
+    <!-- ✅ Tombol "Paksa Tandai Semua Belum Sync" DIHAPUS karena bug sinkronisasi sudah diperbaiki di akarnya -->
 
     <p class="text-[10px] text-zinc-400">Push = kirim yang berubah aja ke Supabase. Tarik Master = buat pas abis clear cache HP.</p>
   </div>
@@ -125,7 +118,7 @@
 import { ref, onMounted, onUnmounted } from 'vue'
 import { liveQuery } from 'dexie'
 import { db } from '../db/index.js'
-import { Store, Cloud, Printer, Database, Download, Upload, UploadCloud, DownloadCloud, HardDrive, Trash2, Type, RefreshCw } from 'lucide-vue-next'
+import { Store, Cloud, Printer, Database, Download, Upload, UploadCloud, DownloadCloud, HardDrive, Trash2 } from 'lucide-vue-next'
 import { useSettings } from '../composables/useSettings.js'
 import { 
   syncStatus, 
@@ -135,7 +128,9 @@ import {
   checkForCloudUpdates 
 } from '../services/syncService.js'
 
-const { form, loading, loadSettings, saveSettings, exportBackup, importBackup, resetTransactionsData, convertDataToUppercase, forceResyncAll } = useSettings()
+// ✅ FIX: Hanya destructure fungsi yang benar-benar dipakai di file ini
+const { form, loading, loadSettings, saveSettings, exportBackup, importBackup, resetTransactionsData } = useSettings()
+
 const isOnline = ref(navigator.onLine)
 const updateOnlineState = () => { isOnline.value = navigator.onLine }
 const handleToggleSync = (e) => { syncRealtime.toggleAutoSync(e.target.checked) }
