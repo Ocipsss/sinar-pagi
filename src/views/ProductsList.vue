@@ -8,8 +8,14 @@
       <p class="text-xs text-zinc-400">Kelola master data produk toko</p>
     </div>
     <div class="flex gap-2">
-      <button v-if="toPublishCount > 0" @click="publishAll" class="bg-emerald-600 text-white px-3.5 py-2.5 rounded-2xl font-bold text-xs flex items-center gap-1.5 active:scale-95 transition shadow-sm" :title="`Publish ${toPublishCount} barang ke web`">
-        <Globe class="w-4 h-4"/> {{ toPublishCount === filtered.length ? `Publish All (${toPublishCount})` : `Publish (${toPublishCount})` }}
+      <!-- ✅ FIX (3.16): Tombol Publish All hanya menghitung yang BELUM publish -->
+      <button 
+        v-if="toPublishCount > 0" 
+        @click="publishAll" 
+        class="bg-emerald-600 text-white px-3.5 py-2.5 rounded-2xl font-bold text-xs flex items-center gap-1.5 active:scale-95 transition shadow-sm" 
+        :title="`Publish ${toPublishCount} barang ke web`"
+      >
+        <Globe class="w-4 h-4"/> Publish All ({{ toPublishCount }})
       </button>
       <router-link to="/add-products" class="bg-zinc-900 text-white px-3.5 py-2.5 rounded-2xl font-bold text-xs flex items-center gap-1.5 active:scale-95 transition shadow-sm">
         <Plus class="w-4 h-4"/> Tambah
@@ -290,9 +296,11 @@ const filtered = computed(() => {
   return list
 })
 
-// SMART PUBLISH - CUMA HITUNG YANG BELUM PUBLISH / BELUM SYNC
+// ✅ FIX (3.16): Hanya hitung yang BELUM publish.
+// Status `synced` (sudah terkirim ke cloud atau belum) TIDAK dicampur di sini,
+// karena sinkronisasi otomatis ditangani oleh syncService di background.
 const toPublishFiltered = computed(() => {
-  return filtered.value.filter(p => !p.isPublished || p.synced === 0)
+  return filtered.value.filter(p => !p.isPublished)
 })
 
 const toPublishCount = computed(() => toPublishFiltered.value.length)
@@ -331,8 +339,12 @@ const publishAll = async () => {
   const count = listToPublish.length
   if (!count) return toast.info('Semua sudah publish')
   if (!confirm(`Publish ${count} barang ke sinarpagi.my.id?`)) return
+  
   let ok = 0
   for (const prod of listToPublish) {
+    // ✅ FIX (3.16): Hanya update produk yang benar-benar belum publish.
+    // Ini menghindari penulisan ulang isPublished:true yang tidak perlu
+    // (yang akan memicu synced:0 dan push ulang ke cloud).
     await store.update(prod.id, { isPublished: true })
     ok++
   }
