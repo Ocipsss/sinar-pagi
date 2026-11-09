@@ -3,12 +3,10 @@ import { db } from '../index.js'
 import dayjs from 'dayjs'
 
 export const financeRepo = {
-  // Ambil daftar akun kas & bank (saldo digital disatukan ke bank)
   async getAccounts() {
     const table = db.cash_accounts || db.table('cash_accounts')
     let accounts = await table.toArray()
     
-    // Inisialisasi akun bawaan jika belum ada
     if (accounts.length === 0) {
       const defaultAccounts = [
         { id: 'acc_cash', name: 'Kas Laci (Tunai)', type: 'CASH', balance: 0, updatedAt: dayjs().toISOString(), synced: 0 },
@@ -17,7 +15,6 @@ export const financeRepo = {
       await table.bulkPut(defaultAccounts)
       accounts = defaultAccounts
     } else {
-      // Hapus akun digital lama jika ada
       const digitalAcc = accounts.find(a => a.id === 'acc_digital')
       if (digitalAcc) {
         await table.delete('acc_digital')
@@ -27,16 +24,13 @@ export const financeRepo = {
     return accounts
   },
 
-  // Ambil total piutang member saat ini
   async getTotalPiutang() {
     const members = await db.members.toArray()
     return members.reduce((sum, m) => sum + (Number(m.debt) || 0), 0)
   },
 
-  // Perbarui saldo akun
   async updateBalance(accountId, deltaAmount) {
     const table = db.cash_accounts || db.table('cash_accounts')
-    // Jika ada mutasi ke acc_digital, otomatis dialihkan ke acc_bank
     const targetId = accountId === 'acc_digital' ? 'acc_bank' : accountId
     const acc = await table.get(targetId)
     if (acc) {
@@ -45,7 +39,6 @@ export const financeRepo = {
     }
   },
 
-  // Set saldo awal manual
   async setInitialBalance(accountId, targetBalance, note = 'Set Saldo Awal') {
     const targetId = accountId === 'acc_digital' ? 'acc_bank' : accountId
     const table = db.cash_accounts || db.table('cash_accounts')
@@ -66,13 +59,11 @@ export const financeRepo = {
     }
   },
 
-  // Ambil daftar mutasi saldo
   async getMutations() {
     const table = db.cash_mutations || db.table('cash_mutations')
     return await table.orderBy('date').reverse().toArray()
   },
 
-  // Tambah mutasi baru
   async addMutation(data) {
     const id = crypto.randomUUID()
     const now = dayjs().toISOString()
@@ -100,30 +91,42 @@ export const financeRepo = {
     return id
   },
 
-  // HITUNG ULANG SALDO DARI RIWAYAT TRANSAKSI
+  // HITUNG ULANG SALDO DARI SELURUH RIWAYAT
   async recalculateFromHistory() {
     const transactions = await db.transactions.toArray()
     const digitalTrx = await db.digital_transactions.toArray()
+    const expenses = await db.expenses.toArray()
+    const debtPayments = await db.debt_payments.toArray()
     const mutationsTable = db.cash_mutations || db.table('cash_mutations')
     const accountsTable = db.cash_accounts || db.table('cash_accounts')
     
+    // 1. Bersihkan semua mutasi lama dan reset saldo ke 0
     await mutationsTable.clear()
     await this.getAccounts()
     await accountsTable.update('acc_cash', { balance: 0 })
     await accountsTable.update('acc_bank', { balance: 0 })
 
-    // 1. Olah transaksi Kasir (Barang)
+    // 2. Olah transaksi Kasir (Barang) - ABAIKAN VOID
     for (const t of transactions) {
+      if (t.status === 'void' || t.status === 'CANCELLED') continue
+
       if (t.paymentMethod === 'CASH' && (t.amountPaid > 0 || t.paidAmount > 0 || t.total > 0)) {
-        await this.addMutation({
-          accountId: 'acc_cash',
-          type: 'IN',
-          amount: t.paidAmount || t.amountPaid || t.total,
-          category: 'Penjualan Toko',
-          note: `Transaksi Kasir #${t.id.slice(0, 8)}`,
-          refId: t.id
-        })
-      } else if (t.paymentMethod === 'QRIS') {
+        // Uang masuk ke laci = uang yang dibayarkan - kembalian
+        const bayar = Number(t.amountPaid || t.paidAmount || t.total || 0)
+        const kembali = Number(t.change || 0)
+        const cashIn = Math.max(0, bayar - kembali)
+
+        if (cashIn > 0) {
+          await this.addMutation({
+            accountId: 'acc_cash',
+            type: 'IN',
+            amount: cashIn,
+            category: 'Penjualan Toko',
+            note: `Transaksi Kasir #${t.id.slice(0, 8)}`,
+            refId: t.id
+          })
+        }
+      } else if (t.paymentMethod === 'QRIS' && t.total > 0) {
         await this.addMutation({
           accountId: 'acc_bank',
           type: 'IN',
@@ -135,8 +138,10 @@ export const financeRepo = {
       }
     }
 
-        // 2. Olah transaksi Produk Digital
+    // 3. Olah transaksi Produk Digital
     for (const d of digitalTrx) {
+      if (d.status === 'CANCELLED') continue
+      
       const isTopup = d.type === 'topup'
       const isCashAdmin = d.adminPaymentMethod === 'cash'
 
@@ -144,46 +149,49 @@ export const financeRepo = {
         const cashIn = d.nominal + (isCashAdmin ? d.adminFee : 0)
         if (cashIn > 0) {
           await this.addMutation({
-            accountId: 'acc_cash',
-            type: 'IN',
-            amount: cashIn,
-            category: 'Transaksi Digital',
-            note: `Top Up ${d.provider}`,
-            refId: d.id
+            accountId: 'acc_cash', type: 'IN', amount: cashIn,
+            category: 'Transaksi Digital', note: `Top Up ${d.provider}`, refId: d.id
           })
         }
-
-        // Potong bank sesuai skema potong saldo (nominal - admin)
         const bankOut = isCashAdmin ? d.nominal : Math.max(0, d.nominal - d.adminFee)
         await this.addMutation({
-          accountId: 'acc_bank',
-          type: 'OUT',
-          amount: bankOut,
-          category: 'Transaksi Digital',
-          note: `Modal Top Up ${d.provider}`,
-          refId: d.id
+          accountId: 'acc_bank', type: 'OUT', amount: bankOut,
+          category: 'Transaksi Digital', note: `Modal Top Up ${d.provider}`, refId: d.id
         })
       } else {
         const cashOut = d.nominal - (isCashAdmin ? d.adminFee : 0)
         if (cashOut > 0) {
           await this.addMutation({
-            accountId: 'acc_cash',
-            type: 'OUT',
-            amount: cashOut,
-            category: 'Transaksi Digital',
-            note: `Tarik Tunai ${d.provider}`,
-            refId: d.id
+            accountId: 'acc_cash', type: 'OUT', amount: cashOut,
+            category: 'Transaksi Digital', note: `Tarik Tunai ${d.provider}`, refId: d.id
           })
         }
-        
         const bankIn = isCashAdmin ? d.nominal : d.nominal + d.adminFee
         await this.addMutation({
-          accountId: 'acc_bank',
-          type: 'IN',
-          amount: bankIn,
-          category: 'Transaksi Digital',
-          note: `Masuk Saldo Tarik Tunai ${d.provider}`,
-          refId: d.id
+          accountId: 'acc_bank', type: 'IN', amount: bankIn,
+          category: 'Transaksi Digital', note: `Masuk Saldo Tarik Tunai ${d.provider}`, refId: d.id
+        })
+      }
+    }
+
+    // 4. Olah Pengeluaran Operasional (Expenses)
+    for (const e of expenses) {
+      const targetAcc = e.paymentMethod === 'QRIS' ? 'acc_bank' : 'acc_cash'
+      if (e.amount > 0) {
+        await this.addMutation({
+          accountId: targetAcc, type: 'OUT', amount: e.amount,
+          category: `Operasional: ${e.category}`, note: e.note || e.category, refId: e.id
+        })
+      }
+    }
+
+    // 5. Olah Pelunasan Utang Member (Debt Payments)
+    for (const dp of debtPayments) {
+      const targetAcc = (dp.paymentMethod === 'QRIS' || dp.paymentMethod === 'BANK') ? 'acc_bank' : 'acc_cash'
+      if (dp.amount > 0) {
+        await this.addMutation({
+          accountId: targetAcc, type: 'IN', amount: dp.amount,
+          category: 'Pembayaran Utang Member', note: `Pelunasan utang #${dp.id.slice(0, 8)}`, refId: dp.id
         })
       }
     }

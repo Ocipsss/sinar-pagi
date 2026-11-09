@@ -7,14 +7,7 @@
       <h1 class="font-black text-xl text-zinc-900">Kas & Keuangan</h1>
       <p class="text-xs text-zinc-400">Ringkasan kas, bank/QRIS, dan saldo piutang</p>
     </div>
-    <button 
-      @click="syncFromHistory" 
-      :disabled="loading"
-      class="px-3.5 py-2 bg-zinc-100 hover:bg-zinc-200 active:scale-95 text-zinc-800 rounded-xl font-bold text-xs transition flex items-center gap-1.5 disabled:opacity-50"
-    >
-      <RefreshCw :class="['w-3.5 h-3.5', loading && 'animate-spin']" />
-      Hitung Ulang
-    </button>
+    <!-- ✅ Tombol "Hitung Ulang" DIHAPUS karena sekarang sinkron otomatis via liveQuery -->
   </div>
 
   <!-- Total Saldo Kas + Bank -->
@@ -73,7 +66,8 @@
     <div class="font-black text-xs text-zinc-400 uppercase tracking-wider">Mutasi Terakhir</div>
     
     <div v-if="mutations.length === 0" class="text-center py-8 text-xs text-zinc-400">
-      Belum ada mutasi saldo. Klik "Hitung Ulang" untuk memuat dari riwayat transaksi.
+      <!-- ✅ Teks panduan disesuaikan karena tidak ada lagi tombol Hitung Ulang -->
+      Belum ada mutasi saldo.
     </div>
 
     <div v-else class="space-y-2">
@@ -137,8 +131,8 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onActivated } from 'vue'
-import { RefreshCw, X } from 'lucide-vue-next'
+import { ref } from 'vue'
+import { X } from 'lucide-vue-next'
 import { useFinance } from '../composables/useFinance.js'
 import { formatRibuan, formatRp, toNumber } from '../utils/formatters/currency.js'
 import dayjs from 'dayjs'
@@ -149,8 +143,6 @@ const {
   totalSaldo, 
   totalPiutang, 
   loading, 
-  loadData, 
-  syncFromHistory, 
   setBalance 
 } = useFinance()
 
@@ -179,6 +171,6 @@ const submitBalance = async () => {
 
 const formatDate = (d) => dayjs(d).format('DD MMM YYYY • HH:mm')
 
-onMounted(loadData)
-onActivated(loadData)
+// ✅ FIX: Pemanggilan loadData() manual dihapus.
+// useFinance sekarang menangani sinkronisasi otomatis via liveQuery (di onMounted / onActivated).
 </script>
