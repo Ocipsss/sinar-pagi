@@ -5,7 +5,7 @@ import { settingsRepo } from '../db/repositories/settingsRepository.js'
 import { usePrinter } from '../composables/usePrinter.js'
 import dayjs from 'dayjs'
 
-// Helper fungsi untuk menghitung spasi rata tengah secara presisi (32 / 48 karakter)
+// Helper fungsi untuk format rata tengah manual (presisi 32 / 48 karakter)
 const centerText = (str = '', width = 32) => {
   const text = String(str).trim()
   if (!text) return ''
@@ -14,7 +14,7 @@ const centerText = (str = '', width = 32) => {
   return ' '.repeat(leftPadding) + text
 }
 
-// Format 2 kolom (Kiri rata kiri, Kanan rata kanan)
+// Format 2 kolom (Kiri rata kiri, Kanan rata kanan) pas di 32 / 48 karakter
 const formatTwoColumns = (leftStr, rightStr, width = 32) => {
   const cleanLeft = String(leftStr)
   const cleanRight = String(rightStr)
@@ -24,8 +24,19 @@ const formatTwoColumns = (leftStr, rightStr, width = 32) => {
   return trimmedLeft + ' '.repeat(spaceCount) + cleanRight
 }
 
+// Helper meload gambar khusus untuk PDF
+const loadImage = (src) => {
+  return new Promise((resolve) => {
+    const img = new Image()
+    img.crossOrigin = 'Anonymous'
+    img.onload = () => resolve(img)
+    img.onerror = () => resolve(null)
+    img.src = src
+  })
+}
+
 export const receiptService = {
-  // 1. Cetak Struk via Bluetooth Thermal Printer
+  // 1. Cetak Struk via Bluetooth Thermal Printer (Murni Teks, Anti Berantakan!)
   async printThermal(transaction) {
     if (!navigator.bluetooth) {
       throw new Error('Browser ini belum mendukung Web Bluetooth. Gunakan Chrome di Android.')
@@ -64,16 +75,16 @@ export const receiptService = {
     const tglStr = dayjs(validDate).format('DD/MM/YYYY')
     const jamStr = dayjs(validDate).format('HH:mm')
 
-    // KUNCI ALIGNMENT PADA 'LEFT' SEPANJANG WAKTU
     let encoded = encoder
       .initialize()
+      .raw([0x1b, 0x40])             // Reset ESC/POS Printer
+      .raw([0x1b, 0x4d, 0x00])       // Select Font A Standard (Monospace 12x24)
+      .raw([0x1d, 0x4c, 0x00, 0x00]) // Set Left Margin = 0
       .align('left')
 
-    // --- HEADER ---
-    // Nama Toko -> Center Manual (Kiri diisi spasi presisi)
+    // --- HEADER THERMAL (Murni Teks) ---
     encoded = encoded.line(centerText(storeName, width))
 
-    // Alamat -> Left (Tanpa Center)
     if (address) {
       address.split('\n').forEach(addrLine => {
         if (addrLine.trim()) {
@@ -82,7 +93,6 @@ export const receiptService = {
       })
     }
 
-    // Telepon -> Center Manual
     if (phone) {
       encoded = encoded.line(centerText(`Telp: ${phone}`, width))
     }
@@ -111,9 +121,7 @@ export const receiptService = {
       const detailStr = `${qty}x${price.toLocaleString('id-ID')}`
       const subtotalStr = subtotalVal.toLocaleString('id-ID')
 
-      // Baris 1: Nama Produk
       encoded = encoded.line(name)
-      // Baris 2: Qty x Harga (Kiri) & Subtotal (Kanan)
       encoded = encoded.line(formatTwoColumns(detailStr, subtotalStr, width))
     })
 
@@ -142,7 +150,6 @@ export const receiptService = {
     encoded = encoded.line(lineStr)
 
     // --- FOOTER & KASIR ---
-    // Ucapan Terima Kasih -> Left
     const footerText = settings.receiptFooter || settings.footerNote || 'Terima kasih telah berbelanja!'
     footerText.split('\n').forEach(fLine => {
       if (fLine.trim()) {
@@ -150,7 +157,6 @@ export const receiptService = {
       }
     })
 
-    // Kasir -> Center Manual
     const operator = transaction.operatorName || transaction.kasir || 'Admin'
     encoded = encoded
       .line(centerText(`Kasir: ${operator}`, width))
@@ -160,7 +166,6 @@ export const receiptService = {
 
     const fullData = encoded.encode()
 
-    // Pengiriman chunk 20 bytes via Bluetooth LE
     const chunkSize = 20
     try {
       for (let i = 0; i < fullData.length; i += chunkSize) {
@@ -177,14 +182,14 @@ export const receiptService = {
     }
   },
 
-  // 2. Unduh Nota PDF
+  // 2. Unduh Nota PDF (Lengkap Logo & Watermark Transparan di PDF saja)
   async downloadPdf(transaction) {
     const settings = await settingsRepo.getSettings()
     const is58mm = settings.printerPaperSize !== '80mm'
     const items = transaction.items || []
 
     const paperWidth = is58mm ? 58 : 80
-    const estimatedHeight = 95 + (items.length * 12)
+    const estimatedHeight = 110 + (items.length * 12)
 
     const doc = new jsPDF({
       orientation: 'portrait',
@@ -192,7 +197,33 @@ export const receiptService = {
       format: [paperWidth, estimatedHeight]
     })
 
-    let y = 7
+    let y = 6
+    const logoImg = await loadImage('/sinar-pagi-icon-color-2048.png')
+
+    // 1. Render Watermark Transparan di Tengah PDF
+    if (logoImg) {
+      try {
+        const wmCanvas = document.createElement('canvas')
+        wmCanvas.width = 300
+        wmCanvas.height = 300
+        const wmCtx = wmCanvas.getContext('2d')
+        wmCtx.globalAlpha = 0.08
+        wmCtx.drawImage(logoImg, 0, 0, 300, 300)
+
+        const watermarkData = wmCanvas.toDataURL('image/png')
+        const wmSize = is58mm ? 38 : 50
+        doc.addImage(watermarkData, 'PNG', (paperWidth - wmSize) / 2, (estimatedHeight - wmSize) / 2, wmSize, wmSize)
+      } catch (e) {
+        console.warn('Skip PDF watermark:', e)
+      }
+    }
+
+    // 2. Logo Header PDF
+    if (logoImg) {
+      const logoHeaderSize = 13
+      doc.addImage(logoImg, 'PNG', (paperWidth - logoHeaderSize) / 2, y, logoHeaderSize, logoHeaderSize)
+      y += logoHeaderSize + 3
+    }
 
     // --- HEADER PDF ---
     doc.setFont('courier', 'bold')
