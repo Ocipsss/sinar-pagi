@@ -2,7 +2,7 @@
 
 Dokumen ini mencatat visi pengembangan **Sinar Pagi POS** ke depan. Gunakan dokumen ini sebagai acuan saat ingin menambah fitur baru atau membereskan *tech-debt*, agar arah pengembangan tetap fokus dan tidak melebar ke mana-mana.
 
-**Status saat ini:** Versi `3.20` (Fitur Split Payment masuk di `Unreleased`).
+**Status saat ini:** Versi `3.23` (Split Payment, Retur Barang, dan Split Tender sudah rilis).
 
 ---
 
@@ -15,17 +15,17 @@ Menjadi aplikasi POS *offline-first* (cache instan) yang **paling ringan, cepat,
 
 Ini adalah hal-hal yang **paling mendesak** untuk dikerjakan selanjutnya:
 
-- [ ] **Rilis versi `3.21`**: Rilis resmi fitur Split Payment (saat ini masih di `Unreleased`).
-- [ ] **Update `CHANGELOG.md`**: Pindahkan catatan Split Payment dari `[Unreleased]` ke `[3.21]`.
-- [ ] **Migrasi Database Otomatis**: Karena kita sempat menghapus FK `service_id` di Supabase secara manual, buat script migrasi (atau dokumentasi jelas di `SETUP.md`) jika ada pengguna lain yang meng-install ulang aplikasi ini.
+- [ ] **UI Pengaturan Ukuran Kertas**: Menambahkan tombol toggle 58mm/80mm di `Settings.vue` (saat ini hanya bisa diubah lewat database).
+- [ ] **Pajak / PPN**: Menambahkan opsi pajak opsional (misal 11%) di pengaturan toko, otomatis terhitung di struk.
+- [ ] **Diskon Nota**: Fitur untuk memasukkan nominal diskon (potongan harga) di akhir transaksi, bukan hanya mengubah harga satuan.
 
 ---
 
 ## 🚀 Fitur yang Direncanakan (Backlog)
 
 ### 1. Peningkatan Sistem Kasir
-- [ ] **Split Payment QRIS + TEMPO**: Saat ini Split Payment hanya jalan untuk metode CASH. Tambahkan opsi agar pelanggan bisa bayar 50% via QRIS, dan 50% sisanya masuk Tempo (utang).
-- [ ] **Retur Barang (Refund)**: Saat ini fitur VOID hanya untuk membatalkan seluruh nota. Tambahkan fitur retur per-item (pelanggan hanya mengembalikan 1 dari 3 barang yang dibeli).
+- [x] ~~**Split Payment QRIS + TEMPO**: ...~~ *(Selesai di v3.23)*
+- [x] ~~**Retur Barang (Refund)**: ...~~ *(Selesai di v3.22)*
 - [ ] **Pajak / PPN**: Menambahkan opsi pajak opsional (misal 11%) di pengaturan toko, otomatis terhitung di struk.
 - [ ] **Diskon Nota**: Fitur untuk memasukkan nominal diskon (potongan harga) di akhir transaksi, bukan hanya mengubah harga satuan.
 
