@@ -7,6 +7,16 @@ dan proyek ini mengikuti [Semantic Versioning](https://semver.org/spec/v2.0.0.ht
 
 ---
 
+## [3.23] - 2026-11-13
+
+### Added
+- **Split Tender (QRIS + Cash + Tempo):** Kasir kini bisa membagi pembayaran dalam satu transaksi. Pelanggan bisa membayar sebagian dengan QRIS, sebagian dengan uang tunai, dan sisanya (jika ada) otomatis masuk ke utang (TEMPO).
+- UI baru di Kasir: Tombol metode ke-4 (SPLIT) dengan dua input terpisah (Nominal QRIS dan Nominal Cash).
+- Validasi cerdas: Jika total QRIS + Cash kurang dari total belanja, sistem otomatis mewajibkan pemilihan Member agar sisa kekurangan tercatat dengan aman sebagai piutang.
+- Mutasi kas otomatis terbagi dua: `IN` ke Bank (sesuai nominal QRIS) dan `IN` ke Kas Laci (sesuai nominal Cash).
+
+---
+
 ## [3.22] - 2026-11-13
 
 ### Added

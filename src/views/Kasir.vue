@@ -142,12 +142,13 @@
         Metode Pembayaran
       </div>
 
-      <div class="grid grid-cols-3 gap-2 mb-4">
+      <!-- TOMBOL METODE (4 KOLOM UNTUK SPLIT) -->
+      <div class="grid grid-cols-4 gap-1.5 mb-4">
         <button 
-          v-for="m in ['CASH','QRIS','TEMPO']" 
+          v-for="m in ['CASH','QRIS','SPLIT','TEMPO']" 
           :key="m" 
           @click="handleMethod(m)" 
-          :class="['py-2.5 rounded-xl text-[11px] font-black border transition', store.paymentMethod===m ? 'bg-white text-zinc-900 border-white' : 'bg-zinc-800 border-zinc-700 text-zinc-400']"
+          :class="['py-2 rounded-xl text-[10px] font-black border transition', store.paymentMethod===m ? 'bg-white text-zinc-900 border-white shadow-sm' : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:bg-zinc-700']"
         >
           {{ m }}
         </button>
@@ -174,7 +175,6 @@
           UANG PAS Rp {{ formatRibuan(total) }}
         </button>
         
-        <!-- INFO KEMBALIAN / SISA (SPLIT PAYMENT) -->
         <div v-if="store.bayarNominal > 0" class="flex justify-between text-xs pt-2 border-t border-zinc-800">
           <span class="text-zinc-400">Kembalian</span>
           <span :class="['font-black', kurangBayar > 0 ? 'text-red-400' : 'text-green-400']">
@@ -182,12 +182,10 @@
           </span>
         </div>
         
-        <!-- PERINGATAN JIKA KURANG TAPI BELUM PILIH MEMBER -->
         <div v-if="kurangBayar > 0 && !store.selectedMember" class="bg-red-500/20 border border-red-500/30 rounded-xl p-3 text-[11px] font-bold text-red-400 mt-1">
           Uang tunai kurang. Pilih Member di header atas jika ingin menjadikan sisanya sebagai utang (TEMPO).
         </div>
         
-        <!-- INFO JIKA KURANG DAN SUDAH PILIH MEMBER (SPLIT PAYMENT AKTIF) -->
         <div v-if="kurangBayar > 0 && store.selectedMember" class="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-[11px] font-black text-amber-400 mt-1 flex flex-col gap-1">
           <div class="flex justify-between items-center">
             <span>Masuk Tempo (Utang):</span>
@@ -207,17 +205,73 @@
         </div>
       </div>
 
+      <!-- METODE SPLIT -->
+      <div v-if="store.paymentMethod === 'SPLIT'" class="space-y-3">
+        <div class="flex justify-between items-center">
+          <span class="text-zinc-400 text-xs">Total</span>
+          <span class="font-black text-xl text-white">Rp {{ formatRibuan(total) }}</span>
+        </div>
+        
+        <div class="grid grid-cols-2 gap-2">
+          <div>
+            <label class="text-[9px] font-bold text-zinc-400 uppercase">QRIS</label>
+            <div class="relative mt-1">
+              <span class="absolute left-2 top-1/2 -translate-y-1/2 text-zinc-500 text-[10px]">Rp</span>
+              <input 
+                :value="bayarQrisNominal ? formatRibuan(bayarQrisNominal) : ''" 
+                @input="e => bayarQrisNominal = parseInt(e.target.value.replace(/\D/g, '') || '0', 10)" 
+                type="text" 
+                inputmode="numeric" 
+                placeholder="0" 
+                class="w-full pl-7 pr-2 py-2 bg-white text-zinc-900 rounded-xl font-black text-sm focus:outline-none"
+              />
+            </div>
+          </div>
+          <div>
+            <label class="text-[9px] font-bold text-zinc-400 uppercase">Cash</label>
+            <div class="relative mt-1">
+              <span class="absolute left-2 top-1/2 -translate-y-1/2 text-zinc-500 text-[10px]">Rp</span>
+              <input 
+                :value="bayarCashNominal ? formatRibuan(bayarCashNominal) : ''" 
+                @input="e => bayarCashNominal = parseInt(e.target.value.replace(/\D/g, '') || '0', 10)" 
+                type="text" 
+                inputmode="numeric" 
+                placeholder="0" 
+                class="w-full pl-7 pr-2 py-2 bg-white text-zinc-900 rounded-xl font-black text-sm focus:outline-none"
+              />
+            </div>
+          </div>
+        </div>
+
+        <div class="flex justify-between items-center text-xs pt-2 border-t border-zinc-800">
+          <span class="text-zinc-400">Sisa Masuk Tempo</span>
+          <span :class="['font-black', splitRemaining > 0 ? 'text-amber-400' : 'text-green-400']">
+            {{ splitRemaining > 0 ? `Rp ${formatRibuan(splitRemaining)}` : 'Lunas (Rp 0)' }}
+          </span>
+        </div>
+
+        <div v-if="splitRemaining > 0 && !store.selectedMember" class="bg-red-500/20 border border-red-500/30 rounded-xl p-3 text-[11px] font-bold text-red-400">
+          Pilih Member di header atas jika ingin menjadikan sisa sebagai utang.
+        </div>
+      </div>
+
       <!-- METODE TEMPO -->
       <div v-if="store.paymentMethod === 'TEMPO'" class="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 text-[11px] font-black text-amber-400 mb-4">
         TEMPO → {{ store.selectedMember?.name || 'Pilih member' }}
       </div>
     </div>
 
-    <!-- TOMBOL BAYAR (Diperbarui untuk mendukung Split Payment) -->
+    <!-- TOMBOL BAYAR -->
     <button 
-      v-if="store.paymentMethod==='QRIS' || store.paymentMethod==='TEMPO' || (store.paymentMethod==='CASH' && store.bayarNominal>0)" 
+      v-if="
+        store.paymentMethod==='QRIS' || 
+        store.paymentMethod==='TEMPO' || 
+        (store.paymentMethod==='CASH' && store.bayarNominal>0) || 
+        (store.paymentMethod==='SPLIT' && (bayarQrisNominal>0 || bayarCashNominal>0))
+      " 
       :disabled="
         (store.paymentMethod==='CASH' && store.bayarNominal < total && !store.selectedMember) || 
+        (store.paymentMethod==='SPLIT' && splitRemaining > 0 && !store.selectedMember) ||
         (store.paymentMethod==='TEMPO' && !store.selectedMember)
       " 
       @click="onCheckout" 
@@ -232,8 +286,10 @@
       <template v-else>
         <template v-if="store.paymentMethod==='QRIS'">Bayar dengan QRIS</template>
         <template v-else-if="store.paymentMethod==='TEMPO'">Simpan sebagai Tempo (Utang)</template>
+        <template v-else-if="store.paymentMethod==='SPLIT'">
+          Proses Split (Q: {{ formatRibuan(bayarQrisNominal) }} | C: {{ formatRibuan(bayarCashNominal) }})
+        </template>
         <template v-else>
-          <!-- Jika uang kurang tapi sudah pilih member, tampilkan nominal yang dibayar -->
           {{ (store.bayarNominal < total && store.selectedMember) ? `Bayar Rp ${formatRibuan(store.bayarNominal)}` : `Bayar Rp ${formatRibuan(total)}` }}
         </template>
       </template>
@@ -377,6 +433,7 @@ const {
   store, operatorStore, q, memberQ, filteredProducts, filteredMembers, 
   total, kembalian, kurangBayar, bayarDisplay, showSearch, 
   selectedProductForOption, filteredServicesByCategory,
+  bayarQrisNominal, bayarCashNominal, splitRemaining,
   load, handleSelectProduct, confirmAddToCart, getProductPackages, checkout, processBarcodeScan
 } = useKasir()
 
@@ -413,6 +470,10 @@ const handleMethod = (m) => {
   store.paymentMethod = m
   if (m === 'QRIS') store.bayarNominal = total.value
   if (m === 'TEMPO' && !store.selectedMember) showMemberPicker.value = true 
+  if (m === 'SPLIT') {
+    bayarQrisNominal.value = 0
+    bayarCashNominal.value = 0
+  }
 }
 
 const selectMember = (m) => { 
@@ -434,13 +495,28 @@ const onCheckout = async () => {
     const currentMemberSnapshot = store.selectedMember
     const currentMethodSnapshot = store.paymentMethod
     const currentPaidSnapshot = store.bayarNominal
+    const currentQrisSnapshot = bayarQrisNominal.value
+    const currentCashSnapshot = bayarCashNominal.value
     const currentOperatorName = operatorStore.operatorName
 
     const res = await checkout()
     
-    // ✅ FIX: Kirim data amountPaid, change, dan remaining yang akurat ke modal struk
-    const finalAmountPaid = currentMethodSnapshot === 'TEMPO' ? 0 : (currentMethodSnapshot === 'QRIS' ? res.total : currentPaidSnapshot)
-    const finalChange = (currentMethodSnapshot === 'CASH' && finalAmountPaid > res.total) ? finalAmountPaid - res.total : 0
+    // ✅ Kirim data amountPaid, change, dan remaining yang akurat ke modal struk
+    let finalAmountPaid = 0
+    let finalChange = 0
+    
+    if (currentMethodSnapshot === 'TEMPO') {
+      finalAmountPaid = 0
+    } else if (currentMethodSnapshot === 'QRIS') {
+      finalAmountPaid = res.total
+    } else if (currentMethodSnapshot === 'SPLIT') {
+      finalAmountPaid = currentQrisSnapshot + currentCashSnapshot
+      finalChange = Math.max(0, finalAmountPaid - res.total)
+    } else {
+      finalAmountPaid = currentPaidSnapshot
+      finalChange = Math.max(0, finalAmountPaid - res.total)
+    }
+
     const finalRemaining = Math.max(0, res.total - finalAmountPaid)
 
     completedTransaction.value = {
@@ -450,7 +526,7 @@ const onCheckout = async () => {
       paymentMethod: currentMethodSnapshot,
       amountPaid: finalAmountPaid,
       change: finalChange,
-      remaining: finalRemaining, // ✅ Kirim sisa ke struk
+      remaining: finalRemaining,
       memberName: currentMemberSnapshot?.name || 'Umum',
       operatorName: currentOperatorName,
       items: currentCartSnapshot.map(item => ({

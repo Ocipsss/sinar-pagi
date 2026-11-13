@@ -23,16 +23,26 @@ export function useKasir() {
   const showSearch = ref(false)
   const selectedProductForOption = ref(null)
 
+  // State reaktif untuk metode SPLIT
+  const bayarQrisNominal = ref(0)
+  const bayarCashNominal = ref(0)
+
   const total = computed(() => store.cart.reduce((s, c) => s + c.price_sell * c.cartQty, 0))
   const kembalian = computed(() => Math.max(0, (store.bayarNominal || 0) - total.value))
   const kurangBayar = computed(() => Math.max(0, total.value - (store.bayarNominal || 0)))
   
-  // ✅ FITUR BARU: Sisa bayar (otomatis masuk piutang jika pakai Split Payment)
+  // Sisa bayar untuk CASH
   const sisaBayar = computed(() => {
     if (store.paymentMethod === 'TEMPO') return total.value
     if (store.paymentMethod === 'QRIS') return 0
-    // Untuk CASH
+    if (store.paymentMethod === 'SPLIT') return splitRemaining.value
     return kurangBayar.value
+  })
+
+  // Hitung sisa untuk Split (QRIS + Cash + Tempo)
+  const splitRemaining = computed(() => {
+    const totalTerbayar = Number(bayarQrisNominal.value || 0) + Number(bayarCashNominal.value || 0)
+    return Math.max(0, total.value - totalTerbayar)
   })
 
   const bayarDisplay = computed({
@@ -108,7 +118,11 @@ export function useKasir() {
     members.value = data.members
     packagesList.value = [...packages].sort((a,b) => (a.order ?? 999) - (b.order ?? 999))
     servicesList.value = services
-    if (!store.editingTransactionId) store.bayarNominal = 0
+    if (!store.editingTransactionId) {
+      store.bayarNominal = 0
+      bayarQrisNominal.value = 0
+      bayarCashNominal.value = 0
+    }
 
     if (import.meta.env.DEV) {
       const foundDeleted = data.products.filter(p => p.deleted)
@@ -125,8 +139,6 @@ export function useKasir() {
       .sort((a,b) => (a.order ?? 999) - (b.order ?? 999))
   }
 
-  // ✅ FIX: Produk apa pun yang punya PAKET atau JASA → muncul modal pilihan.
-  // Tidak lagi dibatasi kategori rokok/permen.
   const handleSelectProduct = (product) => {
     const pCat = (product.category || '').toLowerCase()
     const hasPackages = getProductPackages(product.id).length > 0
@@ -166,12 +178,15 @@ export function useKasir() {
       throw new Error('Keranjang belanja masih kosong!')
     }
 
-    // ✅ VALIDASI BARU: Split payment / Tempo wajib pilih member
+    // ✅ VALIDASI: Split tender / Tempo wajib pilih member jika ada sisa
     if (store.paymentMethod === 'TEMPO' && !store.selectedMember) {
       throw new Error('Pilih member untuk metode pembayaran TEMPO')
     }
     if (store.paymentMethod === 'CASH' && store.bayarNominal < total.value && !store.selectedMember) {
       throw new Error('Pilih member jika uang tunai kurang dari total (Split Payment / Tempo)')
+    }
+    if (store.paymentMethod === 'SPLIT' && splitRemaining.value > 0 && !store.selectedMember) {
+      throw new Error('Pilih member jika total QRIS + Cash kurang dari total belanja (Split Tender)')
     }
 
     const finalAmountPaid =
@@ -179,16 +194,21 @@ export function useKasir() {
         ? 0
         : store.paymentMethod === 'QRIS'
           ? total.value
-          : (Number(store.bayarNominal) || 0)
+          : store.paymentMethod === 'SPLIT'
+            ? (Number(bayarQrisNominal.value) + Number(bayarCashNominal.value))
+            : (Number(store.bayarNominal) || 0)
 
     const finalChange =
       store.paymentMethod === 'CASH'
         ? Math.max(0, finalAmountPaid - total.value)
-        : 0
+        : store.paymentMethod === 'SPLIT'
+          ? Math.max(0, finalAmountPaid - total.value)
+          : 0
 
     const activeOperator = getActiveOperator()
 
     if (store.editingTransactionId) {
+      // Mode Edit belum mendukung Split Tender (hanya update transaksi biasa)
       const originalTrx = {
         id: store.editingTransactionId,
         paymentMethod: store.paymentMethod,
@@ -219,7 +239,9 @@ export function useKasir() {
       paymentMethod: store.paymentMethod,
       operator: activeOperator,
       amountPaid: finalAmountPaid,
-      change: finalChange
+      change: finalChange,
+      amountQris: store.paymentMethod === 'SPLIT' ? Number(bayarQrisNominal.value) : 0,
+      amountCash: store.paymentMethod === 'SPLIT' ? Number(bayarCashNominal.value) : 0
     })
     store.clearCart()
     return res
@@ -299,7 +321,10 @@ export function useKasir() {
     total, 
     kembalian, 
     kurangBayar, 
-    sisaBayar, // ✅ Export sisaBayar untuk UI
+    sisaBayar,
+    splitRemaining,
+    bayarQrisNominal,
+    bayarCashNominal,
     bayarDisplay, 
     showSearch,
     selectedProductForOption, 
