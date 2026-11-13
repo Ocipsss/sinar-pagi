@@ -291,6 +291,16 @@
             </button>
           </div>
 
+          <!-- ✅ FITUR BARU: TOMBOL RETUR BARANG -->
+          <div class="flex gap-2" v-if="(selectedTransaction.trxType || selectedTransaction.trx_type || 'BARANG') === 'BARANG' && !isVoid(selectedTransaction)">
+            <button 
+              @click="openReturnModal(selectedTransaction)"
+              class="w-full py-3 bg-orange-50 hover:bg-orange-100 border border-orange-200 text-orange-600 rounded-xl font-bold text-xs flex items-center justify-center gap-1.5 transition active:scale-95"
+            >
+              <RotateCcw class="w-4 h-4" /> Retur Barang (Refund)
+            </button>
+          </div>
+
           <div class="flex gap-2">
             <button 
               v-if="!isVoid(selectedTransaction)"
@@ -311,6 +321,94 @@
       </div>
     </div>
 
+    <!-- ✅ MODAL RETUR BARANG -->
+    <div v-if="showReturnModal" class="fixed inset-0 z-[100] bg-black/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
+      <div class="w-full max-w-lg bg-white rounded-t-[2.5rem] sm:rounded-[2rem] p-6 shadow-2xl max-h-[90vh] flex flex-col animate-in slide-in-from-bottom duration-200">
+        
+        <div class="flex justify-between items-center border-b border-zinc-100 pb-3 mb-4">
+          <div>
+            <h2 class="font-black text-base text-zinc-900">Retur Barang (Refund)</h2>
+            <p class="text-[11px] text-zinc-500 font-mono">Nota #{{ selectedTransaction?.id?.slice(0, 8) }}</p>
+          </div>
+          <button @click="closeReturnModal" class="p-2 bg-zinc-100 hover:bg-zinc-200 rounded-xl transition">
+            <X class="w-4 h-4" />
+          </button>
+        </div>
+
+        <div class="flex-1 overflow-auto pr-1 space-y-3">
+          <div class="bg-amber-50 border border-amber-200 text-amber-800 p-3 rounded-xl text-[11px] font-medium leading-relaxed">
+            Pilih barang dan masukkan jumlah yang ingin diretur. Stok akan bertambah dan uang akan dikembalikan ke pelanggan.
+          </div>
+
+          <div 
+            v-for="item in returnItems" 
+            :key="item.id" 
+            class="flex flex-col gap-2 p-3 border border-zinc-200 rounded-xl bg-zinc-50/50"
+          >
+            <div class="flex justify-between items-start">
+              <div>
+                <div class="font-bold text-xs text-zinc-900">{{ item.productName }}</div>
+                <div class="text-[10px] text-zinc-500">Harga: Rp {{ formatRibuan(item.price) }} • Dibeli: {{ item.originalQty }}</div>
+              </div>
+            </div>
+            
+            <div class="flex items-center gap-3 mt-1">
+              <div class="text-[11px] font-bold text-zinc-600">Jumlah Retur:</div>
+              <div class="flex items-center gap-2">
+                <button 
+                  type="button"
+                  @click="item.qtyReturn = Math.max(0, item.qtyReturn - 1)"
+                  class="w-8 h-8 flex items-center justify-center bg-white border border-zinc-300 rounded-lg text-zinc-600 hover:bg-zinc-100"
+                >
+                  -
+                </button>
+                <input 
+                  v-model.number="item.qtyReturn" 
+                  type="number" 
+                  min="0" 
+                  :max="item.originalQty"
+                  class="w-12 text-center text-sm font-black border border-zinc-300 rounded-lg py-1 focus:outline-none focus:border-zinc-900"
+                />
+                <button 
+                  type="button"
+                  @click="item.qtyReturn = Math.min(item.originalQty, item.qtyReturn + 1)"
+                  class="w-8 h-8 flex items-center justify-center bg-white border border-zinc-300 rounded-lg text-zinc-600 hover:bg-zinc-100"
+                >
+                  +
+                </button>
+              </div>
+              <div class="ml-auto text-xs font-black text-orange-600">
+                Rp {{ formatRibuan(item.qtyReturn * item.price) }}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="border-t border-zinc-100 pt-4 mt-2">
+          <div class="flex justify-between items-center mb-4">
+            <span class="text-xs font-bold text-zinc-500 uppercase tracking-wider">Total Refund:</span>
+            <span class="text-lg font-black text-orange-600">Rp {{ formatRibuan(totalRefundAmount) }}</span>
+          </div>
+          
+          <div class="flex gap-2">
+            <button 
+              @click="closeReturnModal" 
+              class="flex-1 py-3 bg-zinc-100 text-zinc-700 rounded-xl font-bold text-xs hover:bg-zinc-200 transition"
+            >
+              Batal
+            </button>
+            <button 
+              @click="submitReturn" 
+              :disabled="totalRefundAmount <= 0 || loading"
+              class="flex-1 py-3 bg-orange-500 hover:bg-orange-600 disabled:bg-zinc-300 disabled:text-zinc-500 text-white rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition shadow-md"
+            >
+              <RotateCcw class="w-4 h-4" /> Proses Retur
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- Modal Struk / Reprint Nota -->
     <ReceiptModal 
       v-if="showReceiptModal && selectedTransaction" 
@@ -325,7 +423,7 @@ import { ref, computed, onMounted, onActivated } from 'vue'
 import { useRouter } from 'vue-router'
 import { 
   Search, Receipt, Calendar, X, Printer, Pencil, Wallet, Clock, CheckCircle2,
-  Banknote, QrCode, BookOpen
+  Banknote, QrCode, BookOpen, RotateCcw
 } from 'lucide-vue-next'
 import { formatRibuan } from '../utils/formatters/currency.js'
 import { useSalesHistory } from '../composables/useSalesHistory.js'
@@ -347,6 +445,7 @@ const {
   totalPiutang,
   loadHistory,
   handleVoid,
+  handleReturn, // ✅ Ambil fungsi retur
   formatDate
 } = useSalesHistory()
 
@@ -397,6 +496,57 @@ const handleEditInKasir = (transaction) => {
 const handleCloseReceipt = () => {
   showReceiptModal.value = false
   selectedTransaction.value = null
+}
+
+// ==========================================
+// ✅ FITUR BARU: STATE & LOGIKA RETUR BARANG
+// ==========================================
+const showReturnModal = ref(false)
+const returnItems = ref([])
+
+const openReturnModal = (transaction) => {
+  // Siapkan state item dengan qty default 0
+  returnItems.value = transaction.items.map(item => ({
+    id: item.id,
+    productId: item.productId || item.product_id,
+    productName: item.productName || item.product_name || item.name,
+    price: Number(item.price || 0),
+    originalQty: Number(item.qty || 0),
+    qtyReturn: 0
+  }))
+  showReturnModal.value = true
+}
+
+const closeReturnModal = () => {
+  showReturnModal.value = false
+  returnItems.value = []
+}
+
+// Hitung otomatis total refund di UI
+const totalRefundAmount = computed(() => {
+  return returnItems.value.reduce((sum, item) => sum + (item.qtyReturn * item.price), 0)
+})
+
+const submitReturn = async () => {
+  // Validasi: pastikan qty retur tidak melebihi qty asli
+  const invalidItems = returnItems.value.filter(i => i.qtyReturn > i.originalQty)
+  if (invalidItems.length > 0) {
+    toast.error('Jumlah retur tidak boleh melebihi jumlah yang dibeli!')
+    return
+  }
+
+  // Ambil hanya item yang qty retur > 0
+  const itemsToReturn = returnItems.value
+    .filter(i => i.qtyReturn > 0)
+    .map(i => ({
+      id: i.id,
+      productId: i.productId,
+      qty: i.qtyReturn
+    }))
+
+  // Panggil fungsi handleReturn dari composable
+  await handleReturn(selectedTransaction.value, itemsToReturn)
+  closeReturnModal()
 }
 
 onMounted(() => loadHistory())

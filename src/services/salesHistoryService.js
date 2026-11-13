@@ -344,6 +344,143 @@ export const salesHistoryService = {
     )
   },
 
+  // ✅ FITUR BARU: RETUR BARANG (Refund Sebagian)
+  async processReturn(originalTrx, itemsToReturn) {
+    const now = dayjs().toISOString()
+
+    return await db.transaction(
+      'rw',
+      [db.transactions, db.transaction_items, db.products, db.members, db.cash_accounts, db.cash_mutations],
+      async () => {
+        const existingTrx = await db.transactions.get(originalTrx.id)
+        if (!existingTrx) throw new Error('Transaksi tidak ditemukan')
+        if (existingTrx.status === 'void') throw new Error('Transaksi sudah dibatalkan (VOID)')
+
+        let totalRefund = 0
+        let totalProfitDikurangi = 0
+        
+        const isTempo = existingTrx.paymentMethod === 'TEMPO'
+        const isCash = existingTrx.paymentMethod === 'CASH'
+        const isQris = existingTrx.paymentMethod === 'QRIS'
+
+        // 1. Proses tiap item yang diretur
+        for (const returnItem of itemsToReturn) {
+          if (returnItem.qty <= 0) continue
+
+          const dbItem = await db.transaction_items.get(returnItem.id)
+          if (!dbItem) continue
+
+          const refundAmount = (Number(dbItem.price) || 0) * returnItem.qty
+          totalRefund += refundAmount
+
+          // Hitung profit yang batal
+          if (dbItem.productId) {
+            const product = await productRepo.getById(dbItem.productId)
+            if (product) {
+              const profitItem = (Number(dbItem.price) - Number(product.price_modal || 0)) * returnItem.qty
+              totalProfitDikurangi += Math.max(0, profitItem)
+
+              // Kembalikan stok
+              await productRepo.update(dbItem.productId, {
+                qty: (product.qty || 0) + returnItem.qty,
+                updatedAt: now,
+                synced: 0
+              })
+            }
+          }
+
+          // Kurangi qty di item transaksi atau hapus jika 0
+          const newQty = (dbItem.qty || 0) - returnItem.qty
+          if (newQty <= 0) {
+            await db.transaction_items.delete(dbItem.id)
+          } else {
+            await db.transaction_items.update(dbItem.id, {
+              qty: newQty,
+              subtotal: (dbItem.price || 0) * newQty,
+              updatedAt: now,
+              synced: 0
+            })
+          }
+        }
+
+        if (totalRefund === 0) throw new Error('Tidak ada barang yang diretur.')
+
+        // 2. Proses Pengembalian Uang / Kas
+        if (totalRefund > 0) {
+          if (isTempo) {
+            // Jika TEMPO, kurangi utang member
+            if (existingTrx.memberId) {
+              const member = await memberRepo.getById(existingTrx.memberId)
+              if (member) {
+                await memberRepo.update(existingTrx.memberId, {
+                  debt: Math.max(0, (member.debt || 0) - totalRefund),
+                  total_spending: Math.max(0, (member.total_spending || 0) - totalRefund),
+                  points: Math.max(0, (member.points || 0) - Math.floor(totalProfitDikurangi * 0.01)),
+                  updatedAt: now, synced: 0
+                })
+              }
+            }
+          } else {
+            // Jika CASH / QRIS, uang keluar dari kas / bank
+            const accountId = isQris ? 'acc_bank' : 'acc_cash'
+            await financeRepo.addMutation({
+              accountId,
+              type: 'OUT',
+              amount: totalRefund,
+              category: 'Retur Barang',
+              note: `Retur Nota #${originalTrx.id.slice(0, 8)}`,
+              refId: originalTrx.id
+            })
+
+            // Update total_spending & points member (jika ada)
+            if (existingTrx.memberId) {
+              const member = await memberRepo.getById(existingTrx.memberId)
+              if (member) {
+                await memberRepo.update(existingTrx.memberId, {
+                  total_spending: Math.max(0, (member.total_spending || 0) - totalRefund),
+                  points: Math.max(0, (member.points || 0) - Math.floor(totalProfitDikurangi * 0.01)),
+                  updatedAt: now, synced: 0
+                })
+              }
+            }
+          }
+        }
+
+        // 3. Update Header Transaksi
+        const newTotal = Math.max(0, (existingTrx.total || 0) - totalRefund)
+        const isAllReturned = newTotal === 0
+
+        // Hitung ulang amountPaid & change jika Cash
+        let newAmountPaid = existingTrx.amountPaid || 0
+        let newChange = existingTrx.change || 0
+        
+        if (isCash && !isAllReturned && newAmountPaid > newTotal) {
+           // Jika total turun drastis, ubah jumlah bayar agar sesuai total baru
+           newAmountPaid = newTotal
+           newChange = 0
+        }
+
+        const newRemaining = isTempo ? newTotal : (existingTrx.remaining || 0)
+
+        await db.transactions.update(originalTrx.id, {
+          total: newTotal,
+          total_amount: newTotal,
+          amountPaid: newAmountPaid,
+          paidAmount: newAmountPaid,
+          change: newChange,
+          changeAmount: newChange,
+          remaining: newRemaining,
+          status: isAllReturned ? 'void' : existingTrx.status,
+          notes: `${existingTrx.notes || ''} | Retur: Rp ${totalRefund}`.trim(),
+          updatedAt: now,
+          synced: 0
+        })
+
+        return { id: originalTrx.id, totalRefund, newTotal }
+      }
+    )
+  },
+
   // FUNGSI PEMBATALAN TRANSAKSI / VOID (ATOMIC TRANSACTION)
   async voidTransaction(transaction) {
     const now = dayjs().toISOString()

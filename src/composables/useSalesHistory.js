@@ -1,3 +1,4 @@
+// src/composables/useSalesHistory.js
 import { ref, computed } from 'vue'
 import { salesHistoryService } from '../services/salesHistoryService.js'
 import { toast } from 'vue-sonner'
@@ -13,6 +14,9 @@ export function useSalesHistory() {
   const selectedFilter = ref('TODAY')
   const selectedTransaction = ref(null)
   const loading = ref(false)
+
+  // State untuk modal retur
+  const returningTransaction = ref(null)
 
   const filterOptions = [
     { label: 'Hari Ini', value: 'TODAY' },
@@ -51,6 +55,29 @@ export function useSalesHistory() {
       await loadHistory()
     } catch (e) {
       toast.error(`Gagal membatalkan transaksi: ${e.message}`)
+    } finally {
+      loading.value = false
+    }
+  }
+
+  // ✅ FITUR BARU: Proses Retur Barang (Refund Sebagian)
+  const handleReturn = async (transaction, itemsToReturn) => {
+    if (!itemsToReturn || itemsToReturn.length === 0) {
+      toast.error('Pilih minimal 1 barang yang ingin diretur!')
+      return
+    }
+
+    loading.value = true
+    try {
+      const res = await salesHistoryService.processReturn(transaction, itemsToReturn)
+      
+      toast.success(`Retur berhasil! Total pengembalian: Rp ${res.totalRefund.toLocaleString('id-ID')}`)
+      
+      returningTransaction.value = null
+      selectedTransaction.value = null // Tutup modal detail
+      await loadHistory()
+    } catch (e) {
+      toast.error(`Gagal memproses retur: ${e.message}`)
     } finally {
       loading.value = false
     }
@@ -113,6 +140,8 @@ export function useSalesHistory() {
     totalPiutang,
     loadHistory,
     handleVoid,
+    handleReturn, // ✅ Export fungsi retur
+    returningTransaction, // ✅ Export state modal retur
     formatDate
   }
 }
