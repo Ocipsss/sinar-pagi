@@ -134,14 +134,26 @@ export const receiptService = {
     const paymentMethod = String(transaction.paymentMethod || '').toLowerCase()
     if (paymentMethod === 'cash' || paymentMethod === 'tunai') {
       const bayar = transaction.amountPaid || transaction.paidAmount || transaction.total || 0
+      // ✅ Logika Split Payment: Kembalian hanya ada jika bayar > total
       const kembali = transaction.change !== undefined ? transaction.change : Math.max(0, bayar - (transaction.total || 0))
+      const sisaTempo = transaction.remaining || 0
 
       const bayarStr = bayar.toLocaleString('id-ID')
       const kembaliStr = kembali.toLocaleString('id-ID')
 
-      encoded = encoded
-        .line(formatTwoColumns('BAYAR :', bayarStr, width))
-        .line(formatTwoColumns('KEMBALI :', kembaliStr, width))
+      encoded = encoded.line(formatTwoColumns('BAYAR :', bayarStr, width))
+      
+      if (kembali > 0) {
+        encoded = encoded.line(formatTwoColumns('KEMBALI :', kembaliStr, width))
+      }
+      
+      // ✅ Cetak Sisa Tempo di Thermal
+      if (sisaTempo > 0) {
+        encoded = encoded.line(formatTwoColumns('SISA (TEMPO):', sisaTempo.toLocaleString('id-ID'), width))
+      }
+    } else if (paymentMethod === 'tempo') {
+      const sisaTempo = transaction.total || 0
+      encoded = encoded.line(formatTwoColumns('MASUK TEMPO:', sisaTempo.toLocaleString('id-ID'), width))
     } else {
       const methodStr = paymentMethod.toUpperCase()
       encoded = encoded.line(formatTwoColumns('METODE :', methodStr, width))
@@ -283,18 +295,37 @@ export const receiptService = {
     doc.text(`Rp ${(transaction.total || 0).toLocaleString('id-ID')}`, paperWidth - 4, y, { align: 'right' })
 
     const isCash = String(transaction.paymentMethod || '').toLowerCase() === 'cash' || String(transaction.paymentMethod || '').toLowerCase() === 'tunai'
+    const isTempo = String(transaction.paymentMethod || '').toLowerCase() === 'tempo'
+    
     if (isCash) {
       const bayar = transaction.amountPaid || transaction.paidAmount || transaction.total || 0
       const kembali = transaction.change !== undefined ? transaction.change : Math.max(0, bayar - (transaction.total || 0))
+      const sisaTempo = transaction.remaining || 0
 
       y += 3.5
       doc.setFont('courier', 'normal')
       doc.text('BAYAR :', 4, y)
       doc.text(`Rp ${bayar.toLocaleString('id-ID')}`, paperWidth - 4, y, { align: 'right' })
 
+      if (kembali > 0) {
+        y += 3.5
+        doc.text('KEMBALI :', 4, y)
+        doc.text(`Rp ${kembali.toLocaleString('id-ID')}`, paperWidth - 4, y, { align: 'right' })
+      }
+
+      // ✅ Cetak Sisa Tempo di PDF
+      if (sisaTempo > 0) {
+        y += 3.5
+        doc.setFont('courier', 'bold')
+        doc.text('SISA (TEMPO) :', 4, y)
+        doc.text(`Rp ${sisaTempo.toLocaleString('id-ID')}`, paperWidth - 4, y, { align: 'right' })
+      }
+    } else if (isTempo) {
+      const sisaTempo = transaction.total || 0
       y += 3.5
-      doc.text('KEMBALI :', 4, y)
-      doc.text(`Rp ${kembali.toLocaleString('id-ID')}`, paperWidth - 4, y, { align: 'right' })
+      doc.setFont('courier', 'normal')
+      doc.text('MASUK TEMPO :', 4, y)
+      doc.text(`Rp ${sisaTempo.toLocaleString('id-ID')}`, paperWidth - 4, y, { align: 'right' })
     } else {
       y += 3.5
       doc.setFont('courier', 'normal')

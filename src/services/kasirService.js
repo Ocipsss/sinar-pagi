@@ -21,26 +21,37 @@ export const kasirService = {
     if (isTempo && !member) throw new Error('Member wajib dipilih untuk metode pembayaran TEMPO!')
 
     // ✅ FIX P0: Normalisasi amountPaid & change dari caller
-    // - TEMPO: 0 (belum bayar)
-    // - QRIS: pas total (uang elektronik)
-    // - CASH: nominal uang diterima user (bisa >= total), change = kembalian
     let finalAmountPaid
     let finalChange
+    let sisaBayar = 0
 
     if (isTempo) {
       finalAmountPaid = 0
       finalChange = 0
+      sisaBayar = total
     } else if (isQris) {
       finalAmountPaid = total
       finalChange = 0
+      sisaBayar = 0
     } else {
       // CASH
       const paid = Number(amountPaid)
       finalAmountPaid = Number.isFinite(paid) && paid > 0 ? Math.round(paid) : total
-      finalChange = Math.max(0, finalAmountPaid - total)
+      
+      if (finalAmountPaid < total) {
+        // FITUR BARU: Split Payment (DP / Bayar Kurang)
+        if (!member) {
+          throw new Error('Pelanggan wajib dipilih jika uang tunai kurang dari total (Split Payment / Tempo)!')
+        }
+        finalChange = 0
+        sisaBayar = total - finalAmountPaid
+      } else {
+        finalChange = Math.max(0, finalAmountPaid - total)
+        sisaBayar = 0
+      }
     }
 
-    // Uang yang benar-benar masuk laci (untuk CASH) = total (setelah dikurangi kembalian)
+    // Uang yang benar-benar masuk laci (untuk CASH) = nominal yang dibayarkan - kembalian
     const cashIn = isCash ? Math.max(0, finalAmountPaid - finalChange) : 0
 
     let totalProfit = 0
@@ -61,9 +72,9 @@ export const kasirService = {
         paidAmount: finalAmountPaid,
         change: finalChange,
         changeAmount: finalChange,
-        remaining: isTempo ? total : 0, 
-        status: isTempo ? 'unpaid' : 'paid',
-        dueDate: isTempo ? dayjs().add(7, 'day').toISOString() : null,
+        remaining: sisaBayar, 
+        status: sisaBayar > 0 ? 'unpaid' : 'paid',
+        dueDate: sisaBayar > 0 ? dayjs().add(7, 'day').toISOString() : null,
         updatedAt: now, 
         synced: 0
       }
@@ -71,7 +82,6 @@ export const kasirService = {
 
       // 2. Pencatatan mutasi kas/bank
       if (isCash) {
-        // ✅ FIX: catat uang yang benar-benar masuk laci (= total setelah kembalian)
         if (cashIn > 0) {
           await financeRepo.addMutation({
             accountId: 'acc_cash',
@@ -144,7 +154,7 @@ export const kasirService = {
           const earnedPoints = Math.floor(totalProfit * 0.01)
           const updatedPoints = (currentMember.points || 0) + earnedPoints
           const updatedSpending = (currentMember.total_spending || 0) + total
-          const updatedDebt = isTempo ? (currentMember.debt || 0) + total : (currentMember.debt || 0)
+          const updatedDebt = (currentMember.debt || 0) + sisaBayar
 
           await db.members.update(member.id, {
             points: updatedPoints,

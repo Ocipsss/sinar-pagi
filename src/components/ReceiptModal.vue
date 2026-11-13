@@ -51,14 +51,32 @@
             <span>METODE BAYAR</span>
             <span class="font-bold uppercase">{{ transaction?.paymentMethod }}</span>
           </div>
-          <div v-if="transaction?.paymentMethod === 'CASH'" class="flex justify-between text-[11px] text-zinc-600">
-            <span>BAYAR</span>
-            <span>Rp {{ formatRibuan(transaction?.amountPaid || transaction?.total) }}</span>
-          </div>
-          <div v-if="transaction?.paymentMethod === 'CASH'" class="flex justify-between text-[11px] text-emerald-600 font-bold">
-            <span>KEMBALI</span>
-            <span>Rp {{ formatRibuan(Math.max(0, (transaction?.amountPaid || transaction?.total) - transaction?.total)) }}</span>
-          </div>
+          
+          <!-- Rincian CASH (Termasuk Split Payment) -->
+          <template v-if="transaction?.paymentMethod === 'CASH'">
+            <div class="flex justify-between text-[11px] text-zinc-600">
+              <span>TUNAI DIBAYAR</span>
+              <span>Rp {{ formatRibuan(transaction?.amountPaid || transaction?.total) }}</span>
+            </div>
+            <div v-if="(transaction?.change || 0) > 0" class="flex justify-between text-[11px] text-zinc-600">
+              <span>KEMBALI</span>
+              <span>Rp {{ formatRibuan(transaction?.change) }}</span>
+            </div>
+            
+            <!-- ✅ FITUR BARU: Info Sisa Tempo (Split Payment) -->
+            <div v-if="(transaction?.remaining || 0) > 0" class="flex justify-between text-[11px] text-red-600 font-bold border-t border-zinc-200/60 pt-1 mt-1">
+              <span>SISA (TEMPO)</span>
+              <span>Rp {{ formatRibuan(transaction?.remaining) }}</span>
+            </div>
+          </template>
+          
+          <!-- Rincian TEMPO -->
+          <template v-if="transaction?.paymentMethod === 'TEMPO'">
+            <div class="flex justify-between text-[11px] text-red-600 font-bold border-t border-zinc-200/60 pt-1 mt-1">
+              <span>MASUK UTANG (TEMPO)</span>
+              <span>Rp {{ formatRibuan(transaction?.total) }}</span>
+            </div>
+          </template>
         </div>
       </div>
 
@@ -116,6 +134,7 @@ const formatDate = (dateStr) => dateStr ? dayjs(dateStr).format('DD/MM/YYYY • 
 const handlePrintBluetooth = async () => {
   printing.value = true
   try {
+    // ✅ Pastikan properti remaining dan change terbawa ke printer
     await receiptService.printThermal(props.transaction)
     toast.success('Struk berhasil dicetak!')
     emit('close')
@@ -128,6 +147,7 @@ const handlePrintBluetooth = async () => {
 
 const handleDownloadPdf = async () => {
   try {
+    // ✅ Pastikan properti remaining dan change terbawa ke PDF
     await receiptService.downloadPdf(props.transaction)
     toast.success('Nota PDF berhasil diunduh!')
     emit('close')

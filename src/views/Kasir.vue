@@ -153,6 +153,7 @@
         </button>
       </div>
 
+      <!-- METODE CASH -->
       <div v-if="store.paymentMethod === 'CASH'" class="space-y-3">
         <div class="flex justify-between items-center">
           <span class="text-zinc-400 text-xs">Total</span>
@@ -172,14 +173,33 @@
         <button @click="store.bayarNominal=total" class="w-full py-2.5 bg-white/10 border border-white/10 text-white rounded-xl text-[11px] font-black active:scale-95 transition">
           UANG PAS Rp {{ formatRibuan(total) }}
         </button>
+        
+        <!-- INFO KEMBALIAN / SISA (SPLIT PAYMENT) -->
         <div v-if="store.bayarNominal > 0" class="flex justify-between text-xs pt-2 border-t border-zinc-800">
           <span class="text-zinc-400">Kembalian</span>
           <span :class="['font-black', kurangBayar > 0 ? 'text-red-400' : 'text-green-400']">
             {{ kurangBayar > 0 ? `Kurang Rp ${formatRibuan(kurangBayar)}` : `Rp ${formatRibuan(kembalian)}` }}
           </span>
         </div>
+        
+        <!-- PERINGATAN JIKA KURANG TAPI BELUM PILIH MEMBER -->
+        <div v-if="kurangBayar > 0 && !store.selectedMember" class="bg-red-500/20 border border-red-500/30 rounded-xl p-3 text-[11px] font-bold text-red-400 mt-1">
+          Uang tunai kurang. Pilih Member di header atas jika ingin menjadikan sisanya sebagai utang (TEMPO).
+        </div>
+        
+        <!-- INFO JIKA KURANG DAN SUDAH PILIH MEMBER (SPLIT PAYMENT AKTIF) -->
+        <div v-if="kurangBayar > 0 && store.selectedMember" class="bg-amber-500/10 border border-amber-500/30 rounded-xl p-3 text-[11px] font-black text-amber-400 mt-1 flex flex-col gap-1">
+          <div class="flex justify-between items-center">
+            <span>Masuk Tempo (Utang):</span>
+            <span>Rp {{ formatRibuan(kurangBayar) }}</span>
+          </div>
+          <div class="text-[9px] font-medium text-amber-500/80 mt-1">
+            Sisa akan dicatat sebagai piutang atas nama {{ store.selectedMember.name }}.
+          </div>
+        </div>
       </div>
 
+      <!-- METODE QRIS -->
       <div v-if="store.paymentMethod === 'QRIS'" class="mb-4">
         <div class="flex justify-between items-center">
           <span class="text-zinc-400 text-xs">Total Bayar</span>
@@ -187,14 +207,19 @@
         </div>
       </div>
 
+      <!-- METODE TEMPO -->
       <div v-if="store.paymentMethod === 'TEMPO'" class="bg-amber-500/10 border border-amber-500/20 rounded-xl p-3 text-[11px] font-black text-amber-400 mb-4">
         TEMPO → {{ store.selectedMember?.name || 'Pilih member' }}
       </div>
     </div>
 
+    <!-- TOMBOL BAYAR (Diperbarui untuk mendukung Split Payment) -->
     <button 
       v-if="store.paymentMethod==='QRIS' || store.paymentMethod==='TEMPO' || (store.paymentMethod==='CASH' && store.bayarNominal>0)" 
-      :disabled="(store.paymentMethod==='CASH' && store.bayarNominal < total) || (store.paymentMethod==='TEMPO' && !store.selectedMember)" 
+      :disabled="
+        (store.paymentMethod==='CASH' && store.bayarNominal < total && !store.selectedMember) || 
+        (store.paymentMethod==='TEMPO' && !store.selectedMember)
+      " 
       @click="onCheckout" 
       :class="[
         'w-full py-4 rounded-2xl font-black text-sm mt-4 active:scale-95 transition',
@@ -205,7 +230,12 @@
         Simpan Perubahan Nota
       </template>
       <template v-else>
-        {{ store.paymentMethod==='QRIS'? 'Bayar dengan QRIS' : `Bayar Rp ${formatRibuan(total)}` }}
+        <template v-if="store.paymentMethod==='QRIS'">Bayar dengan QRIS</template>
+        <template v-else-if="store.paymentMethod==='TEMPO'">Simpan sebagai Tempo (Utang)</template>
+        <template v-else>
+          <!-- Jika uang kurang tapi sudah pilih member, tampilkan nominal yang dibayar -->
+          {{ (store.bayarNominal < total && store.selectedMember) ? `Bayar Rp ${formatRibuan(store.bayarNominal)}` : `Bayar Rp ${formatRibuan(total)}` }}
+        </template>
       </template>
     </button>
   </div>
@@ -272,7 +302,7 @@
 <div v-if="showMemberPicker" class="fixed inset-0 z-[90] bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4">
   <div class="w-full max-w-xl mx-auto bg-white rounded-t-[2rem] sm:rounded-[2rem] p-5 max-h-[80vh] flex flex-col shadow-xl">
     <div class="flex justify-between items-center mb-4">
-      <div class="font-black text-sm">{{ store.paymentMethod==='TEMPO'? 'Wajib Pilih Member' : 'Pilih Member' }}</div>
+      <div class="font-black text-sm">{{ store.paymentMethod==='TEMPO' ? 'Wajib Pilih Member' : 'Pilih Member' }}</div>
       <button @click="showMemberPicker=false" class="p-2 bg-zinc-100 rounded-xl"><X class="w-4 h-4"/></button>
     </div>
     <input 
@@ -408,12 +438,19 @@ const onCheckout = async () => {
 
     const res = await checkout()
     
+    // ✅ FIX: Kirim data amountPaid, change, dan remaining yang akurat ke modal struk
+    const finalAmountPaid = currentMethodSnapshot === 'TEMPO' ? 0 : (currentMethodSnapshot === 'QRIS' ? res.total : currentPaidSnapshot)
+    const finalChange = (currentMethodSnapshot === 'CASH' && finalAmountPaid > res.total) ? finalAmountPaid - res.total : 0
+    const finalRemaining = Math.max(0, res.total - finalAmountPaid)
+
     completedTransaction.value = {
       id: res.id,
       date: new Date().toISOString(),
       total: res.total,
       paymentMethod: currentMethodSnapshot,
-      amountPaid: currentMethodSnapshot === 'TEMPO' ? 0 : (currentMethodSnapshot === 'QRIS' ? res.total : currentPaidSnapshot),
+      amountPaid: finalAmountPaid,
+      change: finalChange,
+      remaining: finalRemaining, // ✅ Kirim sisa ke struk
       memberName: currentMemberSnapshot?.name || 'Umum',
       operatorName: currentOperatorName,
       items: currentCartSnapshot.map(item => ({

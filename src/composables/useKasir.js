@@ -26,6 +26,14 @@ export function useKasir() {
   const total = computed(() => store.cart.reduce((s, c) => s + c.price_sell * c.cartQty, 0))
   const kembalian = computed(() => Math.max(0, (store.bayarNominal || 0) - total.value))
   const kurangBayar = computed(() => Math.max(0, total.value - (store.bayarNominal || 0)))
+  
+  // ✅ FITUR BARU: Sisa bayar (otomatis masuk piutang jika pakai Split Payment)
+  const sisaBayar = computed(() => {
+    if (store.paymentMethod === 'TEMPO') return total.value
+    if (store.paymentMethod === 'QRIS') return 0
+    // Untuk CASH
+    return kurangBayar.value
+  })
 
   const bayarDisplay = computed({
     get: () => store.bayarNominal ? formatRibuan(store.bayarNominal) : '',
@@ -158,11 +166,12 @@ export function useKasir() {
       throw new Error('Keranjang belanja masih kosong!')
     }
 
+    // ✅ VALIDASI BARU: Split payment / Tempo wajib pilih member
     if (store.paymentMethod === 'TEMPO' && !store.selectedMember) {
-      throw new Error('Pilih member untuk TEMPO')
+      throw new Error('Pilih member untuk metode pembayaran TEMPO')
     }
-    if (store.paymentMethod === 'CASH' && store.bayarNominal < total.value) {
-      throw new Error('Nominal kurang')
+    if (store.paymentMethod === 'CASH' && store.bayarNominal < total.value && !store.selectedMember) {
+      throw new Error('Pilih member jika uang tunai kurang dari total (Split Payment / Tempo)')
     }
 
     const finalAmountPaid =
@@ -290,6 +299,7 @@ export function useKasir() {
     total, 
     kembalian, 
     kurangBayar, 
+    sisaBayar, // ✅ Export sisaBayar untuk UI
     bayarDisplay, 
     showSearch,
     selectedProductForOption, 
