@@ -557,8 +557,10 @@ const onCheckout = async () => {
 
 watch(total, t => { if (store.paymentMethod === 'QRIS') store.bayarNominal = t })
 
+// ✅ FIX UX: Reset input pencarian member setiap kali modal dibuka
 watch(showMemberPicker, (isOpen) => {
   if (isOpen) {
+    memberQ.value = ''
     nextTick(() => {
       memberSearchInputRef.value?.focus()
     })

@@ -208,7 +208,7 @@ export function useKasir() {
     const activeOperator = getActiveOperator()
 
     if (store.editingTransactionId) {
-      // Mode Edit belum mendukung Split Tender (hanya update transaksi biasa)
+      // ✅ FIX: Mode Edit sekarang mengirim data pembayaran lengkap (termasuk Split Tender)
       const originalTrx = {
         id: store.editingTransactionId,
         paymentMethod: store.paymentMethod,
@@ -226,7 +226,9 @@ export function useKasir() {
         paymentMethod: store.paymentMethod,
         memberId: store.selectedMember?.id || null,
         amountPaid: finalAmountPaid,
-        change: finalChange
+        change: finalChange,
+        amountQris: store.paymentMethod === 'SPLIT' ? Number(bayarQrisNominal.value) : 0,
+        amountCash: store.paymentMethod === 'SPLIT' ? Number(bayarCashNominal.value) : 0
       }
       const res = await salesHistoryService.updateTransaction(originalTrx, updatedItems, newPaymentData)
       store.clearCart()

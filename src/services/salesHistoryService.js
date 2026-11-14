@@ -163,6 +163,7 @@ export const salesHistoryService = {
         const isTempo = newPaymentMethod === 'TEMPO'
         const isCash = newPaymentMethod === 'CASH'
         const isQris = newPaymentMethod === 'QRIS'
+        const isSplit = newPaymentMethod === 'SPLIT'
 
         // 1. Peta kuantitas lama vs baru untuk penyesuaian stok
         const oldQtyMap = new Map()
@@ -234,32 +235,48 @@ export const salesHistoryService = {
         })
         await db.transaction_items.bulkPut(itemsToInsert)
 
-        // 4. ✅ FIX P0: Hitung amountPaid & change baru (konsisten dgn kasirService.checkout)
-        // - TEMPO: 0 (belum bayar), change 0
-        // - QRIS : pas newTotal, change 0
-        // - CASH : amountPaid dari caller (kalau ada), change = amountPaid - newTotal
-        let newAmountPaid
-        let newChange
+        // 4. ✅ FIX P0: Hitung amountPaid & change & remaining baru
+        let newAmountPaid = Number(newPaymentData.amountPaid) || 0
+        let newChange = 0
+        let newRemaining = 0
+        let newAmountQris = Number(newPaymentData.amountQris) || 0
+        let newAmountCash = Number(newPaymentData.amountCash) || 0
 
         if (isTempo) {
           newAmountPaid = 0
           newChange = 0
+          newRemaining = newTotal
         } else if (isQris) {
           newAmountPaid = newTotal
           newChange = 0
+          newRemaining = 0
+        } else if (isSplit) {
+          const totalTerbayar = newAmountQris + newAmountCash
+          newChange = Math.max(0, totalTerbayar - newTotal)
+          newAmountPaid = totalTerbayar
+          newRemaining = Math.max(0, newTotal - totalTerbayar)
         } else {
           // CASH
-          const paidInput = Number(newPaymentData.amountPaid)
-          newAmountPaid = Number.isFinite(paidInput) && paidInput > 0
-            ? Math.round(paidInput)
-            : newTotal // fallback: uang pas
-          newChange = Math.max(0, newAmountPaid - newTotal)
+          if (newAmountPaid <= 0) newAmountPaid = newTotal // fallback: uang pas
+          
+          if (newAmountPaid < newTotal) {
+            // Ada kekurangan → sisanya jadi utang
+            newChange = 0
+            newRemaining = newTotal - newAmountPaid
+          } else {
+            // Uang cukup
+            newChange = Math.max(0, newAmountPaid - newTotal)
+            newRemaining = 0
+          }
         }
 
-        const newRemaining = isTempo ? newTotal : 0
-
         // Uang yang benar-benar masuk laci (untuk mutasi kas)
-        const newCashIn = isCash ? Math.max(0, newAmountPaid - newChange) : 0
+        let newCashIn = 0
+        if (isCash) {
+          newCashIn = Math.max(0, newAmountPaid - newChange)
+        } else if (isSplit) {
+          newCashIn = Math.max(0, newAmountCash - newChange)
+        }
 
         // 5. Rekonsiliasi Mutasi Keuangan
         const oldAccId =
@@ -271,19 +288,42 @@ export const salesHistoryService = {
         const newAccId = isQris ? 'acc_bank' : isCash ? 'acc_cash' : null
 
         // 5a. Reverse mutasi lama (kalau ada)
-        if (oldAccId && (existingTrxHeader.total || 0) > 0) {
+        if (oldAccId && (existingTrxHeader.amountPaid || existingTrxHeader.total || 0) > 0) {
+          const reverseAmount = existingTrxHeader.amountPaid || existingTrxHeader.total || 0
           await financeRepo.addMutation({
             accountId: oldAccId,
             type: 'OUT',
-            amount: existingTrxHeader.total,
+            amount: reverseAmount,
             category: 'Koreksi Transaksi',
             note: `Koreksi Edit Nota #${originalTrx.id.slice(0, 8)}`,
             refId: originalTrx.id
           })
         }
 
-        // 5b. Catat mutasi baru (pakai newCashIn untuk CASH, bukan newTotal mentah)
-        if (newAccId) {
+        // 5b. Catat mutasi baru
+        if (isSplit) {
+          // Split: catat QRIS & CASH terpisah
+          if (newAmountQris > 0) {
+            await financeRepo.addMutation({
+              accountId: 'acc_bank',
+              type: 'IN',
+              amount: newAmountQris,
+              category: 'Penjualan Kasir',
+              note: `Update Split Nota #${originalTrx.id.slice(0, 8)}`,
+              refId: originalTrx.id
+            })
+          }
+          if (newCashIn > 0) {
+            await financeRepo.addMutation({
+              accountId: 'acc_cash',
+              type: 'IN',
+              amount: newCashIn,
+              category: 'Penjualan Kasir',
+              note: `Update Split Nota #${originalTrx.id.slice(0, 8)}`,
+              refId: originalTrx.id
+            })
+          }
+        } else if (newAccId) {
           const newMutationAmount = isCash ? newCashIn : newTotal
           if (newMutationAmount > 0) {
             await financeRepo.addMutation({
@@ -298,26 +338,27 @@ export const salesHistoryService = {
         }
 
         // 6. Rekonsiliasi Member (Spending & Piutang)
+        // Rollback member lama (jika ada)
         if (existingTrxHeader.memberId) {
           const oldMember = await memberRepo.getById(existingTrxHeader.memberId)
           if (oldMember) {
-            const debtRollback =
-              existingTrxHeader.paymentMethod === 'TEMPO' ? (existingTrxHeader.total || 0) : 0
+            const debtRollback = existingTrxHeader.remaining || 0
+            const spendingRollback = existingTrxHeader.total || 0
             await memberRepo.update(existingTrxHeader.memberId, {
               debt: Math.max(0, (oldMember.debt || 0) - debtRollback),
-              total_spending: Math.max(0, (oldMember.total_spending || 0) - (existingTrxHeader.total || 0)),
+              total_spending: Math.max(0, (oldMember.total_spending || 0) - spendingRollback),
               updatedAt: now,
               synced: 0
             })
           }
         }
 
+        // Apply ke member baru (atau member yang sama)
         if (newMemberId) {
           const newMember = await memberRepo.getById(newMemberId)
           if (newMember) {
-            const addedDebt = isTempo ? newTotal : 0
             await memberRepo.update(newMemberId, {
-              debt: (newMember.debt || 0) + addedDebt,
+              debt: (newMember.debt || 0) + newRemaining,
               total_spending: (newMember.total_spending || 0) + newTotal,
               updatedAt: now,
               synced: 0
@@ -335,6 +376,7 @@ export const salesHistoryService = {
           change: newChange,
           changeAmount: newChange,
           remaining: newRemaining,
+          status: newRemaining > 0 ? 'unpaid' : 'paid',
           updatedAt: now,
           synced: 0
         })
